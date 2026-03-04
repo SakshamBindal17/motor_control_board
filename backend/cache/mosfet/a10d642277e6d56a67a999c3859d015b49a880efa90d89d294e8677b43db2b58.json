@@ -1,0 +1,335 @@
+{
+  "component_name": "CSD17302Q5A",
+  "manufacturer": "Texas Instruments",
+  "component_type": "MOSFET",
+  "package": "SON 5-mm \u00d7 6-mm",
+  "description": "30V, N-Channel NexFET Power MOSFET optimized for 5V gate drive applications",
+  "parameters": [
+    {
+      "id": "vds_max",
+      "name": "Drain-to-Source Voltage",
+      "symbol": "BVDSS",
+      "category": "Absolute Maximum",
+      "conditions": [
+        {
+          "condition_text": "VGS=0V, ID=250\u00b5A",
+          "note": null,
+          "min": 30,
+          "typ": null,
+          "max": null,
+          "unit": "V",
+          "selected": 30,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "id_cont",
+      "name": "Continuous Drain Current",
+      "symbol": "ID",
+      "category": "Absolute Maximum",
+      "conditions": [
+        {
+          "condition_text": "TC=25\u00b0C",
+          "note": "Typical R\u03b8JA = 41\u00b0C/W on a 1-inch\u00b2 (6.45-cm\u00b2), 2-oz. (0.071-mm thick) Cu pad on a 0.06-inch (1.52-mm) thick FR4 PCB.",
+          "min": null,
+          "typ": null,
+          "max": 16,
+          "unit": "A",
+          "selected": 16,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "rds_on",
+      "name": "On-State Resistance",
+      "symbol": "RDS(on)",
+      "category": "Electrical",
+      "conditions": [
+        {
+          "condition_text": "VGS=3V, ID=14A",
+          "note": null,
+          "min": null,
+          "typ": 12.8,
+          "max": null,
+          "unit": "m\u03a9",
+          "selected": 12.8,
+          "override": null
+        },
+        {
+          "condition_text": "VGS=4.5V, ID=14A",
+          "note": null,
+          "min": 7.3,
+          "typ": 9,
+          "max": null,
+          "unit": "m\u03a9",
+          "selected": 9,
+          "override": null
+        },
+        {
+          "condition_text": "VGS=8V, ID=14A",
+          "note": null,
+          "min": 6.4,
+          "typ": 7.9,
+          "max": null,
+          "unit": "m\u03a9",
+          "selected": 7.9,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "vgs_th",
+      "name": "Gate-to-Source Threshold Voltage",
+      "symbol": "VGS(th)",
+      "category": "Electrical",
+      "conditions": [
+        {
+          "condition_text": "VDS=VGS, ID=250\u00b5A",
+          "note": null,
+          "min": 0.9,
+          "typ": 1.2,
+          "max": 1.7,
+          "unit": "V",
+          "selected": 1.2,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "qg",
+      "name": "Total Gate Charge",
+      "symbol": "Qg",
+      "category": "Gate Charge",
+      "conditions": [
+        {
+          "condition_text": "VDS=15V, ID=14A, VGS=4.5V",
+          "note": null,
+          "min": 5.4,
+          "typ": 7,
+          "max": null,
+          "unit": "nC",
+          "selected": 7,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "qgd",
+      "name": "Gate-Drain Charge",
+      "symbol": "Qgd",
+      "category": "Gate Charge",
+      "conditions": [
+        {
+          "condition_text": "VDS=15V, ID=14A",
+          "note": null,
+          "min": null,
+          "typ": 1.2,
+          "max": null,
+          "unit": "nC",
+          "selected": 1.2,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "qgs",
+      "name": "Gate-Source Charge",
+      "symbol": "Qgs",
+      "category": "Gate Charge",
+      "conditions": [
+        {
+          "condition_text": "VDS=15V, ID=14A",
+          "note": null,
+          "min": null,
+          "typ": 1.7,
+          "max": null,
+          "unit": "nC",
+          "selected": 1.7,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "qrr",
+      "name": "Reverse Recovery Charge",
+      "symbol": "Qrr",
+      "category": "Diode Characteristics",
+      "conditions": [
+        {
+          "condition_text": "VDD=13V, IF=14A, di/dt=300A/\u00b5s",
+          "note": null,
+          "min": null,
+          "typ": 15.4,
+          "max": null,
+          "unit": "nC",
+          "selected": 15.4,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "trr",
+      "name": "Reverse Recovery Time",
+      "symbol": "trr",
+      "category": "Diode Characteristics",
+      "conditions": [
+        {
+          "condition_text": "VDD=13V, IF=14A, di/dt=300A/\u00b5s",
+          "note": null,
+          "min": null,
+          "typ": 17.5,
+          "max": null,
+          "unit": "ns",
+          "selected": 17.5,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "coss",
+      "name": "Output Capacitance",
+      "symbol": "Coss",
+      "category": "Capacitance",
+      "conditions": [
+        {
+          "condition_text": "VGS=0V, VDS=15V, f=1MHz",
+          "note": null,
+          "min": null,
+          "typ": null,
+          "max": 510,
+          "unit": "pF",
+          "selected": 510,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "td_on",
+      "name": "Turn-On Delay Time",
+      "symbol": "td(on)",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VDS=15V, VGS=4.5V, ID=14A, RG=2\u03a9",
+          "note": null,
+          "min": null,
+          "typ": 5.2,
+          "max": null,
+          "unit": "ns",
+          "selected": 5.2,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "tr",
+      "name": "Rise Time",
+      "symbol": "tr",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VDS=15V, VGS=4.5V, ID=14A, RG=2\u03a9",
+          "note": null,
+          "min": null,
+          "typ": 8.4,
+          "max": null,
+          "unit": "ns",
+          "selected": 8.4,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "td_off",
+      "name": "Turn-Off Delay Time",
+      "symbol": "td(off)",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VDS=15V, VGS=4.5V, ID=14A, RG=2\u03a9",
+          "note": null,
+          "min": null,
+          "typ": 10.6,
+          "max": null,
+          "unit": "ns",
+          "selected": 10.6,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "tf",
+      "name": "Fall Time",
+      "symbol": "tf",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VDS=15V, VGS=4.5V, ID=14A, RG=2\u03a9",
+          "note": null,
+          "min": null,
+          "typ": 3.1,
+          "max": null,
+          "unit": "ns",
+          "selected": 3.1,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "rth_jc",
+      "name": "Thermal Resistance Junction to Case",
+      "symbol": "R\u03b8JC",
+      "category": "Thermal",
+      "conditions": [
+        {
+          "condition_text": "Device mounted on copper pad",
+          "note": "R\u03b8JC is determined with the device mounted on a 1-inch\u00b2 (6.45-cm\u00b2), 2-oz. (0.071-mm thick) Cu pad on a 1.5-inch \u00d7 1.5-inch (3.81-cm \u00d7 3.81-cm), 0.06-inch (1.52-mm) thick FR4 PCB. R\u03b8JC is specified by design, whereas R\u03b8JA is determined by the user's board design.",
+          "min": null,
+          "typ": 1.8,
+          "max": null,
+          "unit": "\u00b0C/W",
+          "selected": 1.8,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "tj_max",
+      "name": "Operating Junction Temperature",
+      "symbol": "TJ",
+      "category": "Absolute Maximum",
+      "conditions": [
+        {
+          "condition_text": "Operating and Storage",
+          "note": null,
+          "min": -55,
+          "typ": null,
+          "max": 150,
+          "unit": "\u00b0C",
+          "selected": 150,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "body_diode_vf",
+      "name": "Diode Forward Voltage",
+      "symbol": "VSD",
+      "category": "Diode Characteristics",
+      "conditions": [
+        {
+          "condition_text": "ISD=14A, VGS=0V",
+          "note": null,
+          "min": 0.85,
+          "typ": 1,
+          "max": null,
+          "unit": "V",
+          "selected": 1,
+          "override": null
+        }
+      ]
+    }
+  ]
+}

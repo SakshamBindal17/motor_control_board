@@ -1,0 +1,345 @@
+{
+  "component_name": "IPP029N06N",
+  "manufacturer": "Infineon Technologies",
+  "component_type": "MOSFET",
+  "package": "PG-LSON6",
+  "description": "OptiMOS N-channel Power MOSFET, 60V, 100A continuous",
+  "parameters": [
+    {
+      "id": "vds_max",
+      "name": "Drain-Source Breakdown Voltage",
+      "symbol": "V(BR)DSS",
+      "category": "Absolute Maximum",
+      "conditions": [
+        {
+          "condition_text": "VGS=0V, ID=1mA, Tj=25\u00b0C",
+          "note": null,
+          "min": 60,
+          "typ": null,
+          "max": null,
+          "unit": "V",
+          "selected": 60,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "id_cont",
+      "name": "Continuous Drain Current",
+      "symbol": "ID",
+      "category": "Absolute Maximum",
+      "conditions": [
+        {
+          "condition_text": "VGS=10V, TC=25\u00b0C",
+          "note": null,
+          "min": null,
+          "typ": 100,
+          "max": null,
+          "unit": "A",
+          "selected": 100,
+          "override": null
+        },
+        {
+          "condition_text": "VGS=10V, TC=100\u00b0C",
+          "note": null,
+          "min": null,
+          "typ": 100,
+          "max": null,
+          "unit": "A",
+          "selected": 100,
+          "override": null
+        },
+        {
+          "condition_text": "VGS=10V, TC=25\u00b0C, RthJA=50K/W",
+          "note": "Device on 40 mm x 40 mm x 1.5 mm epoxy PCB FR4 with 6 cm\u00b2 (one layer, 70 \u00b5m thick) copper area for drain connection. PCB is vertical in still air.",
+          "min": null,
+          "typ": 24,
+          "max": null,
+          "unit": "A",
+          "selected": 24,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "rds_on",
+      "name": "Drain-Source On-State Resistance",
+      "symbol": "RDS(on)",
+      "category": "Electrical",
+      "conditions": [
+        {
+          "condition_text": "VGS=10V, ID=100A, Tj=25\u00b0C",
+          "note": null,
+          "min": null,
+          "typ": 2.7,
+          "max": 2.9,
+          "unit": "m\u03a9",
+          "selected": 2.7,
+          "override": null
+        },
+        {
+          "condition_text": "VGS=6V, ID=25A, Tj=25\u00b0C",
+          "note": null,
+          "min": null,
+          "typ": 5.4,
+          "max": null,
+          "unit": "m\u03a9",
+          "selected": 5.4,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "vgs_th",
+      "name": "Gate Threshold Voltage",
+      "symbol": "VGS(th)",
+      "category": "Electrical",
+      "conditions": [
+        {
+          "condition_text": "VDS=VGS, ID=75\u00b5A, Tj=25\u00b0C",
+          "note": null,
+          "min": 2.0,
+          "typ": 2.8,
+          "max": 3.6,
+          "unit": "V",
+          "selected": 2.8,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "qg",
+      "name": "Total Gate Charge",
+      "symbol": "Qg",
+      "category": "Gate Charge",
+      "conditions": [
+        {
+          "condition_text": "VDD=30V, ID=100A, VGS=0 to 10V",
+          "note": null,
+          "min": null,
+          "typ": 56,
+          "max": null,
+          "unit": "nC",
+          "selected": 56,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "qgd",
+      "name": "Gate-Drain Charge",
+      "symbol": "Qgd",
+      "category": "Gate Charge",
+      "conditions": [
+        {
+          "condition_text": "VDD=30V, ID=100A, VGS=0 to 10V",
+          "note": null,
+          "min": null,
+          "typ": 11,
+          "max": null,
+          "unit": "nC",
+          "selected": 11,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "qgs",
+      "name": "Gate-Source Charge",
+      "symbol": "Qgs",
+      "category": "Gate Charge",
+      "conditions": [
+        {
+          "condition_text": "VDD=30V, ID=100A, VGS=0 to 10V",
+          "note": null,
+          "min": null,
+          "typ": 20,
+          "max": null,
+          "unit": "nC",
+          "selected": 20,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "qrr",
+      "name": "Reverse Recovery Charge",
+      "symbol": "Qrr",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VR=30V, IF=100A, diF/dt=100A/\u00b5s",
+          "note": null,
+          "min": null,
+          "typ": 44,
+          "max": null,
+          "unit": "nC",
+          "selected": 44,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "trr",
+      "name": "Reverse Recovery Time",
+      "symbol": "trr",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VR=30V, IF=100A, diF/dt=100A/\u00b5s",
+          "note": null,
+          "min": null,
+          "typ": 37,
+          "max": null,
+          "unit": "ns",
+          "selected": 37,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "coss",
+      "name": "Output Capacitance",
+      "symbol": "Coss",
+      "category": "Capacitance",
+      "conditions": [
+        {
+          "condition_text": "VGS=0V, VDS=30V, f=1MHz",
+          "note": null,
+          "min": null,
+          "typ": 980,
+          "max": null,
+          "unit": "pF",
+          "selected": 980,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "td_on",
+      "name": "Turn-On Delay Time",
+      "symbol": "td(on)",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VDD=30V, VGS=10V, ID=100A, RG=3\u03a9",
+          "note": null,
+          "min": null,
+          "typ": 17,
+          "max": null,
+          "unit": "ns",
+          "selected": 17,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "tr",
+      "name": "Rise Time",
+      "symbol": "tr",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VDD=30V, VGS=10V, ID=100A, RG=3\u03a9",
+          "note": null,
+          "min": null,
+          "typ": 15,
+          "max": null,
+          "unit": "ns",
+          "selected": 15,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "td_off",
+      "name": "Turn-Off Delay Time",
+      "symbol": "td(off)",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VDD=30V, VGS=10V, ID=100A, RG=3\u03a9",
+          "note": null,
+          "min": null,
+          "typ": 30,
+          "max": null,
+          "unit": "ns",
+          "selected": 30,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "tf",
+      "name": "Fall Time",
+      "symbol": "tf",
+      "category": "Switching",
+      "conditions": [
+        {
+          "condition_text": "VDD=30V, VGS=10V, ID=100A, RG=3\u03a9",
+          "note": null,
+          "min": null,
+          "typ": 8,
+          "max": null,
+          "unit": "ns",
+          "selected": 8,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "rth_jc",
+      "name": "Thermal Resistance Junction-to-Case",
+      "symbol": "RthJC",
+      "category": "Thermal",
+      "conditions": [
+        {
+          "condition_text": "Bottom connection",
+          "note": null,
+          "min": null,
+          "typ": 1.1,
+          "max": null,
+          "unit": "K/W",
+          "selected": 1.1,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "tj_max",
+      "name": "Maximum Junction Temperature",
+      "symbol": "Tj(max)",
+      "category": "Absolute Maximum",
+      "conditions": [
+        {
+          "condition_text": "Operating condition",
+          "note": null,
+          "min": null,
+          "typ": 175,
+          "max": null,
+          "unit": "\u00b0C",
+          "selected": 175,
+          "override": null
+        }
+      ]
+    },
+    {
+      "id": "body_diode_vf",
+      "name": "Body Diode Forward Voltage",
+      "symbol": "VSD",
+      "category": "Electrical",
+      "conditions": [
+        {
+          "condition_text": "VGS=0V, IF=100A, Tj=25\u00b0C",
+          "note": null,
+          "min": null,
+          "typ": 1.0,
+          "max": 1.2,
+          "unit": "V",
+          "selected": 1.0,
+          "override": null
+        }
+      ]
+    }
+  ]
+}
