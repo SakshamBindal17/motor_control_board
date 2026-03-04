@@ -48,12 +48,18 @@ mc-designer-v2/
 
 ## ⚙️ Prerequisites
 
-| Tool | Version | Check |
-|---|---|---|
-| Python | 3.9+ | `python3 --version` |
-| pip | latest | `pip3 --version` |
-| Node.js | 18+ | `node --version` |
-| npm | 9+ | `npm --version` |
+| Tool | Version | Item | Detail |
+|------|--------|
+| Language | Python 3.12 |
+| Framework | FastAPI 0.110.0 |
+| AI | Anthropic Python SDK — Claude Haiku (`claude-haiku-4-5-20251001`) |
+| HTTP client | httpx **pinned at 0.27.2** |
+
+### Frontend
+| Item | Detail |
+|------|--------|
+| Framework | React 18.3.1 |
+| Build tool | Vite 5.4.2 |
 
 ---
 
@@ -61,9 +67,18 @@ mc-designer-v2/
 
 ### Step 1 — Install backend dependencies
 
+It is highly recommended to use a Python virtual environment to avoid dependency conflicts, specifically with `httpx` and `anthropic`.
+
 ```bash
 cd mc-designer-v2/backend
-pip3 install -r requirements.txt
+python -m venv .venv
+# On Windows:
+.venv\Scripts\activate
+# On Mac/Linux:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+pip install httpx==0.27.2  # Critical for Anthropic SDK compatibility
 ```
 
 If you get permission errors on Linux/Mac:
@@ -174,19 +189,20 @@ Go to: **http://localhost:5173**
 
 | Action | Tokens | Cost (approx) |
 |---|---|---|
-| 1 datasheet (40 pages) | ~30k tokens | ~$0.004 |
-| 3 datasheets total | ~90k tokens | ~$0.012 |
-| Full design session | | **< $0.02** |
+| 1 datasheet (40 pages) | ~16k tokens | ~$0.10 |
+| 3 datasheets total | ~48k tokens | ~$0.30 |
+| Full design session | | **< $0.35** |
 
 Model: `claude-haiku-4-5-20251001` — fastest and cheapest, handles IC datasheets well.
+Note: The application uses a robust extraction prompt and allows up to `16000` max output tokens to prevent truncation on large, complex PDFs. It also features a disk-based SHA-256 caching system so re-uploading the exact same PDF costs zero tokens.
 
 ---
 
 ## ❓ Troubleshooting
 
 **Backend won't start:**
-- Check Python version: `python3 --version` (needs 3.9+)
-- Try: `pip3 install fastapi uvicorn anthropic reportlab openpyxl python-multipart`
+- Check Python version: `python --version` (needs 3.12 recommended)
+- If you see `TypeError: Client.__init__() got an unexpected keyword argument 'proxies'`, you are using an incompatible version of `httpx`. Run `pip install httpx==0.27.2`.
 
 **Frontend won't start:**
 - Check Node version: `node --version` (needs 18+)
@@ -213,6 +229,4 @@ Model: `claude-haiku-4-5-20251001` — fastest and cheapest, handles IC datashee
 - 📈 Plotly graphs: loss vs frequency, Bode plot, thermal vs current
 - 🔬 Simulated oscilloscope waveforms (gate drive, switch node)
 - 🗂 Multi-project management with project list
-- 💱 Live component pricing via Octopart API
-- 🤖 AI design assistant chat for parameter guidance
 - 📡 SPICE netlist export
