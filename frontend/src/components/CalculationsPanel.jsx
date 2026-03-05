@@ -87,6 +87,15 @@ export default function CalculationsPanel() {
                   {sec.rows.map(r => {
                     const v = d[r.key]
                     if (v === undefined || v === null) return null
+                    // String rows (like method notes) render differently
+                    if (r.string) {
+                      return (
+                        <div key={r.key} className="calc-row">
+                          <span className="label">{r.label}</span>
+                          <span style={{ fontSize: 10, color: 'var(--cyan)', fontFamily: 'var(--font-mono)', textAlign: 'right', maxWidth: 120, lineHeight: 1.3 }}>{v}</span>
+                        </div>
+                      )
+                    }
                     const tc = r.warn ? thresholdClass(v, r.warn, r.danger) : ''
                     return (
                       <div key={r.key} className="calc-row">
@@ -156,6 +165,7 @@ const SECTIONS = [
   {
     key: 'input_capacitors', label: 'Bus Capacitors', icon: '🔋',
     rows: [
+      { key: 'ripple_method',           label: 'Method',         string: true },
       { key: 'i_ripple_rms_a',         label: 'Ripple current', unit: 'A',  dec: 2 },
       { key: 'c_bulk_required_uf',      label: 'C required',     unit: 'µF', dec: 1 },
       { key: 'n_bulk_caps',             label: 'Cap count',      unit: 'pcs',dec: 0 },

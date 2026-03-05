@@ -16,6 +16,9 @@ import re
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 
+# Bump this string whenever prompts change — forces cache re-extraction automatically
+PROMPT_VERSION = "v4"
+
 def _cache_path(block_type: str, pdf_hash: str) -> str:
     folder = os.path.join(CACHE_DIR, block_type)
     os.makedirs(folder, exist_ok=True)
@@ -37,7 +40,9 @@ def _save_cache(block_type: str, pdf_hash: str, data: dict):
         json.dump(clean, f, indent=2)
 
 def _pdf_hash(pdf_bytes: bytes) -> str:
-    return hashlib.sha256(pdf_bytes).hexdigest()
+    # Include PROMPT_VERSION in hash so any prompt change invalidates old cache entries
+    versioned = pdf_bytes + PROMPT_VERSION.encode()
+    return hashlib.sha256(versioned).hexdigest()
 
 
 # ─── Prompts (essential parameters only) ─────────────────────────────────────

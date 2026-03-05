@@ -204,8 +204,23 @@ class CalculationEngine:
         delta_v = float(self.ovr.get("delta_v_ripple", 2.0))
         fsw     = self.fsw
 
-        # RMS ripple current (worst case D=0.5)
-        i_ripple_rms = i_dc * math.sqrt(0.25)   # D=0.5 → sqrt(D(1-D))
+        # Phase current ripple — use motor inductance if available, else worst-case D=0.5
+        lph_uh = self.motor.get("lph_uh", "") if self.motor else ""
+        try:
+            lph = float(lph_uh) * 1e-6 if lph_uh not in ("", None) else 0.0
+        except (TypeError, ValueError):
+            lph = 0.0
+
+        if lph > 0:
+            # Accurate: ΔI = Vbus × D(1-D) / (Lph × fsw), worst case D=0.5
+            delta_i_phase = (self.v_bus * 0.25) / (lph * fsw)
+            # RMS ripple current on DC bus (3-phase SPWM)
+            i_ripple_rms  = delta_i_phase / (2 * math.sqrt(3))
+            ripple_method = f"Motor Lph={float(lph_uh):.1f}µH (accurate)"
+        else:
+            # Fallback: generic worst-case D=0.5 estimate
+            i_ripple_rms  = i_dc * math.sqrt(0.25)
+            ripple_method = "D=0.5 estimate (enter Lph for accuracy)"
 
         # Required bulk capacitance
         c_req_uf = (i_ripple_rms / (8 * fsw * delta_v)) * 1e6
@@ -235,6 +250,7 @@ class CalculationEngine:
         return {
             "i_dc_a":                   round(i_dc,               2),
             "i_ripple_rms_a":           round(i_ripple_rms,       2),
+            "ripple_method":            ripple_method,
             "delta_v_target_v":         delta_v,
             "c_bulk_required_uf":       round(c_req_uf,           1),
             "n_bulk_caps":              n_caps,
@@ -272,9 +288,16 @@ class CalculationEngine:
 
         # Allow 0.5V droop
         droop    = float(self.ovr.get("bootstrap_droop_v", 0.5))
-        c_boot   = qg / droop
+        c_boot   = qg / droop          # exact required capacitance (Farads)
         c_boot_nf= c_boot * 1e9
-        c_std_nf = 220   # standard
+
+        # Snap to nearest E12 standard cap value (nF), with 2× safety margin
+        c_boot_with_margin = c_boot_nf * 2.0
+        E12_nF = [1,1.2,1.5,1.8,2.2,2.7,3.3,3.9,4.7,5.6,6.8,8.2,
+                  10,12,15,18,22,27,33,39,47,56,68,82,
+                  100,120,150,180,220,270,330,470,680,1000]
+        c_std_nf = float(next((v for v in E12_nF if v >= c_boot_with_margin), E12_nF[-1]))
+        c_std_nf = max(100.0, c_std_nf)   # practical floor: 100nF
 
         # Bootstrap diode Vf
         vf_diode = 0.5
@@ -397,14 +420,15 @@ class CalculationEngine:
         if rs_std < 1.0: rs_std = 1.0    # practical minimum
         if rs_std > 100: rs_std = 100.0  # practical maximum
 
-        # Snubber capacitor: Cs ≈ 2–4× Coss
-        cs_pf_raw   = coss_pf * 3
-        cs_pf_std   = max(100, _nearest_e(cs_pf_raw) * 1e12 if cs_pf_raw > 0 else 1000)
-        cs_pf_std   = 1000   # practical standard: 1nF / 100Ω
+        # Snubber capacitor: Cs ≈ 3× Coss, snapped to nearest E12 cap decade
+        cs_pf_raw = coss_pf * 3 if coss_pf > 0 else 1000.0
+        E12_pF = [100,120,150,180,220,270,330,390,470,560,680,820,
+                  1000,1200,1500,1800,2200,2700,3300,4700]
+        cs_pf_std = float(next((v for v in E12_pF if v >= cs_pf_raw), E12_pF[-1]))
+        cs_pf_std = max(100.0, cs_pf_std)
 
-        # Standard snubber recommendation
-        rs_recommend = 10.0    # Ω
-        cs_recommend = 1000.0  # pF = 1nF
+        rs_recommend = max(1.0, min(100.0, round(rs_std, 0)))
+        cs_recommend = cs_pf_std
 
         # Snubber power dissipation (per MOSFET)
         p_snubber = 0.5 * (cs_recommend * 1e-12) * (self.v_peak**2) * self.fsw

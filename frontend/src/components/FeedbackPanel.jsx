@@ -5,147 +5,142 @@ import CalculationsPanel from './CalculationsPanel.jsx'
 export default function FeedbackPanel({ config }) {
   const { state } = useProject()
   const calc = state.project.calculations
-  const sys = state.project.system_specs
+  const sys  = state.project.system_specs
 
   const shunts = calc?.shunt_resistors
-  const prot = calc?.protection
+  const prot   = calc?.protection_dividers
+
+  const secHead = {
+    fontSize: 11, fontWeight: 700, color: 'var(--txt-2)',
+    textTransform: 'uppercase', letterSpacing: '.06em',
+    padding: '9px 14px 7px',
+    borderBottom: '1px solid var(--border-1)',
+    display: 'flex', alignItems: 'center', gap: 6,
+  }
 
   return (
-    <div className="flex gap-4 h-full">
-      <div className="flex flex-col gap-4 flex-1">
-        {/* Header */}
-        <div className="card p-4 flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
-            style={{ background: `${config.color}20`, border: `1px solid ${config.color}40` }}>
-            🔄
-          </div>
+    <div style={{ display: 'flex', gap: 14, height: '100%', minHeight: 0 }}>
+
+      {/* ── Left: content ─────────────────────────────────────── */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+
+        {/* Header card */}
+        <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+            background: `${config.color}18`, border: `1px solid ${config.color}35`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
+          }}>🔄</div>
           <div>
-            <h2 className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>
+            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>
               Feedback Block — Sensing Chain &amp; Protection
-            </h2>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              Connects MOSFETs (Block 4) → MCU (Block 1). Current sensing, ADC chain, OCP, OVP, OTP.
-            </p>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 2 }}>
+              Connects MOSFETs → MCU. Current sensing, ADC chain, OCP/OVP/OTP protection.
+            </div>
           </div>
         </div>
 
-        {/* Signal chain diagram */}
-        <div className="card p-4">
-          <div className="text-xs font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>
+        {/* Signal chain */}
+        <div className="card" style={{ padding: '12px 14px' }}>
+          <div style={{ ...secHead, padding: '0 0 8px', border: 'none', marginBottom: 8 }}>
             📡 Sensing Signal Chain
           </div>
-          <div className="flex items-center gap-2 flex-wrap text-xs">
-            <ChainBlock color="#ef4444" label="Phase Current" sub="MOSFET Source" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <ChainBlock color="#ef4444" label="Phase Current"  sub="MOSFET Source" />
             <Arrow />
-            <ChainBlock color="#f59e0b" label="Shunt Resistor"
-              sub={shunts ? `${shunts.single_shunt.value_mohm} mΩ` : 'R_shunt'} />
+            <ChainBlock color="#f59e0b" label="Shunt Resistor" sub={shunts ? `${shunts.single_shunt.value_mohm} mΩ` : 'R_shunt'} />
             <Arrow />
-            <ChainBlock color="#a855f7" label="CSA Amplifier"
-              sub={shunts ? `Gain ×${shunts.csa_gain}` : 'In Driver IC'} />
+            <ChainBlock color="#a855f7" label="CSA Amplifier"  sub={shunts ? `Gain ×${shunts.csa_gain}` : 'In Driver IC'} />
             <Arrow />
-            <ChainBlock color="#3b82f6" label="ADC Input"
-              sub={shunts ? `${shunts.single_shunt.v_adc_output_v}V @ Imax` : 'MCU ADC'} />
+            <ChainBlock color="#3b82f6" label="ADC Input"      sub={shunts ? `${shunts.single_shunt.v_adc_v}V @ Imax` : 'MCU ADC'} />
             <Arrow />
-            <ChainBlock color="#22c55e" label="MCU FOC"
-              sub="Clarke/Park Transform" />
+            <ChainBlock color="#22c55e" label="MCU FOC"        sub="Clarke/Park Transform" />
           </div>
         </div>
 
-        {/* Two-column grid */}
-        <div className="grid grid-cols-2 gap-4 flex-1">
+        {/* 2×2 grid */}
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, minHeight: 0 }}>
+
           {/* Current Sensing */}
-          <div className="card">
-            <div className="section-header">
-              <span>📏</span>
-              <span>Current Sensing</span>
-            </div>
-            <div className="p-4 flex flex-col gap-3 text-xs">
-              <ModeRow
-                mode="Single Shunt (Low-Side)"
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <div style={secHead}><span>📏</span> Current Sensing</div>
+            <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10, fontSize: 11 }}>
+              <ModeRow mode="Single Shunt (Low-Side)" color="#3b82f6"
                 items={shunts?.single_shunt ? [
                   `Rshunt = ${shunts.single_shunt.value_mohm} mΩ`,
-                  `V_shunt @ Imax = ${shunts.single_shunt.v_shunt_at_max_mv} mV`,
-                  `V_ADC = ${shunts.single_shunt.v_adc_output_v} V`,
+                  `V_shunt @ Imax = ${shunts.single_shunt.v_shunt_mv} mV`,
+                  `V_ADC = ${shunts.single_shunt.v_adc_v} V`,
                   `Location: ${shunts.single_shunt.location}`,
                 ] : ['Run calculations first']}
-                color="#3b82f6"
               />
-              <div style={{ height: 1, background: 'var(--border)' }} />
-              <ModeRow
-                mode="3-Phase Shunts"
+              <div style={{ height: 1, background: 'var(--border-1)' }} />
+              <ModeRow mode="3-Phase Shunts" color="#22c55e"
                 items={shunts?.three_shunt ? [
                   `Rshunt = ${shunts.three_shunt.value_mohm} mΩ × 3`,
-                  `V_shunt @ Imax = ${shunts.three_shunt.v_shunt_at_max_mv} mV`,
-                  `V_ADC = ${shunts.three_shunt.v_adc_output_v} V each`,
+                  `V_shunt @ Imax = ${shunts.three_shunt.v_shunt_mv} mV`,
+                  `V_ADC = ${shunts.three_shunt.v_adc_v} V each`,
                   `Location: ${shunts.three_shunt.location}`,
                 ] : ['Run calculations first']}
-                color="#22c55e"
               />
             </div>
           </div>
 
           {/* ADC Timing */}
-          <div className="card">
-            <div className="section-header">
-              <span>⏱️</span>
-              <span>ADC Sampling Strategy</span>
-            </div>
-            <div className="p-4 flex flex-col gap-2 text-xs">
-              <InfoRow label="Sampling Mode" value="Center-aligned PWM" />
-              <InfoRow label="Trigger" value="PWM Timer TRGO at center" />
-              <InfoRow label="ADC Resolution" value="12-bit" />
-              <InfoRow label="Sampling Window (Single Shunt)" value={`~${((1/sys.pwm_freq_hz)*1e6*0.1).toFixed(1)} µs min`} />
-              <InfoRow label="Oversampling (recommended)" value="16× for SNR" />
-              <div className="mt-2 p-2 rounded text-[10px]" style={{ background: 'rgba(88,166,255,0.08)', color: 'var(--text-muted)' }}>
-                ⚠ Single-shunt requires current reconstruction. ADC must sample during a valid voltage vector window. At modulation index &gt; 0.9, minimum on-time must be enforced.
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <div style={secHead}><span>⏱️</span> ADC Sampling Strategy</div>
+            <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 7, fontSize: 11 }}>
+              <InfoRow label="Sampling Mode"     value="Center-aligned PWM" />
+              <InfoRow label="Trigger"           value="PWM Timer TRGO at center" />
+              <InfoRow label="ADC Resolution"    value="12-bit" />
+              <InfoRow label="Sample Window"     value={`~${((1/sys.pwm_freq_hz)*1e6*0.1).toFixed(1)} µs min`} />
+              <InfoRow label="Oversampling"      value="16× recommended" />
+              <div style={{ marginTop: 4, padding: '5px 8px', borderRadius: 5, fontSize: 10, lineHeight: 1.5,
+                background: 'rgba(30,144,255,.06)', color: 'var(--txt-3)', border: '1px solid rgba(30,144,255,.1)' }}>
+                ⚠ Single-shunt requires current reconstruction. ADC must sample during a valid voltage vector window.
               </div>
             </div>
           </div>
 
           {/* Protection */}
-          <div className="card">
-            <div className="section-header">
-              <span>🛡️</span>
-              <span>Protection Chain</span>
-            </div>
-            <div className="p-4 flex flex-col gap-2 text-xs">
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <div style={secHead}><span>🛡️</span> Protection Chain</div>
+            <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, fontSize: 11 }}>
               {prot ? <>
-                <ProtRow label="OCP (Hardware)" value={`${prot.ocp_threshold_a} A`} color="var(--danger)" note={`< ${prot.ocp_response_time_us} µs via driver IC`} />
-                <ProtRow label="OCP (Software)" value={`${sys.max_phase_current} A`} color="var(--warning)" note="MCU comparator, ~10µs latency" />
-                <ProtRow label="OVP" value={`${prot.ovp_threshold_v} V`} color="var(--warning)" note="Resistor divider + LM393" />
-                <ProtRow label="UVP" value={`${prot.uvp_threshold_v} V`} color="var(--warning)" note={`Hyst: ${prot.uvp_hysteresis_v}V`} />
-                <ProtRow label="OTP Warning" value={`${prot.otp_warning_c}°C`} color="#f59e0b" note="NTC → ADC → software" />
-                <ProtRow label="OTP Shutdown" value={`${prot.otp_shutdown_c}°C`} color="var(--danger)" note="Hardware comparator direct" />
-                <ProtRow label="TVS Clamp" value={`${prot.tvs_clamping_v} V`} color="var(--accent)" note={prot.tvs_part} />
-              </> : <span style={{ color: 'var(--text-muted)' }}>Run calculations first</span>}
+                <ProtRow label="OCP (Hardware)" value={`${prot.ocp?.ocp_hw_a ?? '—'} A`}     color="var(--red)"   note="Via driver IC direct shutdown" />
+                <ProtRow label="OCP (Software)" value={`${sys.max_phase_current} A`}            color="var(--amber)" note="MCU comparator, ~10µs latency" />
+                <ProtRow label="OVP"            value={`${prot.ovp?.trip_voltage_v ?? '—'} V`} color="var(--amber)" note="Resistor divider + comparator" />
+                <ProtRow label="UVP"            value={`${prot.uvp?.trip_voltage_v ?? '—'} V`} color="var(--amber)" note={`Hyst: ${prot.uvp?.hysteresis_v ?? '—'}V`} />
+                <ProtRow label="OTP (NTC 80°C)" value="80 °C"                                   color="#f59e0b"      note="NTC → ADC → software" />
+              </> : (
+                <span style={{ color: 'var(--txt-3)', fontSize: 11 }}>Run calculations first</span>
+              )}
             </div>
           </div>
 
-          {/* Dead time info */}
-          <div className="card">
-            <div className="section-header">
-              <span>⏳</span>
-              <span>Dead Time &amp; FOC Notes</span>
-            </div>
-            <div className="p-4 flex flex-col gap-2 text-xs">
+          {/* Dead Time */}
+          <div className="card" style={{ overflow: 'hidden' }}>
+            <div style={secHead}><span>⏳</span> Dead Time &amp; FOC Notes</div>
+            <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 7, fontSize: 11 }}>
               {calc?.dead_time ? <>
                 <InfoRow label="Minimum Dead Time" value={`${calc.dead_time.dt_minimum_ns} ns`} />
-                <InfoRow label="Recommended" value={`${calc.dead_time.dt_recommended_ns} ns`} />
-                <InfoRow label="% of Period" value={`${calc.dead_time.dt_percentage_of_period}%`} />
-                <div className="mt-2 p-2 rounded text-[10px]" style={{ background: 'rgba(210,153,34,0.08)', color: 'var(--warning)' }}>
-                  ⚠ Dead-time compensation is mandatory in FOC firmware. Uncorrected dead-time causes current distortion at low speed and poor efficiency.
+                <InfoRow label="Recommended"       value={`${calc.dead_time.dt_recommended_ns} ns`} />
+                <InfoRow label="% of Period"        value={`${calc.dead_time.dt_pct_of_period}%`} />
+                <div style={{ marginTop: 4, padding: '5px 8px', borderRadius: 5, fontSize: 10, lineHeight: 1.5,
+                  background: 'rgba(255,171,0,.06)', color: 'var(--amber)', border: '1px solid rgba(255,171,0,.15)' }}>
+                  ⚠ Dead-time compensation is mandatory in FOC firmware. Uncorrected dead-time causes current distortion at low speed.
                 </div>
-                <div className="mt-1 p-2 rounded text-[10px]" style={{ background: 'rgba(88,166,255,0.08)', color: 'var(--text-muted)' }}>
-                  For 6-step: same dead time applies. Commutation events must also respect minimum gate charge time.
-                </div>
-              </> : <span style={{ color: 'var(--text-muted)' }}>Run calculations first</span>}
+              </> : (
+                <span style={{ color: 'var(--txt-3)', fontSize: 11 }}>Run calculations first</span>
+              )}
             </div>
           </div>
+
         </div>
       </div>
 
-      {/* Right: calculations */}
-      <div className="w-80 flex-shrink-0">
+      {/* ── Right: calculations ─────────────────────────────────── */}
+      <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
         <CalculationsPanel />
       </div>
     </div>
@@ -154,26 +149,27 @@ export default function FeedbackPanel({ config }) {
 
 function ChainBlock({ color, label, sub }) {
   return (
-    <div
-      className="flex flex-col items-center px-3 py-2 rounded-lg text-center"
-      style={{ background: `${color}15`, border: `1px solid ${color}30`, minWidth: 80 }}
-    >
-      <span className="font-semibold text-xs" style={{ color }}>{label}</span>
-      <span className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{sub}</span>
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      padding: '6px 10px', borderRadius: 8, textAlign: 'center', minWidth: 72,
+      background: `${color}15`, border: `1px solid ${color}30`,
+    }}>
+      <span style={{ fontWeight: 600, fontSize: 11, color }}>{label}</span>
+      <span style={{ fontSize: 9, color: 'var(--txt-3)', marginTop: 2 }}>{sub}</span>
     </div>
   )
 }
 
 function Arrow() {
-  return <span style={{ color: 'var(--text-muted)', fontSize: 16 }}>→</span>
+  return <span style={{ color: 'var(--txt-3)', fontSize: 14 }}>→</span>
 }
 
 function ModeRow({ mode, items, color }) {
   return (
     <div>
-      <div className="font-semibold mb-1" style={{ color }}>{mode}</div>
+      <div style={{ fontWeight: 600, fontSize: 11, color, marginBottom: 4 }}>{mode}</div>
       {items.map((item, i) => (
-        <div key={i} className="flex items-center gap-1" style={{ color: 'var(--text-secondary)' }}>
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--txt-2)', fontSize: 11, lineHeight: 1.6 }}>
           <span style={{ color, opacity: 0.5 }}>•</span> {item}
         </div>
       ))}
@@ -183,24 +179,25 @@ function ModeRow({ mode, items, color }) {
 
 function InfoRow({ label, value }) {
   return (
-    <div className="flex justify-between gap-2">
-      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
-      <span className="font-mono font-semibold" style={{ color: 'var(--text-primary)' }}>{value}</span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+      <span style={{ color: 'var(--txt-3)' }}>{label}</span>
+      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--txt-1)', fontSize: 11 }}>{value}</span>
     </div>
   )
 }
 
 function ProtRow({ label, value, color, note }) {
   return (
-    <div className="flex items-start justify-between gap-2">
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
       <div>
-        <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
-        {note && <div style={{ color: 'var(--text-muted)', fontSize: 10 }}>{note}</div>}
+        <div style={{ color: 'var(--txt-2)' }}>{label}</div>
+        {note && <div style={{ color: 'var(--txt-3)', fontSize: 10 }}>{note}</div>}
       </div>
-      <span className="font-mono font-bold px-2 py-0.5 rounded text-xs flex-shrink-0"
-        style={{ background: `${color}18`, color }}>
-        {value}
-      </span>
+      <span style={{
+        fontFamily: 'var(--font-mono)', fontWeight: 700, flexShrink: 0,
+        padding: '1px 7px', borderRadius: 4, fontSize: 11,
+        background: `${color}18`, color,
+      }}>{value}</span>
     </div>
   )
 }

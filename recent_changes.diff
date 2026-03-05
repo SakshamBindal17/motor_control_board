@@ -1,0 +1,740 @@
+diff --git a/README.md b/README.md
+index 5316680..2174558 100644
+--- a/README.md
++++ b/README.md
+@@ -229,4 +229,4 @@ Note: The application uses a robust extraction prompt and allows up to `16000` m
+ - 📈 Plotly graphs: loss vs frequency, Bode plot, thermal vs current
+ - 🔬 Simulated oscilloscope waveforms (gate drive, switch node)
+ - 🗂 Multi-project management with project list
+-- 📡 SPICE netlist export
++- 📡 SPICE netlist export
+\ No newline at end of file
+diff --git a/backend/calc_engine.py b/backend/calc_engine.py
+index 313e84d..d365383 100644
+--- a/backend/calc_engine.py
++++ b/backend/calc_engine.py
+@@ -204,8 +204,23 @@ class CalculationEngine:
+         delta_v = float(self.ovr.get("delta_v_ripple", 2.0))
+         fsw     = self.fsw
+ 
+-        # RMS ripple current (worst case D=0.5)
+-        i_ripple_rms = i_dc * math.sqrt(0.25)   # D=0.5 → sqrt(D(1-D))
++        # Phase current ripple — use motor inductance if available, else worst-case D=0.5
++        lph_uh = self.motor.get("lph_uh", "") if self.motor else ""
++        try:
++            lph = float(lph_uh) * 1e-6 if lph_uh not in ("", None) else 0.0
++        except (TypeError, ValueError):
++            lph = 0.0
++
++        if lph > 0:
++            # Accurate: ΔI = Vbus × D(1-D) / (Lph × fsw), worst case D=0.5
++            delta_i_phase = (self.v_bus * 0.25) / (lph * fsw)
++            # RMS ripple current on DC bus (3-phase SPWM)
++            i_ripple_rms  = delta_i_phase / (2 * math.sqrt(3))
++            ripple_method = f"Motor Lph={float(lph_uh):.1f}µH (accurate)"
++        else:
++            # Fallback: generic worst-case D=0.5 estimate
++            i_ripple_rms  = i_dc * math.sqrt(0.25)
++            ripple_method = "D=0.5 estimate (enter Lph for accuracy)"
+ 
+         # Required bulk capacitance
+         c_req_uf = (i_ripple_rms / (8 * fsw * delta_v)) * 1e6
+@@ -235,6 +250,7 @@ class CalculationEngine:
+         return {
+             "i_dc_a":                   round(i_dc,               2),
+             "i_ripple_rms_a":           round(i_ripple_rms,       2),
++            "ripple_method":            ripple_method,
+             "delta_v_target_v":         delta_v,
+             "c_bulk_required_uf":       round(c_req_uf,           1),
+             "n_bulk_caps":              n_caps,
+@@ -272,9 +288,16 @@ class CalculationEngine:
+ 
+         # Allow 0.5V droop
+         droop    = float(self.ovr.get("bootstrap_droop_v", 0.5))
+-        c_boot   = qg / droop
++        c_boot   = qg / droop          # exact required capacitance (Farads)
+         c_boot_nf= c_boot * 1e9
+-        c_std_nf = 220   # standard
++
++        # Snap to nearest E12 standard cap value (nF), with 2× safety margin
++        c_boot_with_margin = c_boot_nf * 2.0
++        E12_nF = [1,1.2,1.5,1.8,2.2,2.7,3.3,3.9,4.7,5.6,6.8,8.2,
++                  10,12,15,18,22,27,33,39,47,56,68,82,
++                  100,120,150,180,220,270,330,470,680,1000]
++        c_std_nf = float(next((v for v in E12_nF if v >= c_boot_with_margin), E12_nF[-1]))
++        c_std_nf = max(100.0, c_std_nf)   # practical floor: 100nF
+ 
+         # Bootstrap diode Vf
+         vf_diode = 0.5
+@@ -397,14 +420,15 @@ class CalculationEngine:
+         if rs_std < 1.0: rs_std = 1.0    # practical minimum
+         if rs_std > 100: rs_std = 100.0  # practical maximum
+ 
+-        # Snubber capacitor: Cs ≈ 2–4× Coss
+-        cs_pf_raw   = coss_pf * 3
+-        cs_pf_std   = max(100, _nearest_e(cs_pf_raw) * 1e12 if cs_pf_raw > 0 else 1000)
+-        cs_pf_std   = 1000   # practical standard: 1nF / 100Ω
++        # Snubber capacitor: Cs ≈ 3× Coss, snapped to nearest E12 cap decade
++        cs_pf_raw = coss_pf * 3 if coss_pf > 0 else 1000.0
++        E12_pF = [100,120,150,180,220,270,330,390,470,560,680,820,
++                  1000,1200,1500,1800,2200,2700,3300,4700]
++        cs_pf_std = float(next((v for v in E12_pF if v >= cs_pf_raw), E12_pF[-1]))
++        cs_pf_std = max(100.0, cs_pf_std)
+ 
+-        # Standard snubber recommendation
+-        rs_recommend = 10.0    # Ω
+-        cs_recommend = 1000.0  # pF = 1nF
++        rs_recommend = max(1.0, min(100.0, round(rs_std, 0)))
++        cs_recommend = cs_pf_std
+ 
+         # Snubber power dissipation (per MOSFET)
+         p_snubber = 0.5 * (cs_recommend * 1e-12) * (self.v_peak**2) * self.fsw
+diff --git a/backend/claude_service.py b/backend/claude_service.py
+index fbf76f8..02b263e 100644
+--- a/backend/claude_service.py
++++ b/backend/claude_service.py
+@@ -16,6 +16,9 @@ import re
+ 
+ CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
+ 
++# Bump this string whenever prompts change — forces cache re-extraction automatically
++PROMPT_VERSION = "v4"
++
+ def _cache_path(block_type: str, pdf_hash: str) -> str:
+     folder = os.path.join(CACHE_DIR, block_type)
+     os.makedirs(folder, exist_ok=True)
+@@ -37,7 +40,9 @@ def _save_cache(block_type: str, pdf_hash: str, data: dict):
+         json.dump(clean, f, indent=2)
+ 
+ def _pdf_hash(pdf_bytes: bytes) -> str:
+-    return hashlib.sha256(pdf_bytes).hexdigest()
++    # Include PROMPT_VERSION in hash so any prompt change invalidates old cache entries
++    versioned = pdf_bytes + PROMPT_VERSION.encode()
++    return hashlib.sha256(versioned).hexdigest()
+ 
+ 
+ # ─── Prompts (essential parameters only) ─────────────────────────────────────
+diff --git a/frontend/src/components/MotorForm.jsx b/frontend/src/components/MotorForm.jsx
+index 5d18447..78eb6d3 100644
+--- a/frontend/src/components/MotorForm.jsx
++++ b/frontend/src/components/MotorForm.jsx
+@@ -3,14 +3,14 @@ import { useProject } from '../context/ProjectContext.jsx'
+ import CalculationsPanel from './CalculationsPanel.jsx'
+ 
+ const MOTOR_FIELDS = [
+-  { key: 'type', label: 'Motor Type', type: 'select', options: ['PMSM', 'BLDC', 'ACIM'], note: '' },
+-  { key: 'max_speed_rpm', label: 'Max Speed', type: 'number', unit: 'RPM', note: '' },
+-  { key: 'pole_pairs', label: 'Pole Pairs (p)', type: 'number', unit: '', note: 'Electrical = mechanical × pole pairs' },
+-  { key: 'rph_mohm', label: 'Phase Resistance (Rph)', type: 'number', unit: 'mΩ', note: 'Varies per motor — check datasheet or measure' },
+-  { key: 'lph_uh', label: 'Phase Inductance (Lph)', type: 'number', unit: 'µH', note: 'Ld/Lq for PMSM (use avg if not salient)' },
+-  { key: 'kt_nm_per_a', label: 'Torque Constant (Kt)', type: 'number', unit: 'Nm/A', note: 'From motor datasheet' },
+-  { key: 'rated_torque_nm', label: 'Rated Torque', type: 'number', unit: 'Nm', note: '' },
+-  { key: 'back_emf_v_per_krpm', label: 'Back-EMF Constant (Ke)', type: 'number', unit: 'V/kRPM', note: 'Line-to-line, peak or RMS (note which)' },
++  { key: 'type',               label: 'Motor Type',             type: 'select', options: ['PMSM','BLDC','ACIM'], unit: '',       note: '' },
++  { key: 'max_speed_rpm',      label: 'Max Speed',              type: 'number', unit: 'RPM',    note: '' },
++  { key: 'pole_pairs',         label: 'Pole Pairs (p)',         type: 'number', unit: '',       note: 'Electrical = mechanical × pole pairs' },
++  { key: 'rph_mohm',           label: 'Phase Resistance (Rph)', type: 'number', unit: 'mΩ',    note: 'Varies per motor — check datasheet or measure' },
++  { key: 'lph_uh',             label: 'Phase Inductance (Lph)', type: 'number', unit: 'µH',    note: 'Ld/Lq for PMSM (use avg if not salient)' },
++  { key: 'kt_nm_per_a',        label: 'Torque Constant (Kt)',   type: 'number', unit: 'Nm/A',  note: 'From motor datasheet' },
++  { key: 'rated_torque_nm',    label: 'Rated Torque',           type: 'number', unit: 'Nm',    note: '' },
++  { key: 'back_emf_v_per_krpm',label: 'Back-EMF Constant (Ke)',type: 'number', unit: 'V/kRPM',note: 'Line-to-line, peak or RMS (note which)' },
+ ]
+ 
+ export default function MotorForm({ config }) {
+@@ -21,66 +21,83 @@ export default function MotorForm({ config }) {
+     dispatch({ type: 'SET_MOTOR_SPECS', payload: { [key]: value } })
+   }
+ 
+-  // Derived calculations
+-  const ke = parseFloat(specs.back_emf_v_per_krpm) || 0
+-  const kt = parseFloat(specs.kt_nm_per_a) || 0
+-  const rph = parseFloat(specs.rph_mohm) / 1000 || 0
+-  const lph = parseFloat(specs.lph_uh) / 1e6 || 0
+-  const rpm = parseFloat(specs.max_speed_rpm) || 0
+-  const p = parseFloat(specs.pole_pairs) || 4
+-  const fsw = state.project.system_specs.pwm_freq_hz
++  // Derived live calculations
++  const ke   = parseFloat(specs.back_emf_v_per_krpm) || 0
++  const kt   = parseFloat(specs.kt_nm_per_a)         || 0
++  const rph  = parseFloat(specs.rph_mohm) / 1000     || 0
++  const lph  = parseFloat(specs.lph_uh)  / 1e6       || 0
++  const rpm  = parseFloat(specs.max_speed_rpm)        || 0
++  const p    = parseFloat(specs.pole_pairs)           || 4
++  const fsw  = state.project.system_specs.pwm_freq_hz
+   const imax = state.project.system_specs.max_phase_current
++  const vbus = state.project.system_specs.bus_voltage
+ 
+-  const we_max = (rpm * p * 2 * Math.PI) / 60
+-  const vbemf_max = ke * (rpm / 1000)
+-  const copper_loss_w = imax * imax * rph * 1.5  // 3-phase
+-  const l_ratio = lph > 0 ? (rph / (2 * Math.PI * (fsw / 10))) / lph : null
++  const we_max        = (rpm * p * 2 * Math.PI) / 60
++  const vbemf_max     = ke * (rpm / 1000)
++  const copper_loss_w = imax * imax * rph * 1.5
+   const time_const_ms = rph > 0 ? (lph / rph) * 1000 : null
+ 
++  const sectionTitle = {
++    fontSize: 11, fontWeight: 700, color: 'var(--txt-2)',
++    textTransform: 'uppercase', letterSpacing: '.06em',
++    padding: '10px 16px 6px',
++    borderBottom: '1px solid var(--border-1)',
++    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
++  }
++
+   return (
+-    <div className="flex gap-4 h-full">
+-      {/* Motor form */}
+-      <div className="flex flex-col gap-4 flex-1">
+-        {/* Header */}
+-        <div className="card p-4 flex items-start gap-3">
+-          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
+-            style={{ background: `${config.color}20`, border: `1px solid ${config.color}40` }}>
+-            🌀
+-          </div>
++    <div style={{ display: 'flex', gap: 14, height: '100%', minHeight: 0 }}>
++
++      {/* ── Left: form ─────────────────────────────────────────── */}
++      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
++
++        {/* Header card */}
++        <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
++          <div style={{
++            width: 40, height: 40, borderRadius: 10, flexShrink: 0,
++            background: `${config.color}18`, border: `1px solid ${config.color}35`,
++            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
++          }}>🌀</div>
+           <div>
+-            <h2 className="font-bold text-base" style={{ color: 'var(--text-primary)' }}>
+-              PMSM Motor Parameters
+-            </h2>
+-            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
++            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>PMSM Motor Parameters</div>
++            <div style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 2 }}>
+               Manual entry — Rph and Lph vary per motor. Enter values from your motor datasheet or measurements.
+-            </p>
++            </div>
+           </div>
+         </div>
+ 
+-        <div className="flex gap-4 flex-1">
++        <div style={{ flex: 1, display: 'flex', gap: 12, minHeight: 0 }}>
++
+           {/* Input form */}
+-          <div className="card flex-1 overflow-auto">
+-            <div className="section-header">
+-              <span>🔧</span>
+-              <span>Motor Specifications</span>
+-              <span className="ml-auto text-xs" style={{ color: 'var(--text-muted)' }}>
+-                All values mandatory for accurate calculations
++          <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
++            <div style={sectionTitle}>
++              <span>🔧 Motor Specifications</span>
++              <span style={{ fontSize: 10, color: 'var(--txt-3)', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
++                All values needed for accurate calculations
+               </span>
+             </div>
+-            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
++
++            <div style={{
++              flex: 1, overflowY: 'auto', padding: 16,
++              display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14,
++            }}>
+               {MOTOR_FIELDS.map(field => (
+-                <div key={field.key} className="flex flex-col gap-1">
+-                  <label className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
++                <div key={field.key}>
++                  <label style={{
++                    display: 'block', fontSize: 11, fontWeight: 600,
++                    color: 'var(--txt-2)', marginBottom: 5,
++                  }}>
+                     {field.label}
+                     {field.unit && (
+-                      <span className="ml-1 font-normal" style={{ color: 'var(--text-muted)' }}>
++                      <span style={{ marginLeft: 5, fontSize: 10, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)', fontWeight: 400 }}>
+                         [{field.unit}]
+                       </span>
+                     )}
+                   </label>
++
+                   {field.type === 'select' ? (
+                     <select
+-                      className="input-field"
++                      className="inp"
+                       value={specs[field.key] || ''}
+                       onChange={e => update(field.key, e.target.value)}
+                     >
+@@ -90,64 +107,75 @@ export default function MotorForm({ config }) {
+                     <input
+                       type="number"
+                       step="any"
+-                      className="input-field font-mono"
++                      className="inp inp-mono"
+                       value={specs[field.key] || ''}
+                       onChange={e => update(field.key, e.target.value)}
+                       placeholder="Enter value…"
+                     />
+                   )}
++
+                   {field.note && (
+-                    <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{field.note}</span>
++                    <div style={{ fontSize: 10, color: 'var(--txt-3)', marginTop: 4, lineHeight: 1.4 }}>
++                      {field.note}
++                    </div>
+                   )}
+                 </div>
+               ))}
+             </div>
+           </div>
+ 
+-          {/* Derived values */}
+-          <div className="w-72 flex-shrink-0 flex flex-col gap-3">
+-            <div className="card p-3">
+-              <div className="text-xs font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>
+-                📐 Derived Parameters
+-              </div>
+-              <div className="flex flex-col gap-2">
++          {/* Derived + checks */}
++          <div style={{ width: 240, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
++
++            {/* Derived values */}
++            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
++              <div style={{ ...sectionTitle, fontSize: 10 }}>📐 Derived Parameters</div>
++              <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                 <DerivedRow label="Max Electrical Speed" value={we_max > 0 ? we_max.toFixed(0) : '—'} unit="rad/s" />
+-                <DerivedRow label="Back-EMF @ Max RPM" value={vbemf_max > 0 ? vbemf_max.toFixed(1) : '—'} unit="V pk" />
+-                <DerivedRow label="Copper Loss @ Imax" value={copper_loss_w > 0 ? copper_loss_w.toFixed(1) : '—'} unit="W" />
+-                <DerivedRow label="Phase Time Const" value={time_const_ms ? time_const_ms.toFixed(2) : '—'} unit="ms" />
+-                <DerivedRow label="L/R Ratio" value={l_ratio ? l_ratio.toFixed(4) : '—'} unit="" />
++                <DerivedRow label="Back-EMF @ Max RPM"   value={vbemf_max > 0 ? vbemf_max.toFixed(1) : '—'} unit="V pk" />
++                <DerivedRow label="Copper Loss @ Imax"   value={copper_loss_w > 0 ? copper_loss_w.toFixed(1) : '—'} unit="W" />
++                <DerivedRow label="Phase Time Const"     value={time_const_ms ? time_const_ms.toFixed(2) : '—'} unit="ms" />
+               </div>
+             </div>
+ 
+-            <div className="card p-3">
+-              <div className="text-xs font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>
+-                ⚠️ Design Checks
+-              </div>
+-              <div className="flex flex-col gap-1.5 text-xs">
+-                <Check
+-                  ok={vbemf_max < state.project.system_specs.bus_voltage * 0.9}
+-                  text={`Back-EMF (${vbemf_max.toFixed(1)}V) < Bus (${state.project.system_specs.bus_voltage}V)`}
++            {/* Design checks */}
++            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
++              <div style={{ ...sectionTitle, fontSize: 10 }}>⚠️ Design Checks</div>
++              <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
++                <CheckRow
++                  ok={vbemf_max > 0 && vbemf_max < vbus * 0.9}
++                  warn={vbemf_max === 0}
++                  text={`Back-EMF ${vbemf_max > 0 ? vbemf_max.toFixed(1)+'V' : '?'} < Bus ${vbus}V`}
+                 />
+-                <Check
+-                  ok={copper_loss_w < state.project.system_specs.power * 0.05}
+-                  text={`Copper loss ${copper_loss_w.toFixed(1)}W < 5% of power`}
++                <CheckRow
++                  ok={copper_loss_w > 0 && copper_loss_w < state.project.system_specs.power * 0.05}
++                  warn={copper_loss_w === 0}
++                  text={`Copper loss ${copper_loss_w > 0 ? copper_loss_w.toFixed(1)+'W' : '?'} < 5% power`}
+                 />
+-                <Check
++                <CheckRow
+                   ok={!!specs.rph_mohm && !!specs.lph_uh}
++                  warn={false}
+                   text="Rph and Lph entered"
+                 />
+-                <Check
++                <CheckRow
+                   ok={!!specs.pole_pairs}
++                  warn={false}
+                   text="Pole pairs specified"
+                 />
++                <CheckRow
++                  ok={!!specs.kt_nm_per_a}
++                  warn={false}
++                  text="Torque constant Kt entered"
++                />
+               </div>
+             </div>
++
+           </div>
+         </div>
+       </div>
+ 
+-      {/* Calculations */}
+-      <div className="w-80 flex-shrink-0">
++      {/* ── Right: calculations ─────────────────────────────────── */}
++      <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+         <CalculationsPanel />
+       </div>
+     </div>
+@@ -156,22 +184,24 @@ export default function MotorForm({ config }) {
+ 
+ function DerivedRow({ label, value, unit }) {
+   return (
+-    <div className="flex items-center justify-between text-xs">
+-      <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+-      <span className="font-mono font-bold" style={{ color: 'var(--accent)' }}>
++    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
++      <span style={{ fontSize: 11, color: 'var(--txt-3)' }}>{label}</span>
++      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, color: 'var(--accent)' }}>
+         {value}{unit ? ` ${unit}` : ''}
+       </span>
+     </div>
+   )
+ }
+ 
+-function Check({ ok, text }) {
++function CheckRow({ ok, warn, text }) {
++  const color = warn ? 'var(--txt-3)' : ok ? 'var(--green)' : 'var(--amber)'
++  const icon  = warn ? '○' : ok ? '✓' : '⚠'
+   return (
+-    <div className="flex items-start gap-1.5">
+-      <span style={{ color: ok ? 'var(--success)' : 'var(--warning)', flexShrink: 0 }}>
+-        {ok ? '✓' : '⚠'}
++    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
++      <span style={{ color, flexShrink: 0, fontSize: 11, fontWeight: 700 }}>{icon}</span>
++      <span style={{ fontSize: 11, color: warn ? 'var(--txt-3)' : ok ? 'var(--txt-2)' : 'var(--amber)', lineHeight: 1.4 }}>
++        {text}
+       </span>
+-      <span style={{ color: ok ? 'var(--text-secondary)' : 'var(--warning)' }}>{text}</span>
+     </div>
+   )
+ }
+diff --git a/frontend/src/components/SettingsModal.jsx b/frontend/src/components/SettingsModal.jsx
+index 800537a..0ee9aa8 100644
+--- a/frontend/src/components/SettingsModal.jsx
++++ b/frontend/src/components/SettingsModal.jsx
+@@ -6,14 +6,14 @@ import { useProject } from '../context/ProjectContext.jsx'
+ export default function SettingsModal() {
+   const { state, dispatch } = useProject()
+   const { settings, project } = state
+-  const [showKey, setShowKey] = useState(false)
+-  const [localKey, setLocalKey] = useState(settings.api_key)
++  const [showKey,    setShowKey]    = useState(false)
++  const [localKey,   setLocalKey]   = useState(settings.api_key)
+   const [localSpecs, setLocalSpecs] = useState({ ...project.system_specs })
+ 
+   function close() { dispatch({ type: 'TOGGLE_SETTINGS' }) }
+ 
+   function save() {
+-    dispatch({ type: 'SET_SETTINGS', payload: { api_key: localKey.trim() } })
++    dispatch({ type: 'SET_SETTINGS',  payload: { api_key: localKey.trim() } })
+     dispatch({ type: 'SET_SYSTEM_SPECS', payload: localSpecs })
+     toast.success('Settings saved')
+     close()
+@@ -24,115 +24,178 @@ export default function SettingsModal() {
+   }
+ 
+   const SYS_FIELDS = [
+-    { key: 'bus_voltage', label: 'Bus Voltage (Nominal)', unit: 'V', type: 'number' },
+-    { key: 'peak_voltage', label: 'Bus Voltage (Peak)', unit: 'V', type: 'number' },
+-    { key: 'power', label: 'Power', unit: 'W', type: 'number' },
+-    { key: 'max_phase_current', label: 'Max Phase Current', unit: 'A', type: 'number' },
+-    { key: 'pwm_freq_hz', label: 'PWM Frequency', unit: 'Hz', type: 'number' },
+-    { key: 'ambient_temp_c', label: 'Ambient Temperature', unit: '°C', type: 'number' },
+-    { key: 'gate_drive_voltage', label: 'Gate Drive Voltage', unit: 'V', type: 'number' },
++    { key: 'bus_voltage',        label: 'Bus Voltage (Nominal)',  unit: 'V'  },
++    { key: 'peak_voltage',       label: 'Bus Voltage (Peak)',     unit: 'V'  },
++    { key: 'power',              label: 'Power',                  unit: 'W'  },
++    { key: 'max_phase_current',  label: 'Max Phase Current',      unit: 'A'  },
++    { key: 'pwm_freq_hz',        label: 'PWM Frequency',          unit: 'Hz' },
++    { key: 'ambient_temp_c',     label: 'Ambient Temperature',    unit: '°C' },
++    { key: 'gate_drive_voltage', label: 'Gate Drive Voltage',     unit: 'V'  },
+   ]
+ 
++  // overlay
++  const overlay = {
++    position: 'fixed', inset: 0, zIndex: 50,
++    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
++    background: 'rgba(0,0,0,0.65)',
++    backdropFilter: 'blur(4px)',
++  }
++
++  // modal box — uses --bg-2 which is always a solid opaque colour
++  const box = {
++    background: 'var(--bg-2)',
++    border: '1px solid var(--border-2)',
++    borderRadius: 12,
++    width: '100%',
++    maxWidth: 640,
++    maxHeight: '90vh',
++    overflowY: 'auto',
++    display: 'flex',
++    flexDirection: 'column',
++    boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
++  }
++
++  const sectionTitle = {
++    fontSize: 12, fontWeight: 700, color: 'var(--txt-2)',
++    marginBottom: 10, textTransform: 'uppercase', letterSpacing: '.06em',
++  }
++
++  const label = {
++    fontSize: 11, fontWeight: 600, color: 'var(--txt-2)', marginBottom: 4, display: 'block',
++  }
++
++  const unitBadge = {
++    marginLeft: 5, fontSize: 10,
++    color: 'var(--txt-3)', fontFamily: 'var(--font-mono)',
++  }
++
+   return (
+-    <div
+-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+-      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
+-      onClick={e => e.target === e.currentTarget && close()}
+-    >
+-      <div
+-        className="card w-full max-w-2xl max-h-[90vh] overflow-auto flex flex-col"
+-        style={{ background: 'var(--bg-card)' }}
+-      >
+-        {/* Header */}
+-        <div className="flex items-center gap-2 p-5 border-b" style={{ borderColor: 'var(--border)' }}>
+-          <span className="text-xl">⚙️</span>
+-          <h2 className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>Settings</h2>
+-          <button onClick={close} className="ml-auto p-1.5 rounded-lg btn-secondary">
+-            <X size={16} />
+-          </button>
++    <div style={overlay} onClick={e => e.target === e.currentTarget && close()}>
++      <div style={box}>
++
++        {/* ── Header ── */}
++        <div style={{
++          display: 'flex', alignItems: 'center', gap: 10,
++          padding: '14px 20px',
++          borderBottom: '1px solid var(--border-1)',
++        }}>
++          <span style={{ fontSize: 18 }}>⚙️</span>
++          <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>Settings</span>
++          <button
++            onClick={close}
++            className="btn btn-ghost btn-icon"
++            style={{ marginLeft: 'auto' }}
++          ><X size={15}/></button>
+         </div>
+ 
+-        <div className="p-5 flex flex-col gap-6">
+-          {/* API Key */}
++        <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 24 }}>
++
++          {/* ── API Key ── */}
+           <section>
+-            <h3 className="font-semibold text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
+-              🔑 Anthropic API Key
+-            </h3>
+-            <div className="flex gap-2">
+-              <div className="relative flex-1">
+-                <input
+-                  type={showKey ? 'text' : 'password'}
+-                  className="input-field font-mono pr-10"
+-                  placeholder="sk-ant-..."
+-                  value={localKey}
+-                  onChange={e => setLocalKey(e.target.value)}
+-                />
+-                <button
+-                  type="button"
+-                  onClick={() => setShowKey(v => !v)}
+-                  className="absolute right-3 top-1/2 -translate-y-1/2"
+-                  style={{ color: 'var(--text-muted)' }}
+-                >
+-                  {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
+-                </button>
+-              </div>
++            <div style={sectionTitle}>🔑 Anthropic API Key</div>
++            <div style={{ position: 'relative' }}>
++              <input
++                type={showKey ? 'text' : 'password'}
++                className="inp inp-mono"
++                placeholder="sk-ant-api03-..."
++                value={localKey}
++                onChange={e => setLocalKey(e.target.value)}
++                style={{ paddingRight: 40 }}
++              />
++              <button
++                type="button"
++                onClick={() => setShowKey(v => !v)}
++                style={{
++                  position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
++                  background: 'none', border: 'none', cursor: 'pointer',
++                  color: 'var(--txt-3)',
++                }}
++              >
++                {showKey ? <EyeOff size={14}/> : <Eye size={14}/>}
++              </button>
+             </div>
+-            <p className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
+-              Get your key at <a href="https://console.anthropic.com" target="_blank" rel="noreferrer"
+-                className="underline" style={{ color: 'var(--accent)' }}>console.anthropic.com</a>.
+-              Key is stored locally in your browser only. Model: <code className="font-mono">claude-haiku-4-5-20251001</code> (~$0.01 per 3 datasheets).
++            <p style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 6, lineHeight: 1.5 }}>
++              Get your key at{' '}
++              <a href="https://console.anthropic.com" target="_blank" rel="noreferrer"
++                style={{ color: 'var(--accent)', textDecoration: 'underline' }}>
++                console.anthropic.com
++              </a>.
++              {' '}Stored locally in your browser only.{' '}
++              Model: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--cyan)' }}>claude-haiku-4-5-20251001</code>
++              {' '}(~$0.01 per 3 datasheets).
+             </p>
+           </section>
+ 
+-          {/* System Specs */}
++          {/* ── System Specs ── */}
+           <section>
+-            <h3 className="font-semibold text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
+-              ⚡ System Specifications
+-            </h3>
+-            <div className="grid grid-cols-2 gap-3">
++            <div style={sectionTitle}>⚡ System Specifications</div>
++            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+               {SYS_FIELDS.map(f => (
+-                <div key={f.key} className="flex flex-col gap-1">
+-                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
++                <div key={f.key}>
++                  <label style={label}>
+                     {f.label}
+-                    <span className="ml-1" style={{ color: 'var(--text-muted)' }}>[{f.unit}]</span>
++                    <span style={unitBadge}>[{f.unit}]</span>
+                   </label>
+                   <input
+-                    type={f.type}
+-                    className="input-field font-mono text-sm"
++                    type="number"
++                    className="inp inp-mono"
+                     value={localSpecs[f.key] ?? ''}
+                     onChange={e => updateSpec(f.key, e.target.value)}
++                    placeholder={String(localSpecs[f.key] ?? '')}
+                   />
+                 </div>
+               ))}
+             </div>
+           </section>
+ 
+-          {/* Theme */}
++          {/* ── Theme ── */}
+           <section>
+-            <h3 className="font-semibold text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
+-              🎨 Theme
+-            </h3>
+-            <div className="flex gap-2">
++            <div style={sectionTitle}>🎨 Theme</div>
++            <div style={{ display: 'flex', gap: 8 }}>
+               {['dark', 'light'].map(t => (
+                 <button
+                   key={t}
+                   onClick={() => dispatch({ type: 'SET_SETTINGS', payload: { theme: t } })}
+-                  className={settings.theme === t ? 'btn-primary' : 'btn-secondary'}
++                  className="btn"
++                  style={{
++                    padding: '6px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
++                    background: settings.theme === t ? 'var(--accent)' : 'var(--bg-3)',
++                    color:      settings.theme === t ? '#fff'          : 'var(--txt-2)',
++                    border:     `1px solid ${settings.theme === t ? 'var(--accent)' : 'var(--border-2)'}`,
++                    cursor: 'pointer',
++                  }}
+                 >
+                   {t === 'dark' ? '🌙 Dark' : '☀️ Light'}
+                 </button>
+               ))}
+             </div>
+           </section>
++
+         </div>
+ 
+-        {/* Footer */}
+-        <div className="p-5 border-t flex justify-end gap-2" style={{ borderColor: 'var(--border)' }}>
+-          <button onClick={close} className="btn-secondary">Cancel</button>
+-          <button onClick={save} className="btn-primary flex items-center gap-2">
+-            <Save size={14} /> Save Settings
++        {/* ── Footer ── */}
++        <div style={{
++          display: 'flex', justifyContent: 'flex-end', gap: 8,
++          padding: '16px 20px',
++          marginTop: 20,
++          borderTop: '1px solid var(--border-1)',
++        }}>
++          <button
++            onClick={close}
++            className="btn btn-ghost"
++            style={{ fontSize: 12 }}
++          >
++            Cancel
++          </button>
++          <button
++            onClick={save}
++            className="btn btn-primary"
++            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
++          >
++            <Save size={13}/> Save Settings
+           </button>
+         </div>
++
+       </div>
+     </div>
+   )
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index aa91502..6130e8c 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -47,11 +47,17 @@
+     --border-1: #dce6f0;
+     --border-2: #c8d8eb;
+     --border-3: #a8c0d8;
+-    --txt-1: #0d1829;
+-    --txt-2: #3d5a7a;
+-    --txt-3: #7a9ab8;
++    --txt-1: #0d1829;   /* #0d1829 on white → 16:1 ✓ */
++    --txt-2: #2d4a6a;   /* was #3d5a7a → bumped darker, 7:1 ✓ */
++    --txt-3: #4a6a8a;   /* was #7a9ab8 (2.8:1 FAIL) → now 4.8:1 ✓ */
++    --txt-4: #6a8aaa;   /* extra muted — stays above 3:1 for decorative use */
++    --txt-inv: #ffffff;
+     --accent: #0a6edc;
+     --accent-h: #0080ff;
++    --cyan:  #0090a0;   /* darkened for light bg contrast */
++    --green: #008040;   /* darkened for light bg contrast */
++    --amber: #b06000;   /* darkened for light bg contrast */
++    --red:   #cc2200;   /* darkened for light bg contrast */
+     --glow-blue: none;
+     --glow-cyan: none;
+     --glow-green: none;
+@@ -211,7 +217,39 @@ body::before {
+ .inp-mono { font-family: var(--font-mono); font-size: 12px; }
+ .inp-sm { padding: 5px 9px; font-size: 12px; border-radius: 5px; }
+ 
+-select.inp { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238fa3bc' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; }
++select.inp {
++  appearance: none;
++  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238fa3bc' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
++  background-repeat: no-repeat;
++  background-position: right 10px center;
++  padding-right: 30px;
++}
++
++/* ── Placeholder text — explicit for both themes ─────────────────────── */
++.inp::placeholder {
++  color: var(--txt-3);
++  opacity: 1;           /* Firefox reduces opacity by default */
++}
++
++/* ── Light theme input overrides — stronger contrast ─────────────────── */
++.light .inp {
++  background: #ffffff;
++  border-color: #b0c8e0;
++  color: #0d1829;
++}
++.light .inp::placeholder {
++  color: #6a8aaa;       /* darker than --txt-3 so it's readable on white */
++  opacity: 1;
++}
++.light .inp:focus {
++  border-color: var(--accent);
++  background: #ffffff;
++  box-shadow: 0 0 0 3px rgba(10,110,220,.10);
++}
++/* select arrow recolored for light mode */
++.light select.inp {
++  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%234a6a8a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
++}
+ 
+ /* ─── Status / Badge ─────────────────────────────────────────────────── */
+ .badge {

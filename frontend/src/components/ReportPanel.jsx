@@ -12,7 +12,7 @@ export default function ReportPanel() {
 
   async function download(format) {
     if (!project.calculations) {
-      toast.error('Please run calculations first before generating a report')
+      toast.error('Run calculations first before generating a report')
       return
     }
     setLoading(format)
@@ -22,18 +22,15 @@ export default function ReportPanel() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project: {
-            name: project.name,
-            system_specs: project.system_specs,
-          },
+          project: { name: project.name, system_specs: project.system_specs },
           calculations: project.calculations,
           format,
         }),
       })
       if (!res.ok) throw new Error((await res.json()).detail)
       const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
       a.href = url
       a.download = format === 'pdf' ? 'mc_design_report.pdf' : 'mc_bom.xlsx'
       a.click()
@@ -46,79 +43,98 @@ export default function ReportPanel() {
     }
   }
 
-  function saveSessionJson() {
-    const data = JSON.stringify(project, null, 2)
-    const blob = new Blob([data], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${project.name.replace(/\s+/g, '_')}_full_session.json`
-    a.click()
-    URL.revokeObjectURL(url)
-    toast.success('Session JSON saved!')
+  const hasCalc    = !!project.calculations
+  const doneBlocks = ['mcu','driver','mosfet'].filter(k => project.blocks[k]?.status === 'done')
+
+  // Overlay + modal box — same pattern as SettingsModal
+  const overlay = {
+    position: 'fixed', inset: 0, zIndex: 50,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+    background: 'rgba(0,0,0,0.65)',
+    backdropFilter: 'blur(4px)',
   }
 
-  const hasCalc = !!project.calculations
-  const doneBlocks = ['mcu', 'driver', 'mosfet'].filter(k => project.blocks[k]?.status === 'done')
+  const box = {
+    background: 'var(--bg-2)',
+    border: '1px solid var(--border-2)',
+    borderRadius: 12,
+    width: '100%',
+    maxWidth: 480,
+    display: 'flex',
+    flexDirection: 'column',
+    boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
+  }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }}
-      onClick={e => e.target === e.currentTarget && close()}
-    >
-      <div className="card w-full max-w-lg" style={{ background: 'var(--bg-card)' }}>
-        <div className="flex items-center gap-2 p-5 border-b" style={{ borderColor: 'var(--border)' }}>
-          <span className="text-xl">📋</span>
-          <h2 className="font-bold text-lg" style={{ color: 'var(--text-primary)' }}>Export Report</h2>
-          <button onClick={close} className="ml-auto p-1.5 rounded-lg btn-secondary"><X size={16} /></button>
+    <div style={overlay} onClick={e => e.target === e.currentTarget && close()}>
+      <div style={box}>
+
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '14px 20px',
+          borderBottom: '1px solid var(--border-1)',
+        }}>
+          <span style={{ fontSize: 18 }}>📋</span>
+          <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>Export Report</span>
+          <button onClick={close} className="btn btn-ghost btn-icon" style={{ marginLeft: 'auto' }}>
+            <X size={15}/>
+          </button>
         </div>
 
-        <div className="p-5 flex flex-col gap-4">
-          {/* Status */}
-          <div className="rounded-lg p-3 text-xs" style={{ background: 'var(--bg-secondary)' }}>
-            <div className="font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>Project Status</div>
+        <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+          {/* Status block */}
+          <div style={{
+            background: 'var(--bg-3)', borderRadius: 8, padding: '10px 14px',
+            display: 'flex', flexDirection: 'column', gap: 4,
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--txt-2)', marginBottom: 4,
+              textTransform: 'uppercase', letterSpacing: '.06em' }}>
+              Project Status
+            </div>
             <StatusLine label="Datasheets extracted" ok={doneBlocks.length === 3}
               value={`${doneBlocks.length}/3 (${doneBlocks.join(', ') || 'none'})`} />
-            <StatusLine label="Calculations complete" ok={hasCalc} value={hasCalc ? 'Yes' : 'Not yet'} />
-            <StatusLine label="Motor specs" ok={!!project.blocks.motor.specs?.max_speed_rpm} value="Manual entry" />
+            <StatusLine label="Calculations complete" ok={hasCalc}
+              value={hasCalc ? 'Yes' : 'Not yet'} />
+            <StatusLine label="Motor specs entered"
+              ok={!!project.blocks.motor.specs?.max_speed_rpm}
+              value="Manual entry" />
           </div>
 
+          {/* Warning if no calcs */}
           {!hasCalc && (
-            <div className="rounded-lg p-3 text-xs flex gap-2"
-              style={{ background: 'rgba(248,81,73,0.1)', color: 'var(--danger)', border: '1px solid rgba(248,81,73,0.2)' }}>
-              ⚠ Run calculations first (in MOSFET or Passives block) to include results in the report.
+            <div style={{
+              padding: '8px 12px', borderRadius: 7, fontSize: 11, lineHeight: 1.5,
+              background: 'rgba(255,68,68,.08)', color: 'var(--red)',
+              border: '1px solid rgba(255,68,68,.2)',
+            }}>
+              ⚠ Run calculations first (in any IC block) to include results in the report.
             </div>
           )}
 
-          {/* Export options */}
-          <div className="flex flex-col gap-3">
-            <ExportCard
-              icon={<FileText size={22} />}
-              title="PDF Design Report"
-              desc="Full engineering report with specs, loss analysis, BOM, thermal, and protection thresholds"
-              color="#ef4444"
-              loading={loading === 'pdf'}
-              onClick={() => download('pdf')}
-            />
-            <ExportCard
-              icon={<Table size={22} />}
-              title="Excel BOM + Calculations"
-              desc="Bill of Materials with component values, quantities, and all calculation results in spreadsheet"
-              color="#22c55e"
-              loading={loading === 'excel'}
-              onClick={() => download('excel')}
-            />
-            <ExportCard
-              icon={<Download size={22} />}
-              title="Session JSON"
-              desc="Save full project session including all extracted parameters and selections. Can be loaded later."
-              color="#3b82f6"
-              loading={false}
-              onClick={saveSessionJson}
-            />
+          {/* Export cards */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <ExportCard icon={<FileText size={20}/>} title="PDF Design Report"
+              desc="Full engineering report with specs, loss analysis, BOM, thermal, protection thresholds"
+              color="#ef4444" loading={loading === 'pdf'} onClick={() => download('pdf')} />
+            <ExportCard icon={<Table size={20}/>} title="Excel BOM + Calculations"
+              desc="Bill of Materials with component values, quantities, and all calculation results"
+              color="#22c55e" loading={loading === 'excel'} onClick={() => download('excel')} />
           </div>
         </div>
+
+        {/* Footer */}
+        <div style={{
+          borderTop: '1px solid var(--border-1)',
+          padding: '12px 20px',
+          display: 'flex', justifyContent: 'flex-end',
+        }}>
+          <button onClick={close} className="btn btn-ghost" style={{ fontSize: 12 }}>
+            Close
+          </button>
+        </div>
+
       </div>
     </div>
   )
@@ -129,30 +145,40 @@ function ExportCard({ icon, title, desc, color, loading, onClick }) {
     <button
       onClick={onClick}
       disabled={loading}
-      className="card flex items-center gap-4 p-4 text-left w-full transition-all"
-      style={{ cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1 }}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 14, padding: '12px 14px',
+        background: 'var(--bg-3)', border: '1px solid var(--border-1)',
+        borderRadius: 9, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1,
+        textAlign: 'left', width: '100%',
+        transition: 'border-color .15s, background .15s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = color; e.currentTarget.style.background = `${color}08` }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-1)'; e.currentTarget.style.background = 'var(--bg-3)' }}
     >
-      <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
-        style={{ background: `${color}20`, color, border: `1px solid ${color}30` }}>
-        {loading ? <span className="animate-spin">⏳</span> : icon}
+      <div style={{
+        width: 44, height: 44, borderRadius: 10, flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: `${color}20`, color, border: `1px solid ${color}30`,
+      }}>
+        {loading ? <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⏳</span> : icon}
       </div>
-      <div>
-        <div className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{title}</div>
-        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{desc}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--txt-1)' }}>{title}</div>
+        <div style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 2, lineHeight: 1.4 }}>{desc}</div>
       </div>
-      <Download size={14} className="ml-auto flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
+      <Download size={13} style={{ color: 'var(--txt-3)', flexShrink: 0 }}/>
     </button>
   )
 }
 
 function StatusLine({ label, ok, value }) {
   return (
-    <div className="flex items-center justify-between py-0.5">
-      <div className="flex items-center gap-1.5">
-        <span style={{ color: ok ? 'var(--success)' : 'var(--warning)' }}>{ok ? '✓' : '○'}</span>
-        <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ color: ok ? 'var(--green)' : 'var(--amber)', fontWeight: 700 }}>{ok ? '✓' : '○'}</span>
+        <span style={{ color: 'var(--txt-2)' }}>{label}</span>
       </div>
-      <span style={{ color: ok ? 'var(--success)' : 'var(--text-muted)' }}>{value}</span>
+      <span style={{ color: ok ? 'var(--green)' : 'var(--txt-3)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{value}</span>
     </div>
   )
 }
