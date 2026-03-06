@@ -1,0 +1,45 @@
+# Vercel Speed Insights Implementation
+
+Successfully implemented Vercel Speed Insights for the motor control board frontend application.
+
+## Changes Made
+
+### 1. Package Installation
+- **Modified**: `package.json`
+  - Added `@vercel/speed-insights` (v1.3.1) as a dependency
+- **Modified**: `package-lock.json`
+  - Updated lock file with the new dependency and its transitive dependencies (180 packages)
+
+### 2. Speed Insights Integration
+- **Modified**: `src/main.jsx`
+  - Imported `SpeedInsights` component from `@vercel/speed-insights/react`
+  - Added `<SpeedInsights />` component within the React.StrictMode wrapper, after the Toaster component
+  - This ensures Speed Insights tracks performance metrics across all pages of the application
+
+## Implementation Details
+
+This is a React application built with Vite, so I followed the Vercel Speed Insights documentation for React/Create React App integration:
+
+1. Installed the `@vercel/speed-insights` package via npm
+2. Imported the `SpeedInsights` component from `@vercel/speed-insights/react` 
+3. Added the component to the root render in `main.jsx`
+
+The `<SpeedInsights />` component is a wrapper around the tracking script that provides seamless integration with React. It will automatically:
+- Load the Speed Insights tracking script from `/_vercel/speed-insights/script.js`
+- Track Core Web Vitals and other performance metrics
+- Send data to the Vercel dashboard when the app is deployed
+
+## Verification
+
+- ✅ Build completed successfully with `npm run build`
+- ✅ No linting errors introduced
+- ✅ All dependencies properly installed and lock file updated
+- ✅ Build artifacts (dist/) correctly excluded from git tracking
+
+## Next Steps
+
+After deployment to Vercel:
+1. Enable Speed Insights in the Vercel dashboard (Project → Speed Insights tab)
+2. Deploy the application 
+3. Verify that `/_vercel/speed-insights/script.js` is accessible
+4. Wait for user traffic to start seeing performance data in the dashboard
