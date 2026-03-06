@@ -112,6 +112,7 @@ class CalculationEngine:
         # Junction temp estimate
         t_junc = self.t_amb + p_total_1 * (rth_jc + 0.5 + 20.0)
 
+        # Inverter switching losses only (excludes motor copper/core losses)
         eff = max(0, (1 - p_total_6 / self.power) * 100)
 
         return {
@@ -212,15 +213,20 @@ class CalculationEngine:
             lph = 0.0
 
         if lph > 0:
-            # Accurate: ΔI = Vbus × D(1-D) / (Lph × fsw), worst case D=0.5
+            # Accurate: ΔI = Vbus × D(1-D) / (Lph × fsw), worst-case D=0.5
             delta_i_phase = (self.v_bus * 0.25) / (lph * fsw)
-            # RMS ripple current on DC bus (3-phase SPWM)
+            # RMS ripple on DC bus for 3-phase SPWM (phase interleaving reduces it)
             i_ripple_rms  = delta_i_phase / (2 * math.sqrt(3))
             ripple_method = f"Motor Lph={float(lph_uh):.1f}µH (accurate)"
         else:
-            # Fallback: generic worst-case D=0.5 estimate
-            i_ripple_rms  = i_dc * math.sqrt(0.25)
-            ripple_method = "D=0.5 estimate (enter Lph for accuracy)"
+            # 3-phase SPWM formula at M=0.9 (better than single-phase D=0.5 estimate)
+            # I_cap_rms ≈ (M × I_pk / 2) × √(√3/π − 3√3/(4π) × M)
+            M = 0.9
+            sq3 = math.sqrt(3)
+            i_ripple_rms = (M * self.i_max / 2) * math.sqrt(
+                sq3 / math.pi - 3 * sq3 / (4 * math.pi) * M
+            )
+            ripple_method = "3-phase SPWM estimate M=0.9 — enter motor Lph for accurate calc"
 
         # Required bulk capacitance
         c_req_uf = (i_ripple_rms / (8 * fsw * delta_v)) * 1e6
@@ -282,9 +288,10 @@ class CalculationEngine:
     # 4. Bootstrap Capacitor
     # ═══════════════════════════════════════════════════════════════════
     def calc_bootstrap_cap(self) -> dict:
-        qg_nc = _get(self.mosfet, "qg", 92);  qg = qg_nc * 1e-9
-        vgs_th= _get(self.mosfet, "vgs_th", 3.0)
-        vdrv  = self.v_drv
+        # _get already returns SI (Coulombs) — do NOT multiply by 1e-9 again
+        qg     = _get(self.mosfet, "qg", 92e-9)   # C  (SI)
+        vgs_th = _get(self.mosfet, "vgs_th", 3.0)  # V
+        vdrv   = self.v_drv
 
         # Allow 0.5V droop
         droop    = float(self.ovr.get("bootstrap_droop_v", 0.5))
@@ -359,9 +366,10 @@ class CalculationEngine:
         v_adc3     = v_sh3_mv * 1e-3 * csa_gain
         p_sh3_ea   = (i_max/math.sqrt(2))**2 * r3_mohm * 1e-3  # RMS per phase
 
-        # ADC SNR budget
-        lsb_mv     = (3300 / 4096)  # 12-bit, 3.3V ref, in mV
-        bits_used  = math.log2(v_adc1 * 1000 / lsb_mv) if v_adc1 > 0 else 0
+        # ADC SNR budget — use extracted MCU ADC resolution, default 12-bit
+        adc_bits = _get(self.mcu, "adc_resolution", 12) or 12
+        lsb_mv   = 3300 / (2 ** int(adc_bits))   # mV per LSB
+        bits_used = math.log2(v_adc1 * 1000 / lsb_mv) if v_adc1 > 0 else 0
 
         return {
             "csa_gain":            csa_gain,
@@ -680,38 +688,51 @@ class CalculationEngine:
     # 11. Dead Time
     # ═══════════════════════════════════════════════════════════════════
     def calc_dead_time(self) -> dict:
-        td_off_ns = _get(self.mosfet, "td_off",      50) or 50
-        tf_ns     = _get(self.mosfet, "tf",          20) or 20
-        t_prop_ns = _get(self.driver, "prop_delay_off", 60) or 60
-        t_drv_ns  = _get(self.driver, "prop_delay_on",  60) or 60
+        # _get returns SI (seconds) — use SI fallbacks, then convert to ns for arithmetic
+        td_off_s  = _get(self.mosfet, "td_off",       50e-9) or 50e-9   # seconds
+        tf_s      = _get(self.mosfet, "tf",            20e-9) or 20e-9   # seconds
+        t_prop_s  = _get(self.driver, "prop_delay_off", 60e-9) or 60e-9  # seconds
+        t_drv_s   = _get(self.driver, "prop_delay_on",  60e-9) or 60e-9  # seconds
 
-        # Minimum: td_off + tf + propagation + margin
-        dt_min    = td_off_ns + tf_ns + t_prop_ns + 20
-        dt_rec    = round(dt_min * 1.5, 0)
+        # Convert to nanoseconds for readable arithmetic
+        td_off_ns = td_off_s * 1e9
+        tf_ns     = tf_s     * 1e9
+        t_prop_ns = t_prop_s * 1e9
 
-        # MCU dead time register resolution (from MCU params or default 8ns)
-        dt_res_ns = _get(self.mcu, "pwm_deadtime_resolution", 8) or 8
+        # Minimum: td_off + tf + propagation + 20ns margin
+        dt_min    = td_off_ns + tf_ns + t_prop_ns + 20   # ns
+        dt_rec    = round(dt_min * 1.5)                  # ns, 50% safety margin
+
+        # MCU dead-time register resolution — key "pwm_deadtime_res" (matches extraction)
+        dt_res_s  = _get(self.mcu, "pwm_deadtime_res", 8e-9) or 8e-9   # seconds
+        dt_res_ns = dt_res_s * 1e9                                       # ns
+
         dt_reg    = math.ceil(dt_rec / dt_res_ns)
-        dt_actual = dt_reg * dt_res_ns
+        dt_actual = dt_reg * dt_res_ns                   # ns (multiple of resolution)
 
-        period_ns = 1e9 / self.fsw
-        dt_pct    = (dt_actual / period_ns) * 100
+        # Feasibility check vs MCU max dead time
+        dt_max_s   = _get(self.mcu, "pwm_deadtime_max", 1000e-9) or 1000e-9
+        dt_max_ns  = dt_max_s * 1e9
+        dt_feasible = dt_actual <= dt_max_ns
 
-        # Effective duty cycle reduction
-        duty_loss_pct = dt_actual / period_ns * 100
+        period_ns     = 1e9 / self.fsw
+        dt_pct        = (dt_actual / period_ns) * 100
+        duty_loss_pct = dt_pct
 
         return {
-            "dt_minimum_ns":          round(dt_min,       0),
-            "dt_recommended_ns":      dt_rec,
+            "dt_minimum_ns":          round(dt_min,       1),
+            "dt_recommended_ns":      round(dt_rec,       1),
             "dt_register_count":      dt_reg,
-            "dt_actual_ns":           dt_actual,
+            "dt_actual_ns":           round(dt_actual,    1),
             "dt_pct_of_period":       round(dt_pct,       3),
             "switching_period_ns":    round(period_ns,    1),
             "effective_duty_loss_pct":round(duty_loss_pct,3),
-            "td_off_ns":              td_off_ns,
-            "tf_ns":                  tf_ns,
-            "prop_delay_off_ns":      t_prop_ns,
-            "dt_resolution_ns":       dt_res_ns,
+            "dt_feasible":            dt_feasible,
+            "dt_max_ns":              round(dt_max_ns,    1),
+            "td_off_ns":              round(td_off_ns,    1),
+            "tf_ns":                  round(tf_ns,        1),
+            "prop_delay_off_ns":      round(t_prop_ns,    1),
+            "dt_resolution_ns":       round(dt_res_ns,    2),
             "notes": {
                 "foc":       "Dead-time compensation required in firmware for accurate FOC below ~10% mod index",
                 "6step":     "6-step commutation: enforce same dead-time at each commutation event",

@@ -347,8 +347,9 @@ select.inp {
   padding: 2px 8px;
   border-radius: 4px;
   background: rgba(30,144,255,.08);
-  min-width: 90px;
-  white-space: nowrap;
+  min-width: 72px;
+  max-width: 130px;
+  word-break: break-word;
 }
 .calc-row .value.warn { color: var(--amber); background: rgba(255,171,0,.10); }
 .calc-row .value.danger { color: var(--red); background: rgba(255,68,68,.10); }

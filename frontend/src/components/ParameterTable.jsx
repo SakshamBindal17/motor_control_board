@@ -62,7 +62,7 @@ function fmtCell(v) {
   return isNaN(n) ? String(v) : n.toLocaleString(undefined, { maximumFractionDigits: 4 })
 }
 
-export default function ParameterTable({ params, blockKey, color = '#1e90ff' }) {
+export default function ParameterTable({ params, blockKey, color = '#1e90ff', calcCritical = null }) {
   const { state, dispatch } = useProject()
   const selParams = state.project.blocks[blockKey]?.selected_params || {}
   const [expanded, setExpanded] = useState({})
@@ -169,6 +169,14 @@ export default function ParameterTable({ params, blockKey, color = '#1e90ff' }) 
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                       <span style={{ fontWeight: 500, color: 'var(--txt-1)' }}>{p.name}</span>
+                      {calcCritical?.has(p.id) && (
+                        <span title="Feeds a calculation directly" style={{
+                          fontSize: 9, fontFamily: 'var(--font-mono)',
+                          padding: '1px 5px', borderRadius: 3,
+                          background: 'rgba(0,212,232,.12)',
+                          color: 'var(--cyan)', fontWeight: 700,
+                        }}>★</span>
+                      )}
                       {multiCond && (
                         <span style={{
                           fontSize: 9, fontFamily: 'var(--font-mono)',

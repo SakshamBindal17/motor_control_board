@@ -8,27 +8,150 @@ import ParameterTable from './ParameterTable.jsx'
 import CalculationsPanel from './CalculationsPanel.jsx'
 import UnitPicker from './UnitPicker.jsx'
 
-// Expected parameter IDs per block type — used to detect missing params
+// ── ESSENTIAL PARAMS ────────────────────────────────────────────────────────
+// These are required for calculations and board design.
+// If Claude fails to extract any of these they appear in the Missing Params
+// section so the user can enter them manually.
 const EXPECTED_PARAMS = {
-  mosfet: ['vds_max','id_cont','rds_on','vgs_th','qg','qgd','qgs','qrr','trr','coss','td_on','tr','td_off','tf','rth_jc','tj_max','body_diode_vf'],
-  driver: ['vcc_range','vcc_uvlo','vbs_max','vbs_uvlo','io_source','io_sink','prop_delay_on','prop_delay_off','deadtime_min','deadtime_default','vil','vih','ocp_threshold','ocp_response','thermal_shutdown','rth_ja','tj_max'],
-  mcu:    ['cpu_freq_max','flash_size','ram_size','adc_resolution','adc_channels','adc_sample_rate','pwm_timers','pwm_resolution','pwm_deadtime_res','pwm_deadtime_max','complementary_outputs','spi_count','uart_count','vdd_range','idd_run','temp_range','gpio_count'],
+  // 17 essential MOSFET params — cover all switching, thermal, and gate-charge calcs
+  mosfet: [
+    'vds_max',        // absolute max voltage rating
+    'id_cont',        // continuous current rating
+    'rds_on',         // conduction loss
+    'vgs_th',         // gate drive headroom (Vdrv - Vth)
+    'qg',             // gate charge loss + bootstrap sizing
+    'qgd',            // Miller charge (gate resistor calc)
+    'qgs',            // gate-source charge
+    'qrr',            // reverse recovery loss
+    'trr',            // reverse recovery time
+    'coss',           // output capacitance (snubber design)
+    'td_on',          // switching timing
+    'tr',             // rise time (switching loss)
+    'td_off',         // turn-off delay (dead-time minimum)
+    'tf',             // fall time (switching loss)
+    'rth_jc',         // thermal: junction temperature estimate
+    'tj_max',         // thermal: margin check
+    'body_diode_vf',  // body diode forward drop
+    'ciss',           // input capacitance (for gate resistor Qg fallback)
+  ],
+  // 15 essential Gate Driver params — supply, drive current, timing, logic thresholds
+  driver: [
+    'vcc_range',       // supply voltage range
+    'vcc_uvlo',        // under-voltage lockout (supply)
+    'vbs_max',         // max bootstrap voltage
+    'vbs_uvlo',        // bootstrap UVLO
+    'io_source',       // peak source current → Rg_on calculation
+    'io_sink',         // peak sink current → Rg_off calculation
+    'prop_delay_on',   // turn-on propagation delay → dead-time calc
+    'prop_delay_off',  // turn-off propagation delay → dead-time calc
+    'deadtime_min',    // built-in minimum dead time (if present)
+    'deadtime_default',// default/fixed dead time (if present)
+    'vil',             // logic low threshold
+    'vih',             // logic high threshold
+    'rth_ja',          // thermal resistance
+    'tj_max',          // max junction temperature
+    'current_sense_gain', // used for shunt resistor sizing
+  ],
+  // 10 essential MCU params — the ones that feed into dead-time and ADC calculations
+  mcu: [
+    'cpu_freq_max',        // max CPU clock
+    'adc_resolution',      // ADC bits → shunt SNR (bits_used calc)
+    'adc_channels',        // number of ADC inputs
+    'adc_sample_rate',     // ADC conversion speed
+    'pwm_timers',          // advanced-control timer count
+    'pwm_resolution',      // PWM counter width (bits)
+    'pwm_deadtime_res',    // dead-time LSB → dt_register = dt_ns / resolution
+    'pwm_deadtime_max',    // dead-time feasibility check
+    'complementary_outputs', // complementary PWM pairs for 3-phase
+    'vdd_range',           // VDD operating range
+  ],
+}
+
+// Set version of the essential lists (used for O(1) lookup in the UI)
+const ESSENTIAL_PARAMS = {
+  mosfet: new Set(EXPECTED_PARAMS.mosfet),
+  driver: new Set(EXPECTED_PARAMS.driver),
+  mcu: new Set(EXPECTED_PARAMS.mcu),
+}
+
+// Params that are directly read by calc_engine.py — engine formula references them by name.
+// ★ badge = "the app reads this value in a formula right now"
+const CALC_CRITICAL = {
+  mosfet: new Set([
+    "rds_on",         // conduction loss, gate resistor
+    "qg",             // gate resistor, bootstrap, gate charge loss
+    "qgd",            // gate resistor (Qgd/Io ratio)
+    "tr",             // switching loss (0.5 × Vbus × Imax × tr × fsw)
+    "tf",             // switching loss
+    "td_off",         // dead time minimum
+    "coss",           // snubber design
+    "qrr",            // reverse recovery loss
+    "body_diode_vf",  // snubber / diode drop
+    "rth_jc",         // thermal → Tj estimate
+    "tj_max",         // thermal margin check
+    "vgs_th",         // gate resistor (Vdrv - Vth drive headroom)
+    "ciss",           // gate resistor (alternative Qg path)
+  ]),
+  driver: new Set([
+    "io_source",      // Rg_on calculation
+    "io_sink",        // Rg_off calculation
+    "prop_delay_on",  // dead time: dt_min = td_off + tf + prop_delay_off + margin
+    "prop_delay_off", // dead time
+    "vbs_uvlo",       // bootstrap voltage check vs UVLO
+    "current_sense_gain", // shunt resistor sizing (V_ADC = Ishunt × Rshunt × gain)
+  ]),
+  mcu: new Set([
+    "pwm_deadtime_res",  // dead time register calculation (dt_reg = dt_ns / resolution)
+    "pwm_deadtime_max",  // dead time feasibility check
+    "adc_resolution",    // shunt ADC SNR / bits-used calculation
+  ]),
 }
 
 const PARAM_LABELS = {
-  vds_max:'Max Drain-Source Voltage', id_cont:'Continuous Drain Current', rds_on:'On-Resistance', vgs_th:'Gate Threshold Voltage',
-  qg:'Total Gate Charge', qgd:'Gate-Drain Charge', qgs:'Gate-Source Charge', qrr:'Reverse Recovery Charge',
-  trr:'Reverse Recovery Time', coss:'Output Capacitance', td_on:'Turn-On Delay', tr:'Rise Time',
-  td_off:'Turn-Off Delay', tf:'Fall Time', rth_jc:'Thermal Resistance (J-C)', tj_max:'Max Junction Temp', body_diode_vf:'Body Diode Vf',
-  vcc_range:'VCC Supply Range', vcc_uvlo:'VCC UVLO', vbs_max:'Max Bootstrap Voltage', vbs_uvlo:'Bootstrap UVLO',
-  io_source:'Peak Source Current', io_sink:'Peak Sink Current', prop_delay_on:'Prop Delay Turn-On', prop_delay_off:'Prop Delay Turn-Off',
-  deadtime_min:'Min Dead Time', deadtime_default:'Default Dead Time', vil:'Input Low Voltage', vih:'Input High Voltage',
-  ocp_threshold:'OCP Threshold', ocp_response:'OCP Response Time', thermal_shutdown:'Thermal Shutdown Temp', rth_ja:'Thermal Resistance (J-A)',
-  cpu_freq_max:'Max CPU Frequency', flash_size:'Flash Size', ram_size:'RAM Size', adc_resolution:'ADC Resolution',
-  adc_channels:'ADC Channels', adc_sample_rate:'ADC Sample Rate', pwm_timers:'PWM Timers', pwm_resolution:'PWM Resolution',
-  pwm_deadtime_res:'Dead-Time Resolution', pwm_deadtime_max:'Max Dead Time', complementary_outputs:'Complementary Outputs',
-  spi_count:'SPI Count', uart_count:'UART Count', vdd_range:'VDD Range', idd_run:'Run Current',
-  temp_range:'Temperature Range', gpio_count:'GPIO Count',
+  // ── MOSFET essential ────────────────────────────────────────────────────
+  vds_max: 'Max Drain-Source Voltage', id_cont: 'Continuous Drain Current',
+  rds_on: 'On-Resistance', vgs_th: 'Gate Threshold Voltage',
+  qg: 'Total Gate Charge', qgd: 'Gate-Drain (Miller) Charge',
+  qgs: 'Gate-Source Charge', qrr: 'Reverse Recovery Charge',
+  trr: 'Reverse Recovery Time', coss: 'Output Capacitance',
+  td_on: 'Turn-On Delay Time', tr: 'Rise Time',
+  td_off: 'Turn-Off Delay Time', tf: 'Fall Time',
+  rth_jc: 'Thermal Resistance (J-C)', tj_max: 'Max Junction Temperature',
+  body_diode_vf: 'Body Diode Forward Voltage',
+  // ── MOSFET good-to-have ─────────────────────────────────────────────────
+  vgs_max: 'Max Gate-Source Voltage', id_pulsed: 'Pulsed Drain Current',
+  ciss: 'Input Capacitance', crss: 'Reverse Transfer Capacitance',
+  avalanche_energy: 'Avalanche Energy', rg_int: 'Internal Gate Resistance',
+  vgs_plateau: 'Gate Plateau Voltage', qoss: 'Output Charge (Qoss)',
+  // ── Gate Driver essential ────────────────────────────────────────────────
+  vcc_range: 'VCC Supply Voltage Range', vcc_uvlo: 'VCC UVLO',
+  vbs_max: 'Max Bootstrap Voltage', vbs_uvlo: 'Bootstrap UVLO',
+  io_source: 'Peak Source Current', io_sink: 'Peak Sink Current',
+  prop_delay_on: 'Prop Delay (Turn-On)', prop_delay_off: 'Prop Delay (Turn-Off)',
+  deadtime_min: 'Minimum Dead Time', deadtime_default: 'Default Dead Time',
+  vil: 'Input Logic Low (VIL)', vih: 'Input Logic High (VIH)',
+  rth_ja: 'Thermal Resistance (J-A)',
+  // ── Gate Driver good-to-have ─────────────────────────────────────────────
+  ocp_threshold: 'OCP Threshold', ocp_response: 'OCP Blanking Time',
+  thermal_shutdown: 'Thermal Shutdown Temp',
+  current_sense_gain: 'Current Sense Amplifier Gain',
+  rise_time_out: 'Driver Output Rise Time',
+  fall_time_out: 'Driver Output Fall Time',
+  // ── MCU essential ────────────────────────────────────────────────────────
+  cpu_freq_max: 'Max CPU Frequency',
+  adc_resolution: 'ADC Resolution', adc_channels: 'ADC Channels',
+  adc_sample_rate: 'ADC Sample Rate', pwm_timers: 'Advanced PWM Timers',
+  pwm_resolution: 'PWM Timer Resolution',
+  pwm_deadtime_res: 'Dead-Time Generator Resolution',
+  pwm_deadtime_max: 'Max Programmable Dead Time',
+  complementary_outputs: 'Complementary Output Pairs',
+  vdd_range: 'VDD Voltage Range',
+  // ── MCU good-to-have ────────────────────────────────────────────────────
+  flash_size: 'Flash Memory Size', ram_size: 'RAM / SRAM Size',
+  spi_count: 'SPI Interfaces', uart_count: 'UART / USART Interfaces',
+  idd_run: 'Run Mode Current', temp_range: 'Operating Temperature Range',
+  gpio_count: 'Total GPIO Count', encoder_interface: 'Encoder / Hall Interface',
+  can_count: 'CAN Bus Interfaces', dma_channels: 'DMA Channels',
 }
 
 export default function BlockPanel({ blockKey, config }) {
@@ -76,8 +199,8 @@ export default function BlockPanel({ blockKey, config }) {
 
   // Detect missing expected params
   const extractedIds = new Set((raw_data?.parameters || []).map(p => p.id))
-  const expectedIds  = EXPECTED_PARAMS[blockKey] || []
-  const missingIds   = expectedIds.filter(id => !extractedIds.has(id))
+  const expectedIds = EXPECTED_PARAMS[blockKey] || []
+  const missingIds = expectedIds.filter(id => !extractedIds.has(id))
 
   // Count multi-condition params per category (for closed-header badge)
   function attentionCountForGroup(params) {
@@ -87,7 +210,7 @@ export default function BlockPanel({ blockKey, config }) {
   return (
     <div style={{ display: 'flex', gap: 14, height: '100%', minHeight: 0 }}>
       {/* ─── Left: Upload + params ─────────────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0, overflowY: 'auto', paddingRight: 4 }}>
 
         {/* Block info card */}
         <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -190,7 +313,7 @@ export default function BlockPanel({ blockKey, config }) {
           </div>
         )}
 
-        {/* Parameter groups */}
+        {/* Parameter groups — two top-level sections: Essential & Good to Have */}
         {status === 'done' && raw_data && (
           <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div className="sec-head">
@@ -199,66 +322,157 @@ export default function BlockPanel({ blockKey, config }) {
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: config.color, marginLeft: 4 }}>
                 {raw_data.parameters?.length || 0}
               </span>
-              <span className="badge-count">{Object.keys(groups).length} categories</span>
             </div>
 
             <div style={{ flex: 1, overflow: 'auto' }}>
-              {Object.entries(groups).map(([cat, params]) => {
-                const isOpen    = collapsed[cat] !== false
-                const attention = attentionCountForGroup(params)
-                return (
-                  <div key={cat}>
-                    <button
-                      className={`collapsible-trigger ${isOpen ? 'open' : ''}`}
-                      onClick={() => setCollapsed(p => ({ ...p, [cat]: !isOpen }))}
-                    >
-                      {isOpen ? <ChevronDown size={11}/> : <ChevronRight size={11}/>}
-                      <span>{cat}</span>
-                      <span style={{
-                        fontSize: 10, fontFamily: 'var(--font-mono)',
-                        padding: '1px 6px', background: 'var(--bg-4)', borderRadius: 4,
-                      }}>{params.length}</span>
-                      {/* Attention badge — visible when collapsed AND has multi-condition params */}
-                      {!isOpen && attention > 0 && (
-                        <span style={{
-                          display: 'flex', alignItems: 'center', gap: 3,
-                          fontSize: 9, fontWeight: 700, fontFamily: 'var(--font-mono)',
-                          padding: '1px 6px', borderRadius: 4,
-                          background: 'rgba(255,171,0,.15)',
-                          color: 'var(--amber)',
-                          border: '1px solid rgba(255,171,0,.3)',
-                        }}>
-                          <AlertTriangle size={8}/> {attention} need{attention === 1 ? 's' : ''} attention
+              {(() => {
+                const essentialSet = ESSENTIAL_PARAMS[blockKey] || new Set()
+                const calcCritSet = CALC_CRITICAL[blockKey] || new Set()
+
+                // Partition ALL extracted params into essential vs good-to-have
+                const allParams = raw_data.parameters || []
+                const essParams = allParams.filter(p => essentialSet.has(p.id))
+                const gthParams = allParams.filter(p => !essentialSet.has(p.id))
+
+                // Group each partition by category
+                function byCategory(params) {
+                  return params.reduce((acc, p) => {
+                    const cat = p.category || 'Other'
+                    if (!acc[cat]) acc[cat] = []
+                    acc[cat].push(p)
+                    return acc
+                  }, {})
+                }
+                const essCats = byCategory(essParams)
+                const gthCats = byCategory(gthParams)
+
+                const essOpen = collapsed['__top_ess__'] !== false  // default open
+                const gthOpen = collapsed['__top_gth__'] !== false  // default open
+
+                // Total attention count for a set of params
+                const essAttention = essParams.filter(p => (p.conditions?.length || 0) > 1).length
+
+                // Sub-category row component
+                function SubCatSection({ cat, params, isCrit = false }) {
+                  const catKey = `__cat__${isCrit ? 'ess' : 'gth'}__${cat}`
+                  const catOpen = collapsed[catKey] !== false
+                  const catAttn = params.filter(p => (p.conditions?.length || 0) > 1).length
+                  return (
+                    <div key={cat} style={{ borderBottom: '1px solid var(--border-1)' }}>
+                      <button
+                        className={`collapsible-trigger ${catOpen ? 'open' : ''}`}
+                        onClick={() => setCollapsed(p => ({ ...p, [catKey]: !catOpen }))}
+                        style={{ paddingLeft: 22, background: 'var(--bg-3)', fontSize: 11 }}
+                      >
+                        {catOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                        <span style={{ color: 'var(--txt-2)' }}>{cat}</span>
+                        <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', padding: '1px 5px', background: 'var(--bg-4)', borderRadius: 3 }}>
+                          {params.length}
                         </span>
+                        {!catOpen && catAttn > 0 && (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: 'rgba(255,171,0,.15)', color: 'var(--amber)', border: '1px solid rgba(255,171,0,.3)' }}>
+                            <AlertTriangle size={8} />{catAttn}
+                          </span>
+                        )}
+                        <span className="chevron"><ChevronDown size={10} /></span>
+                      </button>
+                      {catOpen && (
+                        <div className="table-wrap">
+                          <ParameterTable params={params} blockKey={blockKey} color={config.color}
+                            calcCritical={isCrit ? calcCritSet : null} />
+                        </div>
                       )}
-                      <span className="chevron"><ChevronDown size={11}/></span>
-                    </button>
-                    {isOpen && (
-                      <div className="table-wrap">
-                        <ParameterTable params={params} blockKey={blockKey} color={config.color} />
+                    </div>
+                  )
+                }
+
+                return (
+                  <>
+                    {/* ══ TOP SECTION: ESSENTIAL ═══════════════════════════ */}
+                    <div>
+                      <button
+                        className={`collapsible-trigger ${essOpen ? 'open' : ''}`}
+                        onClick={() => setCollapsed(p => ({ ...p, '__top_ess__': !essOpen }))}
+                        style={{ background: 'rgba(0,230,118,.06)', borderBottom: '1px solid rgba(0,230,118,.15)' }}
+                      >
+                        {essOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                        <span style={{ fontWeight: 700, color: 'var(--green)' }}>✦ Essential</span>
+                        <span style={{ fontSize: 9, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)' }}>
+                          {essParams.length} params — required for board design
+                        </span>
+                        {essAttention > 0 && (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'rgba(255,171,0,.15)', color: 'var(--amber)', border: '1px solid rgba(255,171,0,.3)' }}>
+                            <AlertTriangle size={8} /> {essAttention} need attention
+                          </span>
+                        )}
+                        <span
+                          title="★ calc-critical = this value is read directly by a formula in the calculation engine. Enter these first for accurate results."
+                          style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--cyan)', fontFamily: 'var(--font-mono)', fontWeight: 600, cursor: 'help' }}>
+                          ★ {essParams.filter(p => calcCritSet.has(p.id)).length} used in formulas
+                        </span>
+                        <span className="chevron"><ChevronDown size={11} /></span>
+                      </button>
+
+                      {essOpen && (
+                        <div>
+                          {Object.entries(essCats).map(([cat, params]) =>
+                            <SubCatSection key={cat} cat={cat} params={params} isCrit={true} />
+                          )}
+                          {essParams.length === 0 && (
+                            <div style={{ padding: '12px 16px', fontSize: 12, color: 'var(--txt-3)' }}>
+                              No essential parameters extracted — check the datasheet.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ══ TOP SECTION: GOOD TO HAVE ════════════════════════ */}
+                    {gthParams.length > 0 && (
+                      <div>
+                        <button
+                          className={`collapsible-trigger ${gthOpen ? 'open' : ''}`}
+                          onClick={() => setCollapsed(p => ({ ...p, '__top_gth__': !gthOpen }))}
+                          style={{ background: 'rgba(30,144,255,.04)', borderBottom: '1px solid rgba(30,144,255,.12)' }}
+                        >
+                          {gthOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                          <span style={{ fontWeight: 700, color: 'var(--cyan)' }}>◈ Good to Have</span>
+                          <span style={{ fontSize: 9, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)' }}>
+                            {gthParams.length} extra params — reference only
+                          </span>
+                          <span className="chevron"><ChevronDown size={11} /></span>
+                        </button>
+
+                        {gthOpen && (
+                          <div style={{ opacity: 0.85 }}>
+                            {Object.entries(gthCats).map(([cat, params]) =>
+                              <SubCatSection key={cat} cat={cat} params={params} isCrit={false} />
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
-                )
-              })}
 
-              {/* Missing parameters section */}
-              {missingIds.length > 0 && (
-                <MissingParamsSection
-                  missingIds={missingIds}
-                  blockKey={blockKey}
-                  color={config.color}
-                  collapsed={collapsed}
-                  setCollapsed={setCollapsed}
-                />
-              )}
+                    {/* ══ MISSING / NOT EXTRACTED ══════════════════════════ */}
+                    {missingIds.length > 0 && (
+                      <MissingParamsSection
+                        missingIds={missingIds}
+                        blockKey={blockKey}
+                        color={config.color}
+                        collapsed={collapsed}
+                        setCollapsed={setCollapsed}
+                      />
+                    )}
+                  </>
+                )
+              })()}
             </div>
           </div>
         )}
       </div>
 
       {/* ─── Right: Calculations panel ───────────────────────────── */}
-      <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
         <CalculationsPanel />
       </div>
     </div>
@@ -267,11 +481,11 @@ export default function BlockPanel({ blockKey, config }) {
 
 function StatusChip({ status, color }) {
   const map = {
-    idle:       { cls: 'badge-idle',  label: 'Ready' },
-    uploading:  { cls: 'badge-busy',  label: 'Uploading…' },
-    extracting: { cls: 'badge-busy',  label: 'Extracting…' },
-    done:       { cls: 'badge-done',  label: '✓ Done' },
-    error:      { cls: 'badge-error', label: '✗ Error' },
+    idle: { cls: 'badge-idle', label: 'Ready' },
+    uploading: { cls: 'badge-busy', label: 'Uploading…' },
+    extracting: { cls: 'badge-busy', label: 'Extracting…' },
+    done: { cls: 'badge-done', label: '✓ Done' },
+    error: { cls: 'badge-error', label: '✗ Error' },
   }
   const s = map[status] || map.idle
   return <span className={`badge ${s.cls}`}>{s.label}</span>
@@ -279,23 +493,31 @@ function StatusChip({ status, color }) {
 
 function MissingParamsSection({ missingIds, blockKey, color, collapsed, setCollapsed }) {
   const { state, dispatch } = useProject()
-  const [vals,  setVals]  = useState({})
+  const [vals, setVals] = useState({})
   const [units, setUnits] = useState({})
   const isOpen = collapsed['__missing__'] !== false
+  const gthOpen = collapsed['__missing_gth__'] !== false  // good-to-have sub-section
 
-  // Which IDs have already been manually set (live in raw_data as 'Manual Entry')
   const manualParams = (state.project.blocks[blockKey]?.raw_data?.parameters || [])
     .filter(p => p.category === 'Manual Entry')
   const manualIds = new Set(manualParams.map(p => p.id))
 
-  // Still-missing = missingIds that haven't been set yet
   const stillMissing = missingIds.filter(id => !manualIds.has(id))
+
+  // Split still-missing into calc-critical vs good-to-have
+  const critSet = CALC_CRITICAL[blockKey] || new Set()
+  const missingCrit = stillMissing.filter(id => critSet.has(id))
+  const missingGth = stillMissing.filter(id => !critSet.has(id))
+
+  // Same split for manually-set params (to show which category they came from)
+  const manualCrit = manualParams.filter(p => critSet.has(p.id))
+  const manualGth = manualParams.filter(p => !critSet.has(p.id))
 
   function commit(id) {
     const v = parseFloat(vals[id])
     if (isNaN(v)) return
     dispatch({ type: 'SET_MANUAL_PARAM', payload: { block: blockKey, param_id: id, value: v, unit: units[id] || '' } })
-    setVals(p => { const n = {...p}; delete n[id]; return n })
+    setVals(p => { const n = { ...p }; delete n[id]; return n })
   }
 
   function deleteManual(id) {
@@ -305,105 +527,165 @@ function MissingParamsSection({ missingIds, blockKey, color, collapsed, setColla
   const totalCount = stillMissing.length + manualParams.length
   if (totalCount === 0) return null
 
+  // Reusable row for a missing param entry input
+  function MissingRow({ id, isCrit }) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 5,
+        background: isCrit ? 'rgba(255,68,68,.05)' : 'rgba(30,144,255,.04)',
+        border: `1px solid ${isCrit ? 'rgba(255,68,68,.15)' : 'rgba(30,144,255,.12)'}`,
+      }}>
+        {isCrit
+          ? <AlertTriangle size={11} color="var(--red)" style={{ flexShrink: 0 }} />
+          : <span style={{ width: 11, textAlign: 'center', fontSize: 11, color: 'var(--cyan)', flexShrink: 0 }}>◈</span>
+        }
+        <span style={{ flex: 1, fontSize: 11, color: 'var(--txt-2)', minWidth: 130 }}>
+          {PARAM_LABELS[id] || id}
+          <span style={{ fontSize: 9, color: 'var(--txt-4)', fontFamily: 'var(--font-mono)', marginLeft: 5 }}>{id}</span>
+        </span>
+        <input
+          type="number" step="any" placeholder="value"
+          className="inp inp-mono inp-sm"
+          style={{ width: 75 }}
+          value={vals[id] || ''}
+          onChange={e => setVals(p => ({ ...p, [id]: e.target.value }))}
+          onKeyDown={e => { if (e.key === 'Enter') commit(id) }}
+        />
+        <UnitPicker
+          value={units[id] || ''}
+          onChange={v => setUnits(p => ({ ...p, [id]: v }))}
+          style={{ width: 80 }}
+        />
+        <button
+          onClick={() => commit(id)}
+          disabled={!vals[id]}
+          style={{
+            padding: '2px 9px', borderRadius: 4, fontSize: 11, fontWeight: 600, flexShrink: 0,
+            background: vals[id] ? `${color}20` : 'var(--bg-3)',
+            color: vals[id] ? color : 'var(--txt-4)',
+            border: `1px solid ${vals[id] ? color + '40' : 'transparent'}`,
+            cursor: vals[id] ? 'pointer' : 'default',
+          }}
+        >Set</button>
+      </div>
+    )
+  }
+
+  // Reusable row for a manually-set param
+  function ManualRow({ p }) {
+    const cond = p.conditions?.[0] || {}
+    const isCrit = critSet.has(p.id)
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 5, background: 'rgba(0,230,118,.04)', border: '1px solid rgba(0,230,118,.15)' }}>
+        <span style={{ width: 11, textAlign: 'center', fontSize: 10, color: 'var(--green)' }}>✓</span>
+        <span style={{ flex: 1, fontSize: 11, color: 'var(--txt-2)' }}>
+          {PARAM_LABELS[p.id] || p.id}
+          <span style={{ fontSize: 9, color: 'var(--txt-4)', fontFamily: 'var(--font-mono)', marginLeft: 5 }}>{p.id}</span>
+        </span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700, color: 'var(--green)' }}>
+          {cond.typ ?? cond.max ?? cond.min}
+        </span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--cyan)', minWidth: 28 }}>{cond.unit || '—'}</span>
+        <button title="Remove — moves back to missing" onClick={() => deleteManual(p.id)}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--red)', opacity: .6, padding: '1px 5px', fontSize: 14, lineHeight: 1 }}>×</button>
+      </div>
+    )
+  }
+
   return (
     <div>
+      {/* ── Section header ───────────────────────────────────────── */}
       <button
         className={`collapsible-trigger ${isOpen ? 'open' : ''}`}
         onClick={() => setCollapsed(p => ({ ...p, '__missing__': !isOpen }))}
         style={{ borderTop: '1px solid rgba(255,68,68,.2)' }}
       >
-        {isOpen ? <ChevronDown size={11}/> : <ChevronRight size={11}/>}
+        {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         <span style={{ color: 'var(--red)' }}>Missing / Not Extracted</span>
-        {/* counts */}
-        {stillMissing.length > 0 && (
-          <span style={{ fontSize:10, fontFamily:'var(--font-mono)', padding:'1px 6px', background:'rgba(255,68,68,.12)', color:'var(--red)', borderRadius:4 }}>
-            {stillMissing.length} missing
+        {missingCrit.length > 0 && (
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', padding: '1px 6px', background: 'rgba(255,68,68,.12)', color: 'var(--red)', borderRadius: 4 }}>
+            {missingCrit.length} calc-critical
+          </span>
+        )}
+        {missingGth.length > 0 && (
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', padding: '1px 6px', background: 'rgba(30,144,255,.1)', color: 'var(--cyan)', borderRadius: 4 }}>
+            {missingGth.length} optional
           </span>
         )}
         {manualParams.length > 0 && (
-          <span style={{ fontSize:10, fontFamily:'var(--font-mono)', padding:'1px 6px', background:'rgba(0,230,118,.1)', color:'var(--green)', borderRadius:4 }}>
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', padding: '1px 6px', background: 'rgba(0,230,118,.1)', color: 'var(--green)', borderRadius: 4 }}>
             {manualParams.length} set
           </span>
         )}
-        {!isOpen && stillMissing.length > 0 && (
-          <span style={{ display:'flex', alignItems:'center', gap:3, fontSize:9, fontWeight:700, padding:'1px 6px', borderRadius:4, background:'rgba(255,68,68,.12)', color:'var(--red)', border:'1px solid rgba(255,68,68,.25)' }}>
-            <AlertTriangle size={8}/> enter manually
-          </span>
-        )}
-        <span className="chevron"><ChevronDown size={11}/></span>
+        <span className="chevron"><ChevronDown size={11} /></span>
       </button>
 
       {isOpen && (
-        <div style={{ padding:'8px 12px 12px', display:'flex', flexDirection:'column', gap:6 }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
 
-          {/* ── Already-set manual params ─────────────────────────── */}
-          {manualParams.length > 0 && (
-            <div style={{ display:'flex', flexDirection:'column', gap:4, marginBottom:4 }}>
-              <div style={{ fontSize:10, color:'var(--green)', fontWeight:600, marginBottom:2 }}>✓ Manually set</div>
-              {manualParams.map(p => {
-                const cond = p.conditions?.[0] || {}
-                return (
-                  <div key={p.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'4px 8px', borderRadius:5, background:'rgba(0,230,118,.04)', border:'1px solid rgba(0,230,118,.15)' }}>
-                    <span style={{ flex:1, fontSize:11, color:'var(--txt-2)' }}>
-                      {PARAM_LABELS[p.id] || p.id}
-                      <span style={{ fontSize:9, color:'var(--txt-4)', fontFamily:'var(--font-mono)', marginLeft:5 }}>{p.id}</span>
-                    </span>
-                    <span style={{ fontFamily:'var(--font-mono)', fontSize:11, fontWeight:700, color:'var(--green)' }}>
-                      {cond.typ ?? cond.max ?? cond.min}
-                    </span>
-                    <span style={{ fontFamily:'var(--font-mono)', fontSize:10, color:'var(--cyan)' }}>{cond.unit || '—'}</span>
-                    <button
-                      title="Delete — moves back to missing list"
-                      onClick={() => deleteManual(p.id)}
-                      style={{ background:'none', border:'none', cursor:'pointer', color:'var(--red)', opacity:.7, padding:'1px 4px', fontSize:13, lineHeight:1 }}
-                    >×</button>
-                  </div>
-                )
-              })}
+          {/* ══ CALC-CRITICAL MISSING ════════════════════════════════ */}
+          {(missingCrit.length > 0 || manualCrit.length > 0) && (
+            <div>
+              {/* Sub-header */}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '5px 14px 4px',
+                background: 'rgba(255,68,68,.04)',
+                borderBottom: '1px solid rgba(255,68,68,.12)',
+              }}>
+                <AlertTriangle size={10} color="var(--red)" />
+                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--red)', letterSpacing: '.06em', textTransform: 'uppercase' }}>
+                  ★ Calc-Critical
+                </span>
+                <span style={{ fontSize: 9, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)' }}>
+                  — enter these to get accurate results
+                </span>
+                {missingCrit.length === 0 && (
+                  <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--green)', fontWeight: 600 }}>all set ✓</span>
+                )}
+              </div>
+              <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                {manualCrit.map(p => <ManualRow key={p.id} p={p} />)}
+                {missingCrit.map(id => <MissingRow key={id} id={id} isCrit={true} />)}
+              </div>
             </div>
           )}
 
-          {/* ── Still-missing entries ─────────────────────────────── */}
-          {stillMissing.length > 0 && (
-            <>
-              <div style={{ fontSize:11, color:'var(--txt-3)', marginBottom:2 }}>
-                Not found in datasheet — enter manually to include in calculations:
-              </div>
-              {stillMissing.map(id => (
-                <div key={id} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 8px', borderRadius:5, background:'rgba(255,68,68,.05)', border:'1px solid rgba(255,68,68,.12)' }}>
-                  <AlertTriangle size={11} color="var(--red)" style={{ flexShrink:0 }}/>
-                  <span style={{ flex:1, fontSize:11, color:'var(--txt-2)', minWidth:130 }}>
-                    {PARAM_LABELS[id] || id}
-                    <span style={{ fontSize:9, color:'var(--txt-4)', fontFamily:'var(--font-mono)', marginLeft:5 }}>{id}</span>
+          {/* ══ GOOD-TO-HAVE MISSING ═════════════════════════════════ */}
+          {(missingGth.length > 0 || manualGth.length > 0) && (
+            <div>
+              {/* Sub-header — collapsible */}
+              <button
+                onClick={() => setCollapsed(p => ({ ...p, '__missing_gth__': !gthOpen }))}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '5px 14px', cursor: 'pointer',
+                  background: 'rgba(30,144,255,.03)',
+                  border: 'none', borderBottom: '1px solid var(--border-1)',
+                }}
+              >
+                {gthOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--cyan)', letterSpacing: '.06em', textTransform: 'uppercase' }}>
+                  ◈ Good to Have
+                </span>
+                <span style={{ fontSize: 9, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)' }}>
+                  — optional, no direct calculation impact
+                </span>
+                {manualGth.length > 0 && (
+                  <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>
+                    {manualGth.length} set
                   </span>
-                  <input
-                    type="number" step="any" placeholder="value"
-                    className="inp inp-mono inp-sm"
-                    style={{ width:75 }}
-                    value={vals[id] || ''}
-                    onChange={e => setVals(p => ({ ...p, [id]: e.target.value }))}
-                    onKeyDown={e => { if (e.key === 'Enter') commit(id) }}
-                  />
-                  <UnitPicker
-                    value={units[id] || ''}
-                    onChange={v => setUnits(p => ({ ...p, [id]: v }))}
-                    style={{ width:80 }}
-                  />
-                  <button
-                    onClick={() => commit(id)}
-                    disabled={!vals[id]}
-                    style={{
-                      padding:'2px 9px', borderRadius:4, fontSize:11, fontWeight:600, flexShrink:0,
-                      background: vals[id] ? `${color}20` : 'var(--bg-3)',
-                      color: vals[id] ? color : 'var(--txt-4)',
-                      border:`1px solid ${vals[id] ? color+'40' : 'transparent'}`,
-                      cursor: vals[id] ? 'pointer' : 'default',
-                    }}
-                  >Set</button>
+                )}
+              </button>
+              {gthOpen && (
+                <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 5, opacity: .9 }}>
+                  {manualGth.map(p => <ManualRow key={p.id} p={p} />)}
+                  {missingGth.map(id => <MissingRow key={id} id={id} isCrit={false} />)}
                 </div>
-              ))}
-            </>
+              )}
+            </div>
           )}
+
         </div>
       )}
     </div>

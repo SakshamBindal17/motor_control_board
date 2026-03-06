@@ -76,7 +76,7 @@ export default function App() {
   function renderPanel() {
     if (!cfg) return null
     switch (cfg.type) {
-      case 'upload':   return <BlockPanel   blockKey={state.active_block} config={cfg} />
+      case 'upload':   return <BlockPanel   key={state.active_block} blockKey={state.active_block} config={cfg} />
       case 'motor':    return <MotorForm    config={cfg} />
       case 'passives': return <PassivesPanel config={cfg} />
       case 'feedback': return <FeedbackPanel config={cfg} />
@@ -95,7 +95,6 @@ export default function App() {
           padding: '16px',
           display: 'flex',
           flexDirection: 'column',
-          gap: 16,
           minWidth: 0,
         }}>
           {renderPanel()}

@@ -1,0 +1,1856 @@
+{
+  "name": "Untitled MC Project",
+  "system_specs": {
+    "bus_voltage": 48,
+    "peak_voltage": 60,
+    "power": 3000,
+    "max_phase_current": 80,
+    "pwm_freq_hz": 20000,
+    "ambient_temp_c": 30,
+    "gate_drive_voltage": 12,
+    "motor_type": "PMSM",
+    "control_mode": "FOC",
+    "cooling": "natural",
+    "pcb_layers": 6
+  },
+  "blocks": {
+    "mcu": {
+      "status": "done",
+      "filename": "MC9S08SC4.pdf",
+      "raw_data": {
+        "component_name": "MC9S08SC4",
+        "manufacturer": "Freescale Semiconductor",
+        "component_type": "MCU",
+        "package": "16-TSSOP",
+        "description": "8-bit HCS08 microcontroller with 4 KB Flash, 256 bytes RAM, dual 16-bit PWM timers, 10-bit ADC",
+        "core": "HCS08",
+        "parameters": [
+          {
+            "id": "cpu_freq_max",
+            "name": "Maximum CPU / Core Frequency",
+            "symbol": "fCPU",
+            "category": "Clock",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": null,
+                "typ": 40,
+                "max": null,
+                "unit": "MHz",
+                "selected": 40,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "adc_resolution",
+            "name": "ADC Resolution",
+            "symbol": null,
+            "category": "ADC",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": null,
+                "typ": 10,
+                "max": null,
+                "unit": "bits",
+                "selected": 10,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "adc_channels",
+            "name": "Number of ADC Input Channels",
+            "symbol": null,
+            "category": "ADC",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": null,
+                "typ": 8,
+                "max": null,
+                "unit": "channels",
+                "selected": 8,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "adc_sample_rate",
+            "name": "ADC Maximum Sampling / Conversion Rate",
+            "symbol": null,
+            "category": "ADC",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": null,
+                "typ": 2.5,
+                "max": null,
+                "unit": "μs",
+                "selected": 2.5,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "pwm_timers",
+            "name": "Number of Advanced-Control PWM Timers (motor control capable)",
+            "symbol": null,
+            "category": "PWM Timer",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": null,
+                "typ": 2,
+                "max": null,
+                "unit": "timers",
+                "selected": 2,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "pwm_resolution",
+            "name": "PWM Timer Counter Resolution",
+            "symbol": null,
+            "category": "PWM Timer",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": null,
+                "typ": 16,
+                "max": null,
+                "unit": "bits",
+                "selected": 16,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "complementary_outputs",
+            "name": "Number of Complementary PWM Output Pairs",
+            "symbol": null,
+            "category": "PWM Timer",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": "Two 2-channel Timer/PWM modules (TPM1 and TPM2) without complementary output pins. Complementary outputs are not available on this device.",
+                "min": null,
+                "typ": 0,
+                "max": null,
+                "unit": "pairs",
+                "selected": 0,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "vdd_range",
+            "name": "VDD / Supply Voltage Operating Range",
+            "symbol": "VDD",
+            "category": "Power",
+            "conditions": [
+              {
+                "condition_text": "Operating voltage",
+                "note": null,
+                "min": 4.5,
+                "typ": null,
+                "max": 5.5,
+                "unit": "V",
+                "selected": 5.5,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "flash_size",
+            "name": "Flash (Program) Memory Size",
+            "symbol": null,
+            "category": "Memory",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": null,
+                "typ": 4,
+                "max": null,
+                "unit": "KB",
+                "selected": 4,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "ram_size",
+            "name": "RAM / SRAM Size",
+            "symbol": null,
+            "category": "Memory",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": null,
+                "typ": 256,
+                "max": null,
+                "unit": "bytes",
+                "selected": 256,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "uart_count",
+            "name": "Number of UART / USART Interfaces",
+            "symbol": null,
+            "category": "Communication",
+            "conditions": [
+              {
+                "condition_text": "SCI - Serial Communication Interface with LIN master/slave support",
+                "note": null,
+                "min": null,
+                "typ": 1,
+                "max": null,
+                "unit": "interfaces",
+                "selected": 1,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "gpio_count",
+            "name": "Total GPIO Count",
+            "symbol": null,
+            "category": "GPIO",
+            "conditions": [
+              {
+                "condition_text": "General purpose I/O pins",
+                "note": null,
+                "min": null,
+                "typ": 12,
+                "max": null,
+                "unit": "pins",
+                "selected": 12,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "temp_range",
+            "name": "Operating Temperature Range",
+            "symbol": "TA",
+            "category": "Temperature",
+            "conditions": [
+              {
+                "condition_text": "C temperature range",
+                "note": null,
+                "min": -40,
+                "typ": null,
+                "max": 85,
+                "unit": "°C",
+                "selected": 85,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "V temperature range",
+                "note": null,
+                "min": -40,
+                "typ": null,
+                "max": 105,
+                "unit": "°C",
+                "selected": 105,
+                "override": null,
+                "active": false
+              },
+              {
+                "condition_text": "M temperature range",
+                "note": null,
+                "min": -40,
+                "typ": null,
+                "max": 125,
+                "unit": "°C",
+                "selected": 125,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "idd_run",
+            "name": "Run Mode Supply Current",
+            "symbol": "RIDD",
+            "category": "Power",
+            "conditions": [
+              {
+                "condition_text": "CPU clock = 4 MHz, fBus = 2 MHz, all modules except ADC active, ICS configured for FBE",
+                "note": null,
+                "min": null,
+                "typ": 1.9,
+                "max": 2.4,
+                "unit": "mA",
+                "selected": 1.9,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "CPU clock = 16 MHz, fBus = 8 MHz, all modules except ADC active, ICS configured for FBE",
+                "note": null,
+                "min": null,
+                "typ": 4.6,
+                "max": 5.6,
+                "unit": "mA",
+                "selected": 4.6,
+                "override": null,
+                "active": false
+              },
+              {
+                "condition_text": "CPU clock = 32 MHz, fBus = 16 MHz, all modules except ADC active, ICS configured for FEI",
+                "note": null,
+                "min": null,
+                "typ": 7.8,
+                "max": 8.9,
+                "unit": "mA",
+                "selected": 7.8,
+                "override": null,
+                "active": false
+              }
+            ]
+          }
+        ]
+      },
+      "selected_params": {
+        "cpu_freq_max": {
+          "condition_index": 0,
+          "override": null
+        },
+        "adc_resolution": {
+          "condition_index": 0,
+          "override": null
+        },
+        "adc_channels": {
+          "condition_index": 0,
+          "override": null
+        },
+        "adc_sample_rate": {
+          "condition_index": 0,
+          "override": null
+        },
+        "pwm_timers": {
+          "condition_index": 0,
+          "override": null
+        },
+        "pwm_resolution": {
+          "condition_index": 0,
+          "override": null
+        },
+        "complementary_outputs": {
+          "condition_index": 0,
+          "override": null
+        },
+        "vdd_range": {
+          "condition_index": 0,
+          "override": null
+        },
+        "flash_size": {
+          "condition_index": 0,
+          "override": null
+        },
+        "ram_size": {
+          "condition_index": 0,
+          "override": null
+        },
+        "uart_count": {
+          "condition_index": 0,
+          "override": null
+        },
+        "gpio_count": {
+          "condition_index": 0,
+          "override": null
+        },
+        "temp_range": {
+          "condition_index": 0,
+          "override": null
+        },
+        "idd_run": {
+          "condition_index": 0,
+          "override": null
+        }
+      },
+      "error": null
+    },
+    "driver": {
+      "status": "done",
+      "filename": "ucc27311a-q1.pdf",
+      "raw_data": {
+        "component_name": "UCC27311A-Q1",
+        "manufacturer": "Texas Instruments",
+        "component_type": "GATE_DRIVER",
+        "package": "DRC (VSON, 10-pin)",
+        "description": "Automotive 120V, 3.7A/4.5A Half-Bridge Driver with 8V UVLO and Enable",
+        "topology": "Half-bridge",
+        "parameters": [
+          {
+            "id": "vcc_range",
+            "name": "VCC Supply Voltage Operating Range",
+            "symbol": "VDD",
+            "category": "Supply",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": 8,
+                "typ": 12,
+                "max": 17,
+                "unit": "V",
+                "selected": 12,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "vcc_uvlo",
+            "name": "VCC Under-Voltage Lockout Threshold",
+            "symbol": "VDDR / VDDHYS",
+            "category": "Protection",
+            "conditions": [
+              {
+                "condition_text": "VDD rising threshold",
+                "note": null,
+                "min": 6.2,
+                "typ": 7,
+                "max": 7.8,
+                "unit": "V",
+                "selected": 7,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "VDD threshold hysteresis",
+                "note": null,
+                "min": null,
+                "typ": 0.5,
+                "max": null,
+                "unit": "V",
+                "selected": 0.5,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "vbs_max",
+            "name": "Maximum Bootstrap Supply Voltage",
+            "symbol": "VHB",
+            "category": "Supply",
+            "conditions": [
+              {
+                "condition_text": "No condition",
+                "note": null,
+                "min": null,
+                "typ": null,
+                "max": 120,
+                "unit": "V",
+                "selected": 120,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "vbs_uvlo",
+            "name": "Bootstrap Supply Under-Voltage Lockout",
+            "symbol": "VHBR / VHBHYS",
+            "category": "Protection",
+            "conditions": [
+              {
+                "condition_text": "VHB rising threshold",
+                "note": null,
+                "min": 5.6,
+                "typ": 6.7,
+                "max": 7.9,
+                "unit": "V",
+                "selected": 6.7,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "VHB threshold hysteresis",
+                "note": null,
+                "min": null,
+                "typ": 1.1,
+                "max": null,
+                "unit": "V",
+                "selected": 1.1,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "io_source",
+            "name": "Peak Output Source Current (Turn-On drive)",
+            "symbol": "IO+ / IHO,source / ILO,source",
+            "category": "Output Drive",
+            "conditions": [
+              {
+                "condition_text": "VHO = 0 V or VLO = 0 V",
+                "note": "Parameter not tested in production",
+                "min": null,
+                "typ": 3.7,
+                "max": null,
+                "unit": "A",
+                "selected": 3.7,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "io_sink",
+            "name": "Peak Output Sink Current (Turn-Off drive)",
+            "symbol": "IO- / IHO,sink / ILO,sink",
+            "category": "Output Drive",
+            "conditions": [
+              {
+                "condition_text": "VHO = 12 V or VLO = 12 V",
+                "note": "Parameter not tested in production",
+                "min": null,
+                "typ": 4.5,
+                "max": null,
+                "unit": "A",
+                "selected": 4.5,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "prop_delay_on",
+            "name": "Propagation Delay — Turn-On (Input Low → Output High)",
+            "symbol": "tDLRR / tDHRR",
+            "category": "Timing",
+            "conditions": [
+              {
+                "condition_text": "VLI rising to VLO rising, CLOAD = 0 pF, from VHIT of LI to 10% of LO rising",
+                "note": null,
+                "min": 10,
+                "typ": 20,
+                "max": 42,
+                "unit": "ns",
+                "selected": 20,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "VHI rising to VHO rising, CLOAD = 0 pF, from VHIT of HI to 10% of HO rising",
+                "note": null,
+                "min": 10,
+                "typ": 20,
+                "max": 42,
+                "unit": "ns",
+                "selected": 20,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "prop_delay_off",
+            "name": "Propagation Delay — Turn-Off (Input High → Output Low)",
+            "symbol": "tDLFF / tDHFF",
+            "category": "Timing",
+            "conditions": [
+              {
+                "condition_text": "VLI falling to VLO falling, CLOAD = 0 pF, from VLIT of LI to 90% of LO falling",
+                "note": null,
+                "min": 10,
+                "typ": 19,
+                "max": 30,
+                "unit": "ns",
+                "selected": 19,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "VHI falling to VHO falling, CLOAD = 0 pF, from VLIT of HI to 90% of HO falling",
+                "note": null,
+                "min": 10,
+                "typ": 19,
+                "max": 30,
+                "unit": "ns",
+                "selected": 19,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "vil",
+            "name": "Input Logic Low Voltage Threshold",
+            "symbol": "VLIT_HI / VLIT_LI",
+            "category": "Input Logic",
+            "conditions": [
+              {
+                "condition_text": "HI input voltage low threshold",
+                "note": null,
+                "min": 1.2,
+                "typ": 1.6,
+                "max": 1.9,
+                "unit": "V",
+                "selected": 1.6,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "LI input voltage low threshold",
+                "note": null,
+                "min": 1.2,
+                "typ": 1.6,
+                "max": 1.9,
+                "unit": "V",
+                "selected": 1.6,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "vih",
+            "name": "Input Logic High Voltage Threshold",
+            "symbol": "VHIT_HI / VHIT_LI",
+            "category": "Input Logic",
+            "conditions": [
+              {
+                "condition_text": "HI input voltage high threshold",
+                "note": null,
+                "min": 1.7,
+                "typ": 2.3,
+                "max": 2.55,
+                "unit": "V",
+                "selected": 2.3,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "LI input voltage high threshold",
+                "note": null,
+                "min": 1.7,
+                "typ": 2.3,
+                "max": 2.55,
+                "unit": "V",
+                "selected": 2.3,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "rth_ja",
+            "name": "Junction-to-Ambient Thermal Resistance",
+            "symbol": "RθJA",
+            "category": "Thermal",
+            "conditions": [
+              {
+                "condition_text": "DRC (VSON) package, 10 pins",
+                "note": null,
+                "min": null,
+                "typ": 51.9,
+                "max": null,
+                "unit": "°C/W",
+                "selected": 51.9,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "tj_max",
+            "name": "Maximum Junction Temperature",
+            "symbol": "TJ",
+            "category": "Thermal",
+            "conditions": [
+              {
+                "condition_text": "Operating junction temperature range",
+                "note": null,
+                "min": -40,
+                "typ": null,
+                "max": 150,
+                "unit": "°C",
+                "selected": 150,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "rise_time_out",
+            "name": "Output Rise Time (driver output)",
+            "symbol": "tR_LO / tR_HO",
+            "category": "Timing",
+            "conditions": [
+              {
+                "condition_text": "LO rise time, CLOAD = 1000 pF, from 10% to 90%",
+                "note": null,
+                "min": null,
+                "typ": 7.2,
+                "max": null,
+                "unit": "ns",
+                "selected": 7.2,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "HO rise time, CLOAD = 1000 pF, from 10% to 90%",
+                "note": null,
+                "min": null,
+                "typ": 7.2,
+                "max": null,
+                "unit": "ns",
+                "selected": 7.2,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "fall_time_out",
+            "name": "Output Fall Time (driver output)",
+            "symbol": "tF_LO / tF_HO",
+            "category": "Timing",
+            "conditions": [
+              {
+                "condition_text": "LO fall time, CLOAD = 1000 pF, from 90% to 10%",
+                "note": null,
+                "min": null,
+                "typ": 5.5,
+                "max": null,
+                "unit": "ns",
+                "selected": 5.5,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "HO fall time, CLOAD = 1000 pF, from 90% to 10%",
+                "note": null,
+                "min": null,
+                "typ": 5.5,
+                "max": null,
+                "unit": "ns",
+                "selected": 5.5,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "thermal_shutdown",
+            "name": "Thermal Shutdown Temperature",
+            "symbol": "TJ",
+            "category": "Protection",
+            "conditions": [
+              {
+                "condition_text": "Maximum operating junction temperature (implicit thermal shutdown point)",
+                "note": "Device temperature grade 1, AEC-Q100 qualified for automotive applications",
+                "min": null,
+                "typ": null,
+                "max": 150,
+                "unit": "°C",
+                "selected": 150,
+                "override": null,
+                "active": true
+              }
+            ]
+          }
+        ]
+      },
+      "selected_params": {
+        "vcc_range": {
+          "condition_index": 0,
+          "override": null
+        },
+        "vcc_uvlo": {
+          "condition_index": 0,
+          "override": null
+        },
+        "vbs_max": {
+          "condition_index": 0,
+          "override": null
+        },
+        "vbs_uvlo": {
+          "condition_index": 0,
+          "override": null
+        },
+        "io_source": {
+          "condition_index": 0,
+          "override": null
+        },
+        "io_sink": {
+          "condition_index": 0,
+          "override": null
+        },
+        "prop_delay_on": {
+          "condition_index": 0,
+          "override": null
+        },
+        "prop_delay_off": {
+          "condition_index": 0,
+          "override": null
+        },
+        "vil": {
+          "condition_index": 0,
+          "override": null
+        },
+        "vih": {
+          "condition_index": 0,
+          "override": null
+        },
+        "rth_ja": {
+          "condition_index": 0,
+          "override": null
+        },
+        "tj_max": {
+          "condition_index": 0,
+          "override": null
+        },
+        "rise_time_out": {
+          "condition_index": 0,
+          "override": null
+        },
+        "fall_time_out": {
+          "condition_index": 0,
+          "override": null
+        },
+        "thermal_shutdown": {
+          "condition_index": 0,
+          "override": null
+        }
+      },
+      "error": null
+    },
+    "mosfet": {
+      "status": "done",
+      "filename": "infineon-ipt009n08nm6-datasheet-en.pdf",
+      "raw_data": {
+        "component_name": "IPT009N08NM6",
+        "manufacturer": "Infineon Technologies",
+        "component_type": "MOSFET",
+        "package": "PG-HSOF-8",
+        "description": "OptiMOS™6 Power Transistor, 80V N-channel, normal level",
+        "parameters": [
+          {
+            "id": "vds_max",
+            "name": "Maximum Drain-Source Voltage",
+            "symbol": "V(BR)DSS",
+            "category": "Absolute Maximum",
+            "conditions": [
+              {
+                "condition_text": "VGS=0V, ID=1mA",
+                "note": null,
+                "min": 80,
+                "typ": null,
+                "max": null,
+                "unit": "V",
+                "selected": 80,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "id_cont",
+            "name": "Continuous Drain Current",
+            "symbol": "ID",
+            "category": "Absolute Maximum",
+            "conditions": [
+              {
+                "condition_text": "VGS=10V, TC=25°C",
+                "note": null,
+                "min": null,
+                "typ": null,
+                "max": 425,
+                "unit": "A",
+                "selected": 425,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "VGS=10V, TC=100°C",
+                "note": null,
+                "min": null,
+                "typ": null,
+                "max": 301,
+                "unit": "A",
+                "selected": 301,
+                "override": null,
+                "active": false
+              },
+              {
+                "condition_text": "VGS=8V, TC=100°C",
+                "note": null,
+                "min": null,
+                "typ": null,
+                "max": 267,
+                "unit": "A",
+                "selected": 267,
+                "override": null,
+                "active": false
+              },
+              {
+                "condition_text": "VGS=10V, TA=25°C, RthJA=40°C/W",
+                "note": "Device on 40 mm x 40 mm x 1.5 mm epoxy PCB FR4 with 6 cm² (one layer, 70 µm thick) copper area for drain connection. PCB is vertical in still air.",
+                "min": null,
+                "typ": null,
+                "max": 43,
+                "unit": "A",
+                "selected": 43,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "rds_on",
+            "name": "On-State Drain-Source Resistance",
+            "symbol": "RDS(on)",
+            "category": "Electrical",
+            "conditions": [
+              {
+                "condition_text": "VGS=10V, ID=150A",
+                "note": null,
+                "min": null,
+                "typ": 0.8,
+                "max": 0.95,
+                "unit": "mΩ",
+                "selected": 0.8,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "VGS=8V, ID=75A",
+                "note": null,
+                "min": null,
+                "typ": 0.9,
+                "max": 1.2,
+                "unit": "mΩ",
+                "selected": 0.9,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "vgs_th",
+            "name": "Gate Threshold Voltage",
+            "symbol": "VGS(th)",
+            "category": "Electrical",
+            "conditions": [
+              {
+                "condition_text": "VDS=VGS, ID=278µA",
+                "note": null,
+                "min": 2.4,
+                "typ": 3,
+                "max": 3.5,
+                "unit": "V",
+                "selected": 3,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "vgs_max",
+            "name": "Maximum Gate-Source Voltage",
+            "symbol": "VGS",
+            "category": "Absolute Maximum",
+            "conditions": [
+              {
+                "condition_text": null,
+                "note": null,
+                "min": -20,
+                "typ": null,
+                "max": 20,
+                "unit": "V",
+                "selected": 20,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "id_pulsed",
+            "name": "Pulsed Drain Current (peak)",
+            "symbol": "ID,pulse",
+            "category": "Absolute Maximum",
+            "conditions": [
+              {
+                "condition_text": "TA=25°C",
+                "note": "See Diagram 3 for more detailed information",
+                "min": null,
+                "typ": null,
+                "max": 1700,
+                "unit": "A",
+                "selected": 1700,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "qg",
+            "name": "Total Gate Charge",
+            "symbol": "Qg",
+            "category": "Gate Charge",
+            "conditions": [
+              {
+                "condition_text": "VDD=40V, ID=75A, VGS=0to10V",
+                "note": "See \"Gate charge waveforms\" for parameter definition",
+                "min": null,
+                "typ": 155,
+                "max": 186,
+                "unit": "nC",
+                "selected": 155,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "qgs",
+            "name": "Gate-to-Source Charge",
+            "symbol": "Qgs",
+            "category": "Gate Charge",
+            "conditions": [
+              {
+                "condition_text": "VDD=40V, ID=75A, VGS=0to10V",
+                "note": "Defined by design. Not subject to production test.",
+                "min": null,
+                "typ": 55,
+                "max": 66,
+                "unit": "nC",
+                "selected": 55,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "qgd",
+            "name": "Gate-to-Drain (Miller) Charge",
+            "symbol": "Qgd",
+            "category": "Gate Charge",
+            "conditions": [
+              {
+                "condition_text": "VDD=40V, ID=75A, VGS=0to10V",
+                "note": "Defined by design. Not subject to production test.",
+                "min": null,
+                "typ": 29,
+                "max": 41,
+                "unit": "nC",
+                "selected": 29,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "qoss",
+            "name": "Output Charge (energy stored in Coss)",
+            "symbol": "Qoss",
+            "category": "Gate Charge",
+            "conditions": [
+              {
+                "condition_text": "VDS=40V, VGS=0V",
+                "note": "Defined by design. Not subject to production test.",
+                "min": null,
+                "typ": 319,
+                "max": 399,
+                "unit": "nC",
+                "selected": 319,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "ciss",
+            "name": "Input Capacitance",
+            "symbol": "Ciss",
+            "category": "Capacitance",
+            "conditions": [
+              {
+                "condition_text": "VGS=0V, VDS=40V, f=1MHz",
+                "note": null,
+                "min": null,
+                "typ": 11000,
+                "max": 13000,
+                "unit": "pF",
+                "selected": 11000,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "coss",
+            "name": "Output Capacitance",
+            "symbol": "Coss",
+            "category": "Capacitance",
+            "conditions": [
+              {
+                "condition_text": "VGS=0V, VDS=40V, f=1MHz",
+                "note": "Defined by design. Not subject to production test.",
+                "min": null,
+                "typ": 3800,
+                "max": 4800,
+                "unit": "pF",
+                "selected": 3800,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "crss",
+            "name": "Reverse Transfer Capacitance",
+            "symbol": "Crss",
+            "category": "Capacitance",
+            "conditions": [
+              {
+                "condition_text": "VGS=0V, VDS=40V, f=1MHz",
+                "note": "Defined by design. Not subject to production test.",
+                "min": null,
+                "typ": 84,
+                "max": 120,
+                "unit": "pF",
+                "selected": 84,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "td_on",
+            "name": "Turn-On Delay Time",
+            "symbol": "td(on)",
+            "category": "Switching",
+            "conditions": [
+              {
+                "condition_text": "VDD=40V, VGS=10V, ID=75A, RG,ext=1.6Ω",
+                "note": null,
+                "min": null,
+                "typ": 16.6,
+                "max": null,
+                "unit": "ns",
+                "selected": 16.6,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "tr",
+            "name": "Rise Time",
+            "symbol": "tr",
+            "category": "Switching",
+            "conditions": [
+              {
+                "condition_text": "VDD=40V, VGS=10V, ID=75A, RG,ext=1.6Ω",
+                "note": null,
+                "min": null,
+                "typ": 14.6,
+                "max": null,
+                "unit": "ns",
+                "selected": 14.6,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "td_off",
+            "name": "Turn-Off Delay Time",
+            "symbol": "td(off)",
+            "category": "Switching",
+            "conditions": [
+              {
+                "condition_text": "VDD=40V, VGS=10V, ID=75A, RG,ext=1.6Ω",
+                "note": null,
+                "min": null,
+                "typ": 48.5,
+                "max": null,
+                "unit": "ns",
+                "selected": 48.5,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "tf",
+            "name": "Fall Time",
+            "symbol": "tf",
+            "category": "Switching",
+            "conditions": [
+              {
+                "condition_text": "VDD=40V, VGS=10V, ID=75A, RG,ext=1.6Ω",
+                "note": null,
+                "min": null,
+                "typ": 16.8,
+                "max": null,
+                "unit": "ns",
+                "selected": 16.8,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "qrr",
+            "name": "Reverse Recovery Charge",
+            "symbol": "Qrr",
+            "category": "Body Diode",
+            "conditions": [
+              {
+                "condition_text": "VR=40V, IF=75A, diF/dt=100A/µs",
+                "note": "Defined by design. Not subject to production test.",
+                "min": null,
+                "typ": 110,
+                "max": 165,
+                "unit": "nC",
+                "selected": 110,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "VR=40V, IF=75A, diF/dt=1000A/µs",
+                "note": "Defined by design. Not subject to production test.",
+                "min": null,
+                "typ": 533,
+                "max": 800,
+                "unit": "nC",
+                "selected": 533,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "trr",
+            "name": "Reverse Recovery Time",
+            "symbol": "trr",
+            "category": "Body Diode",
+            "conditions": [
+              {
+                "condition_text": "VR=40V, IF=75A, diF/dt=100A/µs",
+                "note": "Defined by design. Not subject to production test.",
+                "min": null,
+                "typ": 71,
+                "max": 107,
+                "unit": "ns",
+                "selected": 71,
+                "override": null,
+                "active": true
+              },
+              {
+                "condition_text": "VR=40V, IF=75A, diF/dt=1000A/µs",
+                "note": "Defined by design. Not subject to production test.",
+                "min": null,
+                "typ": 39,
+                "max": 59,
+                "unit": "ns",
+                "selected": 39,
+                "override": null,
+                "active": false
+              }
+            ]
+          },
+          {
+            "id": "body_diode_vf",
+            "name": "Body Diode Forward Voltage",
+            "symbol": "VSD",
+            "category": "Body Diode",
+            "conditions": [
+              {
+                "condition_text": "VGS=0V, IF=150A, Tj=25°C",
+                "note": null,
+                "min": null,
+                "typ": 0.83,
+                "max": 1,
+                "unit": "V",
+                "selected": 0.83,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "rth_jc",
+            "name": "Junction-to-Case Thermal Resistance",
+            "symbol": "RthJC",
+            "category": "Thermal",
+            "conditions": [
+              {
+                "condition_text": null,
+                "note": null,
+                "min": null,
+                "typ": 0.2,
+                "max": 0.4,
+                "unit": "°C/W",
+                "selected": 0.2,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "tj_max",
+            "name": "Maximum Junction Temperature",
+            "symbol": "Tj",
+            "category": "Absolute Maximum",
+            "conditions": [
+              {
+                "condition_text": null,
+                "note": null,
+                "min": -55,
+                "typ": null,
+                "max": 175,
+                "unit": "°C",
+                "selected": 175,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "rg_int",
+            "name": "Internal Gate Resistance",
+            "symbol": "RG",
+            "category": "Electrical",
+            "conditions": [
+              {
+                "condition_text": null,
+                "note": null,
+                "min": 0.7,
+                "typ": 1.4,
+                "max": 1.8,
+                "unit": "Ω",
+                "selected": 1.4,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "vgs_plateau",
+            "name": "Gate Plateau Voltage (Miller Plateau)",
+            "symbol": "Vplateau",
+            "category": "Gate Charge",
+            "conditions": [
+              {
+                "condition_text": "VDD=40V, ID=75A, VGS=0to10V",
+                "note": null,
+                "min": null,
+                "typ": 4.9,
+                "max": null,
+                "unit": "V",
+                "selected": 4.9,
+                "override": null,
+                "active": true
+              }
+            ]
+          },
+          {
+            "id": "avalanche_energy",
+            "name": "Single-Pulse Avalanche Energy",
+            "symbol": "EAS",
+            "category": "Absolute Maximum",
+            "conditions": [
+              {
+                "condition_text": "ID=103A, RGS=25Ω",
+                "note": "See Diagram 13 for more detailed information",
+                "min": null,
+                "typ": null,
+                "max": 1188,
+                "unit": "mJ",
+                "selected": 1188,
+                "override": null,
+                "active": true
+              }
+            ]
+          }
+        ]
+      },
+      "selected_params": {
+        "vds_max": {
+          "condition_index": 0,
+          "override": null
+        },
+        "id_cont": {
+          "condition_index": 0,
+          "override": null
+        },
+        "rds_on": {
+          "condition_index": 0,
+          "override": null
+        },
+        "vgs_th": {
+          "condition_index": 0,
+          "override": null
+        },
+        "vgs_max": {
+          "condition_index": 0,
+          "override": null
+        },
+        "id_pulsed": {
+          "condition_index": 0,
+          "override": null
+        },
+        "qg": {
+          "condition_index": 0,
+          "override": null
+        },
+        "qgs": {
+          "condition_index": 0,
+          "override": null
+        },
+        "qgd": {
+          "condition_index": 0,
+          "override": null
+        },
+        "qoss": {
+          "condition_index": 0,
+          "override": null
+        },
+        "ciss": {
+          "condition_index": 0,
+          "override": null
+        },
+        "coss": {
+          "condition_index": 0,
+          "override": null
+        },
+        "crss": {
+          "condition_index": 0,
+          "override": null
+        },
+        "td_on": {
+          "condition_index": 0,
+          "override": null
+        },
+        "tr": {
+          "condition_index": 0,
+          "override": null
+        },
+        "td_off": {
+          "condition_index": 0,
+          "override": null
+        },
+        "tf": {
+          "condition_index": 0,
+          "override": null
+        },
+        "qrr": {
+          "condition_index": 0,
+          "override": null
+        },
+        "trr": {
+          "condition_index": 0,
+          "override": null
+        },
+        "body_diode_vf": {
+          "condition_index": 0,
+          "override": null
+        },
+        "rth_jc": {
+          "condition_index": 0,
+          "override": null
+        },
+        "tj_max": {
+          "condition_index": 0,
+          "override": null
+        },
+        "rg_int": {
+          "condition_index": 0,
+          "override": null
+        },
+        "vgs_plateau": {
+          "condition_index": 0,
+          "override": null
+        },
+        "avalanche_energy": {
+          "condition_index": 0,
+          "override": null
+        }
+      },
+      "error": null
+    },
+    "motor": {
+      "specs": {
+        "type": "PMSM",
+        "max_speed_rpm": 6000,
+        "pole_pairs": 4,
+        "rph_mohm": "",
+        "lph_uh": "",
+        "kt_nm_per_a": "",
+        "rated_torque_nm": "",
+        "back_emf_v_per_krpm": ""
+      }
+    },
+    "passives": {
+      "overrides": {},
+      "calculated": null
+    },
+    "feedback": {
+      "calculated": null
+    }
+  },
+  "calculations": {
+    "mosfet_losses": {
+      "conduction_loss_per_fet_w": 2.339,
+      "switching_loss_per_fet_w": 1.507,
+      "recovery_loss_per_fet_w": 0.132,
+      "gate_charge_loss_per_fet_w": 0.0372,
+      "total_loss_per_fet_w": 4.015,
+      "total_all_6_fets_w": 24.09,
+      "i_rms_switch_a": 44.15,
+      "rds_on_derated_mohm": 1.2,
+      "junction_temp_est_c": 113.1,
+      "efficiency_mosfet_pct": 99.2,
+      "notes": {
+        "rds_basis": "Rds(on)=0.8mΩ × 1.5 temp derating",
+        "sw_basis": "tr=14.6ns, tf=16.8ns @ fsw=20kHz",
+        "rr_basis": "Qrr=110.0nC × Vbus × fsw",
+        "improvement": "Increase fsw reduces motor ripple but increases switching losses"
+      }
+    },
+    "gate_resistors": {
+      "rg_on_calculated_ohm": 2.43,
+      "rg_on_recommended_ohm": 2.7,
+      "rg_off_calculated_ohm": 1.27,
+      "rg_off_recommended_ohm": 2.7,
+      "rg_bootstrap_ohm": 10,
+      "gate_rise_time_ns": 46.5,
+      "gate_fall_time_ns": 34.9,
+      "dv_dt_v_per_us": 1290.3,
+      "driver_source_current_a": 3.7,
+      "driver_sink_current_a": 4.5,
+      "gate_resistor_power_w": 0.0093,
+      "gate_resistor_rating": "0.1W minimum (0402/0603)",
+      "bypass_diode_turn_off": "1N4148 or BAT54 in parallel with Rg_off",
+      "notes": {
+        "rg_on_basis": "Qg=155.0nC, Vdrv=12.0V, Vth=3.0V, t_rise=40.0ns target",
+        "rg_off_note": "Place Schottky diode antiparallel with Rg_off for asymmetric drive",
+        "placement": "Mount within 10mm of gate pin, 0402/0603, shortest possible trace",
+        "emi_note": "dV/dt=1290.3 V/µs — adjust Rg_on if EMI issues arise"
+      }
+    },
+    "input_capacitors": {
+      "i_dc_a": 62.5,
+      "i_ripple_rms_a": 15.24,
+      "ripple_method": "3-phase SPWM estimate M=0.9 — enter motor Lph for accurate calc",
+      "delta_v_target_v": 2,
+      "c_bulk_required_uf": 47.6,
+      "n_bulk_caps": 4,
+      "c_per_bulk_cap_uf": 100,
+      "c_total_uf": 400,
+      "v_rating_bulk_v": 100,
+      "v_ripple_actual_v": 0.2381,
+      "esr_budget_total_mohm": 131.2,
+      "esr_budget_per_cap_mohm": 525,
+      "i_ripple_per_cap_a": 3.81,
+      "cap_dissipation_w": 2.903,
+      "c_film_uf": 4.7,
+      "c_film_v_rating": 100,
+      "c_film_qty": 2,
+      "c_mlcc_nf": 100,
+      "c_mlcc_v_rating": 100,
+      "c_mlcc_qty": 6,
+      "c_mlcc_dielectric": "X7R",
+      "recommended_bulk_part": "Panasonic EEU-FC2A101 (100µF/100V, 1.94A ripple)",
+      "notes": {
+        "placement_bulk": "Within 30mm of H-bridge, low-impedance bus bar",
+        "placement_film": "Within 20mm of each half-bridge section",
+        "placement_mlcc": "One per MOSFET switch node, as close as possible",
+        "polarity": "Electrolytic — verify polarity before power-on"
+      }
+    },
+    "bootstrap_cap": {
+      "c_boot_calculated_nf": 310,
+      "c_boot_recommended_nf": 680,
+      "c_boot_v_rating_v": 25,
+      "c_boot_dielectric": "X7R MLCC",
+      "c_boot_qty": 3,
+      "v_bootstrap_v": 11.5,
+      "bootstrap_diode": "B0540W (40V/500mA Schottky)",
+      "r_boot_series_ohm": 10,
+      "min_hs_on_time_ns": 20400,
+      "bootstrap_hold_time_ms": 113.3,
+      "notes": {
+        "100pct_duty": "100% duty cycle requires external charge pump or VCC regulator",
+        "refresh": "High-side must turn ON ≥ 20400ns per PWM cycle",
+        "derating": "Use 25V cap at 12V drive — only 50% voltage derating"
+      }
+    },
+    "shunt_resistors": {
+      "csa_gain": 20,
+      "adc_reference_v": 3.3,
+      "single_shunt": {
+        "value_mohm": 1,
+        "location": "DC bus low-side return (between GND and bottom FETs)",
+        "v_shunt_mv": 80,
+        "v_adc_v": 1.6,
+        "adc_bits_used": 9,
+        "power_dc_w": 6.4,
+        "power_rms_w": 3.2,
+        "recommended": "Isabellenhutte PMR 4-terminal Kelvin, 0.5 or 1mΩ"
+      },
+      "three_shunt": {
+        "value_mohm": 0.5,
+        "location": "Each phase low-side MOSFET source return",
+        "v_shunt_mv": 40,
+        "v_adc_v": 0.8,
+        "power_rms_per_shunt_w": 1.6,
+        "total_3_shunt_power_w": 4.8,
+        "recommended": "Isabellenhutte PMR 0.5mΩ × 3"
+      },
+      "notes": {
+        "kelvin": "MANDATORY 4-wire Kelvin sensing — sense traces inside power traces",
+        "tc": "Use <50 ppm/°C temperature coefficient shunt",
+        "tolerance": "±1% or better for accurate FOC",
+        "jumper": "Populate EITHER single shunt OR 3-phase shunts — use 0Ω jumper to select mode"
+      }
+    },
+    "snubber": {
+      "stray_inductance_nh": 10,
+      "coss_pf": 3.8e-9,
+      "resonant_freq_mhz": 25818341,
+      "voltage_overshoot_v": 252982.2,
+      "v_sw_peak_v": 253042.2,
+      "rs_critical_ohm": 3162.28,
+      "rs_recommended_ohm": 100,
+      "cs_recommended_pf": 100,
+      "cs_recommended_label": "1nF / 100V X7R MLCC",
+      "p_per_snubber_w": 0.0036,
+      "p_total_6_snubbers_w": 0.022,
+      "rs_power_rating": "0.1W minimum (0402)",
+      "notes": {
+        "rs_placement": "Place Cs physically closest to MOSFET D-S pins",
+        "v_rating": "Snubber cap voltage rating: 120V minimum (2×Vpeak)",
+        "reduce_stray": "Reducing PCB stray inductance is more effective than snubbers",
+        "pcb_technique": "Use mirrored top/bottom copper pours for low-inductance half-bridge"
+      }
+    },
+    "protection_dividers": {
+      "ovp": {
+        "trip_voltage_v": 61.8,
+        "r1_kohm": 100,
+        "r2_kohm": 6.2,
+        "r2_standard_kohm": 6.2,
+        "actual_trip_v": 3.61,
+        "divider_current_ua": 564.97,
+        "comparator": "LM393 / internal MCU comparator",
+        "response": "Hardware → disable PWM gate signals within 1µs"
+      },
+      "uvp": {
+        "trip_voltage_v": 36,
+        "hysteresis_voltage_v": 37.9,
+        "r1_kohm": 100,
+        "r2_kohm": 10.09,
+        "r2_standard_kohm": 11,
+        "divider_current_ua": 432.43,
+        "response": "Disable gate drive, wait for recovery above hysteresis level"
+      },
+      "ocp": {
+        "hw_threshold_a": 100,
+        "sw_threshold_a": 88,
+        "hw_response_us": 1,
+        "sw_response_us": 10,
+        "mechanism": "Driver IC OCP (hw) + MCU comparator (sw)"
+      },
+      "otp": {
+        "ntc_value_at_25c_kohm": 10,
+        "ntc_b_coefficient": 3950,
+        "r_pullup_kohm": 10,
+        "warning_temp_c": 80,
+        "shutdown_temp_c": 100,
+        "v_ntc_at_80c_v": 0.372,
+        "v_ntc_at_100c_v": 0.215,
+        "ntc_part": "Murata NCP15 10kΩ B3950, 0402"
+      },
+      "tvs": {
+        "clamping_v": 58,
+        "power_rating_w": 600,
+        "part": "SMBJ58A or P6KE62A",
+        "qty": 2,
+        "placement": "Across bus capacitors, close to bridge"
+      },
+      "reverse_polarity": {
+        "type": "P-ch MOSFET ideal diode",
+        "part": "Si7617DN (60V, 50A) or LTC4366",
+        "vds_rating_v": 60
+      }
+    },
+    "power_supply_bypass": {
+      "vcc_gate_driver": {
+        "voltage_v": 12,
+        "bulk_cap_uf": 10,
+        "bulk_v_rating": 25,
+        "bypass_cap_nf": 100,
+        "bypass_v_rating": 25,
+        "bypass_qty": 2,
+        "note": "Place as close as possible to driver VCC pin"
+      },
+      "vdd_5v_logic": {
+        "voltage_v": 5,
+        "bulk_cap_uf": 10,
+        "bypass_cap_nf": 100,
+        "bypass_qty": 2,
+        "note": "If 5V rail used for level shifting or gate signal logic"
+      },
+      "vdd_3v3_mcu": {
+        "voltage_v": 3.3,
+        "bulk_cap_uf": 10,
+        "bypass_cap_nf": 100,
+        "bypass_qty": 4,
+        "note": "One 100nF per MCU power pin, one bulk per voltage domain"
+      },
+      "adc_reference": {
+        "cap_nf": 100,
+        "note": "Dedicated 100nF + 1µF on VREF pin, shortest possible trace to AGND"
+      },
+      "notes": {
+        "decoupling_rule": "Every IC power pin needs 100nF within 2mm + bulk 10µF within 10mm",
+        "placement": "Decoupling caps on same layer as IC — never on opposite side"
+      }
+    },
+    "emi_filter": {
+      "cm_choke_uh": 330,
+      "cm_choke_current_a": 75,
+      "cm_choke_r_dc_mohm": 5,
+      "cm_choke_power_w": 19.53,
+      "cm_choke_part": "Wurth 744235 or TDK ACM series, rated for DC current",
+      "x_cap_nf": 100,
+      "x_cap_v_rating": 100,
+      "y_cap_nf": 4.7,
+      "y_cap_v_rating": 100,
+      "notes": {
+        "cm_choke_place": "At power input connector, before bulk caps",
+        "motor_output": "Additional RC filter on motor phase outputs reduces bearing currents",
+        "pcb_ground": "Star ground topology — separate PGND and AGND, single join point"
+      }
+    },
+    "thermal": {
+      "p_per_fet_w": 4.015,
+      "p_total_6_fets_w": 24.09,
+      "rth_jc_c_per_w": 0.2,
+      "rth_cs_c_per_w": 0.5,
+      "rth_sa_pcb_c_per_w": 20,
+      "t_case_est_c": 110.3,
+      "t_junction_est_c": 113.1,
+      "tj_max_rated_c": 175,
+      "thermal_margin_c": 61.9,
+      "thermal_safe": true,
+      "power_trace_width_mm": 21.3,
+      "copper_area_per_fet_mm2": 86,
+      "thermal_vias_per_fet": 16,
+      "via_drill_mm": 0.3,
+      "notes": {
+        "package": "D2PAK (TO-263-7) — use thermal slug pad with solder mask opening",
+        "vias": "16× 0.3mm drilled, 0.2mm annular ring thermal vias per MOSFET",
+        "copper_oz": "3oz L1/L6, thermal slug pads open to both sides",
+        "warning": "✓ Thermal design safe for natural convection"
+      }
+    },
+    "dead_time": {
+      "dt_minimum_ns": 104.3,
+      "dt_recommended_ns": 156,
+      "dt_register_count": 20,
+      "dt_actual_ns": 160,
+      "dt_pct_of_period": 0.32,
+      "switching_period_ns": 50000,
+      "effective_duty_loss_pct": 0.32,
+      "dt_feasible": true,
+      "dt_max_ns": 1000,
+      "td_off_ns": 48.5,
+      "tf_ns": 16.8,
+      "prop_delay_off_ns": 19,
+      "dt_resolution_ns": 8,
+      "notes": {
+        "foc": "Dead-time compensation required in firmware for accurate FOC below ~10% mod index",
+        "6step": "6-step commutation: enforce same dead-time at each commutation event",
+        "comp_algo": "Voltage feed-forward or current-sign-based dead-time compensation"
+      }
+    },
+    "pcb_guidelines": {
+      "layer_stack": [
+        {
+          "layer": "L1 (Top)",
+          "copper_oz": 3,
+          "purpose": "Power traces, MOSFET pads, gate traces"
+        },
+        {
+          "layer": "L2",
+          "copper_oz": 1,
+          "purpose": "Solid GND plane"
+        },
+        {
+          "layer": "L3",
+          "copper_oz": 1,
+          "purpose": "Signal: gate drive, SPI, UART"
+        },
+        {
+          "layer": "L4",
+          "copper_oz": 1,
+          "purpose": "Power planes: 12V, 5V, 3.3V"
+        },
+        {
+          "layer": "L5",
+          "copper_oz": 1,
+          "purpose": "Signal: analog, sensing, encoder"
+        },
+        {
+          "layer": "L6 (Bottom)",
+          "copper_oz": 3,
+          "purpose": "Power returns, thermal spreading"
+        }
+      ],
+      "power_trace_w_mm": 21.3,
+      "gate_trace_w_mm": 0.3,
+      "signal_trace_w_mm": 0.15,
+      "power_clearance_mm": 1,
+      "signal_clearance_mm": 0.15,
+      "via_drill_thermal_mm": 0.3,
+      "via_drill_power_mm": 0.4,
+      "via_drill_signal_mm": 0.2,
+      "half_bridge_loop_nh": 5,
+      "shunt_kelvin_trace": "Route sense traces INSIDE power trace pair (Kelvin connection)",
+      "notes": {
+        "analog_gnd": "AGND star point at ADC VREF, single bridge to PGND",
+        "gate_loop": "Gate drive loop < 50mm² to minimize Lgate parasitic",
+        "bridge_loop": "Half-bridge Drain-Source-GND loop < 100mm² for low di/dt",
+        "copper_pour": "Thermal pour on both L1 and L6 under each MOSFET"
+      }
+    }
+  },
+  "last_saved": null
+}
