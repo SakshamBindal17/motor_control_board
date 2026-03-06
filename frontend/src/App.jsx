@@ -1,4 +1,5 @@
 import React from 'react'
+import { SpeedInsights } from '@vercel/speed-insights/react'
 import { useProject } from './context/ProjectContext.jsx'
 import Header from './components/Header.jsx'
 import Sidebar from './components/Sidebar.jsx'
@@ -102,6 +103,7 @@ export default function App() {
       </div>
       {state.settings_open && <SettingsModal />}
       {state.report_open && <ReportPanel />}
+      <SpeedInsights />
     </div>
   )
 }
