@@ -380,7 +380,7 @@ const SECTIONS = [
       { key: 'c_boot_calculated_nf', label: 'C_boot required', unit: 'nF', dec: 1, explain: '(Q_g + I_leakage×t_on) / dV_boot_droop' },
       { key: 'c_boot_recommended_nf', label: 'C_boot standard', unit: 'nF', dec: 0, explain: 'Calculated requirement buffered by 2x safety margin and snapped to E12 series' },
       { key: 'v_bootstrap_v', label: 'V_bootstrap', unit: 'V', dec: 2, explain: 'V_drive - V_diode_drop' },
-      { key: 'min_hs_on_time_ns', label: 'Min on-time', unit: 'ns', dec: 0, explain: '5 × R_boot × C_boot (time required to fully recharge bootstrap capacitor)' },
+      { key: 'min_hs_on_time_ns', label: 'Min on-time', unit: 'ns', dec: 0, explain: '3 × R_boot × C_boot (time required to recharge bootstrap capacitor to ~95%)' },
     ],
   },
   {

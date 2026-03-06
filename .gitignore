@@ -117,3 +117,9 @@ backend/cache/
 
 # Build output
 frontend/dist/
+
+# User requested additions
+docs/
+saved_manually/
+recent_changes.diff
+ui_changes.diff
