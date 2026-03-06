@@ -60,6 +60,7 @@ class CalculationEngine:
         self.mcu      = mcu_params
         self.motor    = motor_specs
         self.ovr      = overrides or {}
+        self.audit_log  = []
 
         self.v_bus      = float(system_specs.get("bus_voltage",      48))
         self.v_peak     = float(system_specs.get("peak_voltage",     60))
@@ -69,19 +70,39 @@ class CalculationEngine:
         self.t_amb      = float(system_specs.get("ambient_temp_c",   30))
         self.v_drv      = float(system_specs.get("gate_drive_voltage",12))
 
+    def _get(self, params: dict, block_name: str, key: str, fallback=None, expected_unit: str = None):
+        val = params.get(key)
+        if val is None or val == "":
+            if fallback is not None:
+                self.audit_log.append(f"[{block_name}] Missing '{key}', using fallback {fallback}{expected_unit or ''}")
+            return fallback
+        try:
+            fval = float(val)
+        except (TypeError, ValueError):
+            if fallback is not None:
+                self.audit_log.append(f"[{block_name}] Invalid numeric value for '{key}', using fallback {fallback}{expected_unit or ''}")
+            return fallback
+
+        from unit_utils import to_si
+        unit = params.get(key + '__unit', expected_unit or '')
+        if unit:
+            return to_si(fval, unit)
+        return fval
+
+
     # ═══════════════════════════════════════════════════════════════════
     # 1. MOSFET Losses
     # ═══════════════════════════════════════════════════════════════════
     def calc_mosfet_losses(self) -> dict:
         # _get now returns SI values (Ω, C, s) automatically via unit_utils
         # fallbacks are SI values too
-        rds       = _get(self.mosfet, "rds_on",  1.5e-3)   # Ω
-        qg        = _get(self.mosfet, "qg",      92e-9)    # C
-        qgd       = _get(self.mosfet, "qgd",     30e-9)    # C
-        tr        = _get(self.mosfet, "tr",       30e-9)   # s
-        tf        = _get(self.mosfet, "tf",       20e-9)   # s
-        rth_jc    = _get(self.mosfet, "rth_jc",   0.5)     # °C/W
-        qrr       = _get(self.mosfet, "qrr",      44e-9)   # C
+        rds       = self._get(self.mosfet, "MOSFET", "rds_on",  1.5e-3)   # Ω
+        qg        = self._get(self.mosfet, "MOSFET", "qg",      92e-9)    # C
+        qgd       = self._get(self.mosfet, "MOSFET", "qgd",     30e-9)    # C
+        tr        = self._get(self.mosfet, "MOSFET", "tr",       30e-9)   # s
+        tf        = self._get(self.mosfet, "MOSFET", "tf",       20e-9)   # s
+        rth_jc    = self._get(self.mosfet, "MOSFET", "rth_jc",   0.5)     # °C/W
+        qrr       = self._get(self.mosfet, "MOSFET", "qrr",      44e-9)   # C
 
         # Display units for notes
         rds_mohm  = rds  * 1e3
@@ -95,6 +116,7 @@ class CalculationEngine:
 
         # Conduction loss with temp derating (×1.5 @ ~100°C)
         rds_hot = rds * 1.5
+        self.audit_log.append("[MOSFET] Applied worst-case 1.5x thermal multiplier for Rds(on) at estimated ~100°C junction.")
         p_cond  = i_rms_sw**2 * rds_hot
 
         # Switching loss (overlap model)
@@ -111,9 +133,10 @@ class CalculationEngine:
 
         # Junction temp estimate
         t_junc = self.t_amb + p_total_1 * (rth_jc + 0.5 + 20.0)
+        self.audit_log.append("[Thermal] Used hardcoded assumption for PCB via thermal resistance: 20°C/W and TIM: 0.5°C/W.")
 
         # Inverter switching losses only (excludes motor copper/core losses)
-        eff = max(0, (1 - p_total_6 / self.power) * 100)
+        eff = 0 if self.power == 0 else max(0, (1 - p_total_6 / self.power) * 100)
 
         return {
             "conduction_loss_per_fet_w":  round(p_cond,    3),
@@ -138,12 +161,12 @@ class CalculationEngine:
     # 2. Gate Resistors
     # ═══════════════════════════════════════════════════════════════════
     def calc_gate_resistors(self) -> dict:
-        qg      = _get(self.mosfet, "qg",     92e-9)   # C (SI)
-        vgs_th  = _get(self.mosfet, "vgs_th",  3.0)    # V
-        ciss    = _get(self.mosfet, "ciss", 3000e-12)  # F (SI)
+        qg      = self._get(self.mosfet, "MOSFET", "qg",     92e-9)   # C (SI)
+        vgs_th  = self._get(self.mosfet, "MOSFET", "vgs_th",  3.0)    # V
+        ciss    = self._get(self.mosfet, "MOSFET", "ciss", 3000e-12)  # F (SI)
 
-        io_src  = _get(self.driver, "io_source", 1.5)  # A (SI)
-        io_snk  = _get(self.driver, "io_sink",   2.5)  # A (SI)
+        io_src  = self._get(self.driver, "DRIVER", "io_source", 1.5)  # A (SI)
+        io_snk  = self._get(self.driver, "DRIVER", "io_sink",   2.5)  # A (SI)
 
         t_rise_target_ns = float(self.ovr.get("gate_rise_time_ns", 40))
         t_rise = t_rise_target_ns * 1e-9
@@ -166,10 +189,11 @@ class CalculationEngine:
             rg_off_std = _nearest_e(rg_off_min)
 
         rg_boot = 10.0
+        self.audit_log.append("[Gate Drive] Hardcoded bootstrap gate resistor (Rg_boot) to 10.0Ω.")
 
         t_rise_actual_ns = (rg_on_std * qg / (vdrv - vgs_th)) * 1e9
         t_fall_actual_ns = (rg_off_std * qg / vdrv) * 1e9
-        dv_dt            = self.v_peak / (t_rise_actual_ns * 1e-9) / 1e6
+        dv_dt            = 0 if t_rise_actual_ns <= 0 else self.v_peak / (t_rise_actual_ns * 1e-9) / 1e6
 
         p_gate_rg = qg * vdrv * self.fsw
         p_gate_all_resistors = p_gate_rg * 0.5 * 6
@@ -201,7 +225,7 @@ class CalculationEngine:
     # 3. Input Bus Capacitors
     # ═══════════════════════════════════════════════════════════════════
     def calc_input_capacitors(self) -> dict:
-        i_dc    = self.power / self.v_bus
+        i_dc    = 0 if self.v_bus == 0 else self.power / self.v_bus
         delta_v = float(self.ovr.get("delta_v_ripple", 2.0))
         fsw     = self.fsw
 
@@ -214,7 +238,7 @@ class CalculationEngine:
 
         if lph > 0:
             # Accurate: ΔI = Vbus × D(1-D) / (Lph × fsw), worst-case D=0.5
-            delta_i_phase = (self.v_bus * 0.25) / (lph * fsw)
+            delta_i_phase = 0 if (lph == 0 or fsw == 0) else (self.v_bus * 0.25) / (lph * fsw)
             # RMS ripple on DC bus for 3-phase SPWM (phase interleaving reduces it)
             i_ripple_rms  = delta_i_phase / (2 * math.sqrt(3))
             ripple_method = f"Motor Lph={float(lph_uh):.1f}µH (accurate)"
@@ -222,6 +246,7 @@ class CalculationEngine:
             # 3-phase SPWM formula at M=0.9 (better than single-phase D=0.5 estimate)
             # I_cap_rms ≈ (M × I_pk / 2) × √(√3/π − 3√3/(4π) × M)
             M = 0.9
+            self.audit_log.append("[Motor] Phase Ripple Calculation: Used estimated SPWM modulation index M=0.9.")
             sq3 = math.sqrt(3)
             i_ripple_rms = (M * self.i_max / 2) * math.sqrt(
                 sq3 / math.pi - 3 * sq3 / (4 * math.pi) * M
@@ -237,11 +262,11 @@ class CalculationEngine:
         v_ripple_actual = (i_ripple_rms / (8 * fsw * c_total * 1e-6))
 
         # ESR budget
-        esr_total_budget_mohm = (delta_v / i_ripple_rms) * 1000
+        esr_total_budget_mohm = 0 if i_ripple_rms == 0 else (delta_v / i_ripple_rms) * 1000
         esr_per_cap           = esr_total_budget_mohm * n_caps
 
         # Ripple current per cap (they share it)
-        i_rip_per_cap = i_ripple_rms / n_caps
+        i_rip_per_cap = 0 if n_caps == 0 else i_ripple_rms / n_caps
 
         # Film cap (mid-freq 1kHz–1MHz)
         c_film_uf = 4.7
@@ -252,6 +277,8 @@ class CalculationEngine:
         # Total capacitor dissipation (at rated ESR)
         esr_typ_mohm = 50.0    # typical electrolytic ESR
         p_cap_total  = i_ripple_rms**2 * (esr_typ_mohm/1000) / n_caps
+
+        self.audit_log.append("[DC Bus] Hardcoded standard decoupling: 50mΩ ESR per electrolytic, 4.7µF film, 100nF MLCC.")
 
         return {
             "i_dc_a":                   round(i_dc,               2),
@@ -289,8 +316,8 @@ class CalculationEngine:
     # ═══════════════════════════════════════════════════════════════════
     def calc_bootstrap_cap(self) -> dict:
         # _get already returns SI (Coulombs) — do NOT multiply by 1e-9 again
-        qg     = _get(self.mosfet, "qg", 92e-9)   # C  (SI)
-        vgs_th = _get(self.mosfet, "vgs_th", 3.0)  # V
+        qg     = self._get(self.mosfet, "MOSFET", "qg", 92e-9)   # C  (SI)
+        vgs_th = self._get(self.mosfet, "MOSFET", "vgs_th", 3.0)  # V
         vdrv   = self.v_drv
 
         # Allow 0.5V droop
@@ -313,6 +340,7 @@ class CalculationEngine:
         # Minimum high-side on-time to refresh bootstrap
         # C_boot must recharge through R_boot(10Ω) from supply
         r_boot   = 10.0
+        self.audit_log.append("[Bootstrap] Hardcoded series bootstrap diode resistor to 10.0Ω.")
         tau_boot = r_boot * c_std_nf * 1e-9   # RC time constant
         t_min_on_ns = 3 * tau_boot * 1e9       # 3τ to charge to ~95%
 
@@ -345,10 +373,11 @@ class CalculationEngine:
     # ═══════════════════════════════════════════════════════════════════
     def calc_shunt_resistors(self) -> dict:
         i_max    = self.i_max
-        csa_gain = _get(self.driver, "current_sense_gain", 20) or 20
+        csa_gain = self._get(self.driver, "DRIVER", "current_sense_gain", 20) or 20
 
         # Target 1.65V at ADC (3.3V ref, 50% headroom)
         v_adc_target = 1.65
+        self.audit_log.append("[Current Sensing] Assumed 3.3V ADC with 1.65V bias target for bidirectional FOC.")
         r_ideal_mohm = (v_adc_target / (i_max * csa_gain)) * 1000
 
         # Standard shunt values
@@ -367,7 +396,7 @@ class CalculationEngine:
         p_sh3_ea   = (i_max/math.sqrt(2))**2 * r3_mohm * 1e-3  # RMS per phase
 
         # ADC SNR budget — use extracted MCU ADC resolution, default 12-bit
-        adc_bits = _get(self.mcu, "adc_resolution", 12) or 12
+        adc_bits = self._get(self.mcu, "MCU", "adc_resolution", 12) or 12
         lsb_mv   = 3300 / (2 ** int(adc_bits))   # mV per LSB
         bits_used = math.log2(v_adc1 * 1000 / lsb_mv) if v_adc1 > 0 else 0
 
@@ -409,7 +438,7 @@ class CalculationEngine:
         l_stray_nh  = float(self.ovr.get("stray_inductance_nh", 10))
         l_stray     = l_stray_nh * 1e-9
 
-        coss_pf = _get(self.mosfet, "coss", 200);  coss = coss_pf * 1e-12
+        coss_pf = self._get(self.mosfet, "MOSFET", "coss", 200);  coss = coss_pf * 1e-12
 
         # Resonant frequency of stray L and Coss
         # f_res = 1 / (2π√(L×C))
@@ -425,6 +454,11 @@ class CalculationEngine:
         # Snubber resistor: critical damping Rs = sqrt(L/C)
         rs_crit     = math.sqrt(l_stray / max(coss, 1e-15))
         rs_std      = _nearest_e(rs_crit)
+        
+        # Log the stray inductance hardcode
+        if l_stray_nh == 10:
+            self.audit_log.append("[Snubber] Stray layout inductance missing. Assumed 10nH default.")
+        self.audit_log.append("[Snubber] Targeted critical damping factor (ζ = 1) for switching overshoot resistor calculation.")
         if rs_std < 1.0: rs_std = 1.0    # practical minimum
         if rs_std > 100: rs_std = 100.0  # practical maximum
 
@@ -472,7 +506,8 @@ class CalculationEngine:
         # ── OVP: trip at Vpeak + 3% ──
         v_ovp_trip = round(self.v_peak * 1.03, 1)
         # V_ref = V_trip × R2 / (R1 + R2)  →  R2/R1 = V_ref / (V_trip - V_ref)
-        r_ratio_ovp  = v_ref / (v_ovp_trip - v_ref)
+        v_ovp_diff   = v_ovp_trip - v_ref
+        r_ratio_ovp  = 0 if v_ovp_diff <= 0 else v_ref / v_ovp_diff
         r1_ovp       = 100e3   # fix R1 = 100kΩ
         r2_ovp       = r1_ovp * r_ratio_ovp
         r2_ovp_std   = _nearest_e(r2_ovp / 1e3, E24) * 1e3
@@ -482,7 +517,8 @@ class CalculationEngine:
         # ── UVP: trip at 75% of Vnom, re-enable at 78% (2V hyst) ──
         v_uvp_trip  = round(self.v_bus * 0.75, 1)
         v_uvp_hyst  = round(self.v_bus * 0.79, 1)
-        r_ratio_uvp = v_ref / (v_uvp_trip - v_ref)
+        v_uvp_diff  = v_uvp_trip - v_ref
+        r_ratio_uvp = 0 if v_uvp_diff <= 0 else v_ref / v_uvp_diff
         r1_uvp      = 100e3
         r2_uvp      = r1_uvp * r_ratio_uvp
         r2_uvp_std  = _nearest_e(r2_uvp / 1e3, E24) * 1e3
@@ -505,6 +541,8 @@ class CalculationEngine:
         t_100_k     = 100 + 273.15
         r_ntc_100   = 10000 * math.exp(b_ntc * (1/t_100_k - 1/t_25_k))
         v_ntc_100   = 3.3 * r_ntc_100 / (r_pullup + r_ntc_100)
+        
+        self.audit_log.append("[Protection] Hardcoded TVS power rating to 600W (SMBJ/P6KE style) for bus clamping.")
 
         return {
             "ovp": {
@@ -561,6 +599,7 @@ class CalculationEngine:
     # 8. Power Supply Bypassing
     # ═══════════════════════════════════════════════════════════════════
     def calc_power_supply_bypass(self) -> dict:
+        self.audit_log.append("[Power Supply] Assumed 10µF bulk and 100nF bypass logic decoupling capacitors across all ICs.")
         return {
             "vcc_gate_driver": {
                 "voltage_v":        self.v_drv,
@@ -599,7 +638,7 @@ class CalculationEngine:
     # 9. EMI Filter
     # ═══════════════════════════════════════════════════════════════════
     def calc_emi_filter(self) -> dict:
-        i_dc = self.power / self.v_bus
+        i_dc    = 0 if self.v_bus == 0 else self.power / self.v_bus
         fsw  = self.fsw
 
         # Common mode choke: attenuation target -40dB at fsw
@@ -613,6 +652,8 @@ class CalculationEngine:
 
         # Y capacitor (CM to chassis): 4.7nF max (leakage limits)
         cy_nf     = 4.7
+        
+        self.audit_log.append("[EMI] Hardcoded baseline CM choke (330µH), X-cap (100nF), and Y-cap (4.7nF) for conducted emissions filtering.")
 
         return {
             "cm_choke_uh":          lcm_uh,
@@ -637,8 +678,8 @@ class CalculationEngine:
     def calc_thermal(self) -> dict:
         ml      = self.calc_mosfet_losses()
         p_fet   = ml["total_loss_per_fet_w"]
-        rth_jc  = _get(self.mosfet, "rth_jc", 0.5)
-        tj_max  = _get(self.mosfet, "tj_max", 175)
+        rth_jc  = self._get(self.mosfet, "MOSFET", "rth_jc", 0.5)
+        tj_max  = self._get(self.mosfet, "MOSFET", "tj_max", 175)
 
         rth_cs  = 0.5    # case-to-PCB (thermal pad + solder)
         rth_sa  = 20.0   # PCB copper natural convection
@@ -689,10 +730,10 @@ class CalculationEngine:
     # ═══════════════════════════════════════════════════════════════════
     def calc_dead_time(self) -> dict:
         # _get returns SI (seconds) — use SI fallbacks, then convert to ns for arithmetic
-        td_off_s  = _get(self.mosfet, "td_off",       50e-9) or 50e-9   # seconds
-        tf_s      = _get(self.mosfet, "tf",            20e-9) or 20e-9   # seconds
-        t_prop_s  = _get(self.driver, "prop_delay_off", 60e-9) or 60e-9  # seconds
-        t_drv_s   = _get(self.driver, "prop_delay_on",  60e-9) or 60e-9  # seconds
+        td_off_s  = self._get(self.mosfet, "MOSFET", "td_off",       50e-9) or 50e-9   # seconds
+        tf_s      = self._get(self.mosfet, "MOSFET", "tf",            20e-9) or 20e-9   # seconds
+        t_prop_s  = self._get(self.driver, "DRIVER", "prop_delay_off", 60e-9) or 60e-9  # seconds
+        t_drv_s   = self._get(self.driver, "DRIVER", "prop_delay_on",  60e-9) or 60e-9  # seconds
 
         # Convert to nanoseconds for readable arithmetic
         td_off_ns = td_off_s * 1e9
@@ -702,16 +743,18 @@ class CalculationEngine:
         # Minimum: td_off + tf + propagation + 20ns margin
         dt_min    = td_off_ns + tf_ns + t_prop_ns + 20   # ns
         dt_rec    = round(dt_min * 1.5)                  # ns, 50% safety margin
+        
+        self.audit_log.append("[Dead Time] Added hardcoded 20ns absolute margin and 1.5x (50%) recommended safety margin to switching times.")
 
         # MCU dead-time register resolution — key "pwm_deadtime_res" (matches extraction)
-        dt_res_s  = _get(self.mcu, "pwm_deadtime_res", 8e-9) or 8e-9   # seconds
+        dt_res_s  = self._get(self.mcu, "MCU", "pwm_deadtime_res", 8e-9) or 8e-9   # seconds
         dt_res_ns = dt_res_s * 1e9                                       # ns
 
         dt_reg    = math.ceil(dt_rec / dt_res_ns)
         dt_actual = dt_reg * dt_res_ns                   # ns (multiple of resolution)
 
         # Feasibility check vs MCU max dead time
-        dt_max_s   = _get(self.mcu, "pwm_deadtime_max", 1000e-9) or 1000e-9
+        dt_max_s   = self._get(self.mcu, "MCU", "pwm_deadtime_max", 1000e-9) or 1000e-9
         dt_max_ns  = dt_max_s * 1e9
         dt_feasible = dt_actual <= dt_max_ns
 
@@ -778,7 +821,7 @@ class CalculationEngine:
     # Run All
     # ═══════════════════════════════════════════════════════════════════
     def run_all(self) -> dict:
-        return {
+        results = {
             "mosfet_losses":        self.calc_mosfet_losses(),
             "gate_resistors":       self.calc_gate_resistors(),
             "input_capacitors":     self.calc_input_capacitors(),
@@ -792,3 +835,6 @@ class CalculationEngine:
             "dead_time":            self.calc_dead_time(),
             "pcb_guidelines":       self.calc_pcb_guidelines(),
         }
+        # Attach logs after calculations have fully populated them
+        results["audit_log"] = list(set(self.audit_log))
+        return results

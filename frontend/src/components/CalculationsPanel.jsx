@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Zap, RefreshCw, ChevronDown, AlertTriangle, Info, Maximize2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
+import { CALC_CRITICAL } from './BlockPanel.jsx'
 import { runCalculations } from '../api.js'
 import { fmtNum, thresholdClass } from '../utils.js'
 
@@ -43,7 +44,43 @@ export default function CalculationsPanel() {
       toast.error('MOSFET datasheet is required — upload it first'); return
     }
 
-    // Build warnings for what will use fallback values
+    // ── STRICT PRE-FLIGHT CHECK ──────────────────────────────────────
+    let missingCritical = []
+
+    // 1. Check System Specs
+    const sysReq = ['bus_voltage', 'power', 'max_phase_current', 'pwm_freq_hz']
+    for (const k of sysReq) {
+      if (project.system_specs[k] === '' || project.system_specs[k] === null || project.system_specs[k] === undefined) {
+        missingCritical.push(`System Specs -> ${k.replace(/_/g, ' ')}`)
+      }
+    }
+
+    // 2. Check Uploaded Blocks for missing Calc-Critical params
+    for (const blockKey of ['mosfet', 'driver', 'mcu']) {
+      if (project.blocks[blockKey]?.status === 'done' && CALC_CRITICAL[blockKey]) {
+        const flatDict = buildParamsDict(project.blocks[blockKey])
+        for (const req of CALC_CRITICAL[blockKey]) {
+          // Check if the value is missing or strictly an empty string
+          if (flatDict[req] === undefined || flatDict[req] === null || flatDict[req] === '') {
+            missingCritical.push(`${blockKey.toUpperCase()} -> ${req}`)
+          }
+        }
+      }
+    }
+
+    if (missingCritical.length > 0) {
+      toast.error(
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <strong>Cannot Calculate! Missing Critical Inputs:</strong>
+          <span style={{ fontSize: 11, color: 'var(--red)', opacity: 0.9 }}>{missingCritical.join(', ')}</span>
+          <span style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>Please fill these in the panels before running.</span>
+        </div>,
+        { duration: 6000 }
+      )
+      return
+    }
+
+    // Build warnings for entire missing blocks (fallback usage)
     const warnings = missing.map(b => `${b.toUpperCase()}: ${FALLBACK_WARNINGS[b]}`)
     setLastWarnings(warnings)
 
@@ -163,6 +200,30 @@ export default function CalculationsPanel() {
           </div>
         )}
 
+        {/* ── Calculation Audit Log ─────────────────────────────────── */}
+        {C?.audit_log?.length > 0 && (
+          <div style={{
+            padding: '8px 10px', borderRadius: 6,
+            background: 'var(--bg-3)', border: '1px solid var(--border-2)',
+            marginTop: 4
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+              <Info size={11} style={{ color: 'var(--cyan)', flexShrink: 0 }} />
+              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', letterSpacing: '.05em', textTransform: 'uppercase' }}>
+                Assumptions & Audit Log
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {Math.max(C.audit_log.length, 0) > 0 && C.audit_log.map((log, i) => (
+                <div key={i} style={{ fontSize: 9, color: 'var(--txt-3)', lineHeight: 1.4, display: 'flex', gap: 6 }}>
+                  <span style={{ color: 'var(--border-3)' }}>•</span>
+                  <span>{log}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── Results sections ─────────────────────────────────── */}
         {C && SECTIONS.map(sec => {
           const d = C[sec.key]
@@ -266,6 +327,31 @@ export default function CalculationsPanel() {
             </div>
 
             <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+
+              {/* ── Expanded Audit Log ─────────────────────────────────── */}
+              {C?.audit_log?.length > 0 && (
+                <div style={{
+                  padding: '12px 16px', borderRadius: 8,
+                  background: 'var(--bg-2)', border: '1px solid var(--border-2)',
+                  marginBottom: 20
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <Info size={14} style={{ color: 'var(--cyan)', flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--cyan)', letterSpacing: '.05em', textTransform: 'uppercase' }}>
+                      Assumptions & Audit Log
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {C.audit_log.map((log, i) => (
+                      <div key={i} style={{ fontSize: 11, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)', lineHeight: 1.5, display: 'flex', gap: 6 }}>
+                        <span style={{ color: 'var(--border-3)' }}>·</span>
+                        <span>{log}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
                 {SECTIONS.map(sec => {
                   const d = C[sec.key]

@@ -6,7 +6,7 @@ const MOTOR_FIELDS = [
   { key: 'type', label: 'Motor Type', type: 'select', options: ['PMSM', 'BLDC', 'ACIM'], unit: '', note: '' },
   { key: 'max_speed_rpm', label: 'Max Speed', type: 'number', unit: 'RPM', note: '' },
   { key: 'pole_pairs', label: 'Pole Pairs (p)', type: 'number', unit: '', note: 'Electrical = mechanical × pole pairs' },
-  { key: 'rph_mohm', label: 'Phase Resistance (Rph)', type: 'number', unit: 'mΩ', note: 'Varies per motor — check datasheet or measure' },
+  { key: 'rph_mohm', label: 'Phase Resistance (Rph)   [Phase to Neutral]', type: 'number', unit: 'mΩ', note: 'Varies per motor — check datasheet or measure' },
   { key: 'lph_uh', label: 'Phase Inductance (Lph)', type: 'number', unit: 'µH', note: 'Ld/Lq for PMSM (use avg if not salient)' },
   { key: 'kt_nm_per_a', label: 'Torque Constant (Kt)', type: 'number', unit: 'Nm/A', note: 'From motor datasheet' },
   { key: 'rated_torque_nm', label: 'Rated Torque', type: 'number', unit: 'Nm', note: '' },

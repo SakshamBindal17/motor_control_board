@@ -76,7 +76,7 @@ const ESSENTIAL_PARAMS = {
 
 // Params that are directly read by calc_engine.py — engine formula references them by name.
 // ★ badge = "the app reads this value in a formula right now"
-const CALC_CRITICAL = {
+export const CALC_CRITICAL = {
   mosfet: new Set([
     "rds_on",         // conduction loss, gate resistor
     "qg",             // gate resistor, bootstrap, gate charge loss
@@ -527,56 +527,52 @@ function MissingParamsSection({ missingIds, blockKey, color, collapsed, setColla
   const totalCount = stillMissing.length + manualParams.length
   if (totalCount === 0) return null
 
-  // Reusable row for a missing param entry input
-  function MissingRow({ id, isCrit }) {
-    return (
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 5,
-        background: isCrit ? 'rgba(255,68,68,.05)' : 'rgba(30,144,255,.04)',
-        border: `1px solid ${isCrit ? 'rgba(255,68,68,.15)' : 'rgba(30,144,255,.12)'}`,
-      }}>
-        {isCrit
-          ? <AlertTriangle size={11} color="var(--red)" style={{ flexShrink: 0 }} />
-          : <span style={{ width: 11, textAlign: 'center', fontSize: 11, color: 'var(--cyan)', flexShrink: 0 }}>◈</span>
-        }
-        <span style={{ flex: 1, fontSize: 11, color: 'var(--txt-2)', minWidth: 130 }}>
-          {PARAM_LABELS[id] || id}
-          <span style={{ fontSize: 9, color: 'var(--txt-4)', fontFamily: 'var(--font-mono)', marginLeft: 5 }}>{id}</span>
-        </span>
-        <input
-          type="number" step="any" placeholder="value"
-          className="inp inp-mono inp-sm"
-          style={{ width: 75 }}
-          value={vals[id] || ''}
-          onChange={e => setVals(p => ({ ...p, [id]: e.target.value }))}
-          onKeyDown={e => { if (e.key === 'Enter') commit(id) }}
-        />
-        <UnitPicker
-          value={units[id] || ''}
-          onChange={v => setUnits(p => ({ ...p, [id]: v }))}
-          style={{ width: 80 }}
-        />
-        <button
-          onClick={() => commit(id)}
-          disabled={!vals[id]}
-          style={{
-            padding: '2px 9px', borderRadius: 4, fontSize: 11, fontWeight: 600, flexShrink: 0,
-            background: vals[id] ? `${color}20` : 'var(--bg-3)',
-            color: vals[id] ? color : 'var(--txt-4)',
-            border: `1px solid ${vals[id] ? color + '40' : 'transparent'}`,
-            cursor: vals[id] ? 'pointer' : 'default',
-          }}
-        >Set</button>
-      </div>
-    )
-  }
+  const renderMissingRow = (id, isCrit) => (
+    <div key={id} style={{
+      display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', borderRadius: 5,
+      background: isCrit ? 'rgba(255,68,68,.05)' : 'rgba(30,144,255,.04)',
+      border: `1px solid ${isCrit ? 'rgba(255,68,68,.15)' : 'rgba(30,144,255,.12)'}`,
+    }}>
+      {isCrit
+        ? <AlertTriangle size={11} color="var(--red)" style={{ flexShrink: 0 }} />
+        : <span style={{ width: 11, textAlign: 'center', fontSize: 11, color: 'var(--cyan)', flexShrink: 0 }}>◈</span>
+      }
+      <span style={{ flex: 1, fontSize: 11, color: 'var(--txt-2)', minWidth: 130 }}>
+        {PARAM_LABELS[id] || id}
+        <span style={{ fontSize: 9, color: 'var(--txt-4)', fontFamily: 'var(--font-mono)', marginLeft: 5 }}>{id}</span>
+      </span>
+      <input
+        type="number" step="any" placeholder="value"
+        className="inp inp-mono inp-sm"
+        style={{ width: 75 }}
+        value={vals[id] || ''}
+        onChange={e => setVals(p => ({ ...p, [id]: e.target.value }))}
+        onKeyDown={e => { if (e.key === 'Enter') commit(id) }}
+      />
+      <UnitPicker
+        value={units[id] || ''}
+        onChange={v => setUnits(p => ({ ...p, [id]: v }))}
+        style={{ width: 80 }}
+      />
+      <button
+        onClick={() => commit(id)}
+        disabled={!vals[id]}
+        style={{
+          padding: '2px 9px', borderRadius: 4, fontSize: 11, fontWeight: 600, flexShrink: 0,
+          background: vals[id] ? `${color}20` : 'var(--bg-3)',
+          color: vals[id] ? color : 'var(--txt-4)',
+          border: `1px solid ${vals[id] ? color + '40' : 'transparent'}`,
+          cursor: vals[id] ? 'pointer' : 'default',
+        }}
+      >Set</button>
+    </div>
+  )
 
-  // Reusable row for a manually-set param
-  function ManualRow({ p }) {
+  const renderManualRow = (p) => {
     const cond = p.conditions?.[0] || {}
     const isCrit = critSet.has(p.id)
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 5, background: 'rgba(0,230,118,.04)', border: '1px solid rgba(0,230,118,.15)' }}>
+      <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 5, background: 'rgba(0,230,118,.04)', border: '1px solid rgba(0,230,118,.15)' }}>
         <span style={{ width: 11, textAlign: 'center', fontSize: 10, color: 'var(--green)' }}>✓</span>
         <span style={{ flex: 1, fontSize: 11, color: 'var(--txt-2)' }}>
           {PARAM_LABELS[p.id] || p.id}
@@ -645,8 +641,8 @@ function MissingParamsSection({ missingIds, blockKey, color, collapsed, setColla
                 )}
               </div>
               <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 5 }}>
-                {manualCrit.map(p => <ManualRow key={p.id} p={p} />)}
-                {missingCrit.map(id => <MissingRow key={id} id={id} isCrit={true} />)}
+                {manualCrit.map(p => renderManualRow(p))}
+                {missingCrit.map(id => renderMissingRow(id, true))}
               </div>
             </div>
           )}
@@ -679,8 +675,8 @@ function MissingParamsSection({ missingIds, blockKey, color, collapsed, setColla
               </button>
               {gthOpen && (
                 <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 5, opacity: .9 }}>
-                  {manualGth.map(p => <ManualRow key={p.id} p={p} />)}
-                  {missingGth.map(id => <MissingRow key={id} id={id} isCrit={false} />)}
+                  {manualGth.map(p => renderManualRow(p))}
+                  {missingGth.map(id => renderMissingRow(id, false))}
                 </div>
               )}
             </div>
