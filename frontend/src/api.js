@@ -1,12 +1,12 @@
 /** Centralized API helpers */
 
-const BASE = ''  // proxied via vite to localhost:8000
+const BASE = import.meta.env.VITE_API_URL || ''  // URL from env in prod, proxied in dev
 
 async function _req(url, opts = {}) {
   const res = await fetch(BASE + url, opts)
   if (!res.ok) {
     let msg = `HTTP ${res.status}`
-    try { const j = await res.json(); msg = j.detail || j.message || msg } catch {}
+    try { const j = await res.json(); msg = j.detail || j.message || msg } catch { }
     throw new Error(msg)
   }
   return res
