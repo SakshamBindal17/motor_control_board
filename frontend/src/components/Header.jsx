@@ -10,42 +10,18 @@ export default function Header() {
   const [nameVal, setNameVal] = useState(project.name)
   const loadRef = useRef(null)
 
-  const done = ['mcu','driver','mosfet'].filter(k => project.blocks[k]?.status === 'done').length
+  const done = ['mcu', 'driver', 'mosfet'].filter(k => project.blocks[k]?.status === 'done').length
 
   function save() {
     try {
-      // Build a resolved export: bake selected_params overrides into raw_data parameters
-      const resolvedProject = {
-        ...project,
-        blocks: Object.fromEntries(
-          Object.entries(project.blocks).map(([key, block]) => {
-            if (!block.raw_data?.parameters) return [key, block]
-            const selParams = block.selected_params || {}
-            const resolvedParams = block.raw_data.parameters.map(param => {
-              const sel = selParams[param.id]
-              if (!sel) return param
-              const resolvedConditions = param.conditions.map((cond, idx) => {
-                const isActive = idx === (sel.condition_index || 0)
-                const overrideVal = sel.override !== null && sel.override !== undefined ? sel.override : null
-                return {
-                  ...cond,
-                  selected: isActive
-                    ? (overrideVal !== null ? overrideVal : cond.selected)
-                    : cond.selected,
-                  override: isActive ? overrideVal : null,
-                  active: isActive,
-                }
-              })
-              return { ...param, conditions: resolvedConditions }
-            })
-            return [key, { ...block, raw_data: { ...block.raw_data, parameters: resolvedParams } }]
-          })
-        )
+      const exportData = {
+        version: 2,
+        state: state
       }
-      const blob = new Blob([JSON.stringify(resolvedProject, null, 2)], { type: 'application/json' })
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
-      a.download = `${project.name.replace(/\s+/g,'_')}_session.json`
+      a.download = `${project.name.replace(/\s+/g, '_')}_session.json`
       a.click()
       toast.success('Session saved')
     } catch { toast.error('Save failed') }
@@ -131,16 +107,16 @@ export default function Header() {
       {/* Actions */}
       <div style={{ display: 'flex', gap: 4 }}>
         {[
-          { icon: <Save size={15}/>,      tip: 'Save session',    fn: save },
-          { icon: <FolderOpen size={15}/>, tip: 'Load session',   fn: load },
-          { icon: <FileText size={15}/>,   tip: 'Generate report',fn: () => dispatch({ type: 'TOGGLE_REPORT' }) },
+          { icon: <Save size={15} />, tip: 'Save session', fn: save },
+          { icon: <FolderOpen size={15} />, tip: 'Load session', fn: load },
+          { icon: <FileText size={15} />, tip: 'Generate report', fn: () => dispatch({ type: 'TOGGLE_REPORT' }) },
           {
-            icon: settings.theme === 'dark' ? <Sun size={15}/> : <Moon size={15}/>,
+            icon: settings.theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />,
             tip: 'Toggle theme',
             fn: () => dispatch({ type: 'SET_SETTINGS', payload: { theme: settings.theme === 'dark' ? 'light' : 'dark' } }),
           },
           {
-            icon: <Settings size={15}/>,
+            icon: <Settings size={15} />,
             tip: 'Settings',
             fn: () => dispatch({ type: 'TOGGLE_SETTINGS' }),
             highlight: !settings.api_key,

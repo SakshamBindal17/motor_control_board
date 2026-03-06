@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Zap, RefreshCw, ChevronDown, AlertTriangle, Info } from 'lucide-react'
+import { Zap, RefreshCw, ChevronDown, AlertTriangle, Info, Maximize2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
 import { runCalculations } from '../api.js'
@@ -25,6 +25,7 @@ export default function CalculationsPanel() {
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState({ mosfet_losses: true, gate_resistors: true, thermal: true })
   const [lastWarnings, setLastWarnings] = useState([])
+  const [showGrid, setShowGrid] = useState(false)
 
   function toggle(k) { setOpen(p => ({ ...p, [k]: !p[k] })) }
 
@@ -125,10 +126,22 @@ export default function CalculationsPanel() {
         </div>
 
         {/* ── Run button ───────────────────────────────────────── */}
-        <button className="btn btn-primary" onClick={calc} disabled={loading} style={{ width: '100%', justifyContent: 'center' }}>
-          {loading ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={13} />}
-          {loading ? 'Calculating…' : 'Run All Calculations'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" onClick={calc} disabled={loading} style={{ flex: 1, justifyContent: 'center' }}>
+            {loading ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={13} />}
+            {loading ? 'Calculating…' : 'Run All Calculations'}
+          </button>
+          {C && (
+            <button
+              className="btn btn-ghost btn-icon"
+              onClick={() => setShowGrid(true)}
+              title="Expand Results Grid"
+              style={{ border: '1px solid var(--border-2)', background: 'var(--bg-3)' }}
+            >
+              <Maximize2 size={14} />
+            </button>
+          )}
+        </div>
 
         {/* ── Fallback warning banner (shown after run if blocks missing) ── */}
         {lastWarnings.length > 0 && C && (
@@ -191,9 +204,22 @@ export default function CalculationsPanel() {
                         </div>
                       )
                     }
-                    const tc = r.warn ? thresholdClass(v, r.warn, r.danger) : ''
+                    let wrn = r.warn, dng = r.danger
+                    if (r.key === 'v_sw_peak_v' && project.system_specs.peak_voltage) wrn = project.system_specs.peak_voltage
+                    if (r.key === 'tj_max_rated_c') return null
+
+                    const tc = (wrn !== undefined || dng !== undefined) ? thresholdClass(v, wrn, dng) : ''
+
+                    let tip = r.explain
+                    if (tc) {
+                      const isMin = dng !== undefined && wrn !== undefined && dng < wrn
+                      const limit = tc === 'danger' ? dng : wrn
+                      const thrTip = `Value is ${isMin ? 'below' : 'exceeding'} safe limit of ${limit}${r.unit || ''}`
+                      tip = tip ? `${thrTip}\n\nFormula: ${tip}` : thrTip
+                    }
+
                     return (
-                      <div key={r.key} className="calc-row">
+                      <div key={r.key} className="calc-row" data-tip={tip}>
                         <span className="label">{r.label}</span>
                         <span className={`value ${tc}`}>
                           {fmtNum(v, r.dec ?? 3)}{r.unit ? ` ${r.unit}` : ''}
@@ -219,6 +245,86 @@ export default function CalculationsPanel() {
           </div>
         )}
       </div>
+
+      {/* ── Grid Viewer Modal ─────────────────────────────────── */}
+      {showGrid && C && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex' }}>
+          <div style={{ flex: 1, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }} onClick={() => setShowGrid(false)} />
+          <div style={{
+            width: '85%', maxWidth: 1000, background: 'var(--bg-1)',
+            borderLeft: '1px solid var(--border-3)',
+            boxShadow: '-10px 0 30px rgba(0,0,0,0.5)',
+            display: 'flex', flexDirection: 'column',
+            animation: 'slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
+          }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Zap size={18} style={{ color: 'var(--amber)' }} />
+                <h2 style={{ margin: 0, fontSize: 18, color: 'var(--txt-1)' }}>Engineering Calculations Overview</h2>
+              </div>
+              <button className="btn btn-ghost btn-icon" onClick={() => setShowGrid(false)}><X size={20} /></button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+                {SECTIONS.map(sec => {
+                  const d = C[sec.key]
+                  if (!d) return null
+                  return (
+                    <div key={sec.key} className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+                      <div className="sec-head" style={{ fontSize: 13 }}>
+                        <span>{sec.icon}</span> {sec.label}
+                      </div>
+                      <div style={{ padding: '10px 14px', flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {sec.rows.map(r => {
+                          const v = d[r.key]
+                          if (v === undefined || v === null) return null
+                          if (r.string) {
+                            return (
+                              <div key={r.key} className="calc-row" style={{ padding: '6px 0', borderBottom: '1px solid var(--border-1)', borderTop: 'none' }}>
+                                <span className="label" style={{ fontSize: 13 }}>{r.label}</span>
+                                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--cyan)', textAlign: 'right', maxWidth: '60%', wordBreak: 'break-word', fontSize: 12 }}>{v}</span>
+                              </div>
+                            )
+                          }
+                          let wrn = r.warn, dng = r.danger
+                          if (r.key === 'v_sw_peak_v' && project.system_specs.peak_voltage) wrn = project.system_specs.peak_voltage
+                          if (r.key === 'tj_max_rated_c') return null // skip rendering
+
+                          const tc = (wrn !== undefined || dng !== undefined) ? thresholdClass(v, wrn, dng) : ''
+
+                          let tip = r.explain
+                          if (tc) {
+                            const isMin = dng !== undefined && wrn !== undefined && dng < wrn
+                            const limit = tc === 'danger' ? dng : wrn
+                            const thrTip = `Value is ${isMin ? 'below' : 'exceeding'} safe limit of ${limit}${r.unit || ''}`
+                            tip = tip ? `${thrTip}\n\nFormula: ${tip}` : thrTip
+                          }
+
+                          return (
+                            <div key={r.key} className="calc-row" data-tip={tip} style={{ padding: '6px 0', borderBottom: '1px solid var(--border-1)', borderTop: 'none' }}>
+                              <span className="label" style={{ fontSize: 13 }}>{r.label}</span>
+                              <span className={`value ${tc}`} style={{ fontSize: 13, padding: '3px 8px', minWidth: 80 }}>
+                                {fmtNum(v, r.dec ?? 3)}{r.unit ? ` ${r.unit}` : ''}
+                                {tc === 'danger' && <AlertTriangle size={11} style={{ marginLeft: 4, display: 'inline-block' }} />}
+                              </span>
+                            </div>
+                          )
+                        })}
+                        {d.notes && (
+                          <div className="note-box blue" style={{ marginTop: 'auto', paddingTop: 10 }}>
+                            {Object.values(d.notes).slice(0, 3).map((n, i) => <div key={i}>· {n}</div>)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -227,73 +333,73 @@ const SECTIONS = [
   {
     key: 'mosfet_losses', label: 'MOSFET Losses', icon: '🔥',
     rows: [
-      { key: 'conduction_loss_per_fet_w', label: 'Cond. Loss / FET', unit: 'W', dec: 3 },
-      { key: 'switching_loss_per_fet_w', label: 'SW Loss / FET', unit: 'W', dec: 3 },
-      { key: 'recovery_loss_per_fet_w', label: 'Recovery Loss / FET', unit: 'W', dec: 3 },
-      { key: 'total_loss_per_fet_w', label: 'Total / FET', unit: 'W', dec: 3, warn: 8, danger: 15 },
-      { key: 'total_all_6_fets_w', label: 'Total (×6 FETs)', unit: 'W', dec: 1, warn: 40, danger: 60 },
-      { key: 'efficiency_mosfet_pct', label: 'Efficiency', unit: '%', dec: 2 },
+      { key: 'conduction_loss_per_fet_w', label: 'Cond. Loss / FET', unit: 'W', dec: 3, explain: 'I_rms² × (R_ds_on × 1.5 temp derating)' },
+      { key: 'switching_loss_per_fet_w', label: 'SW Loss / FET', unit: 'W', dec: 3, explain: '0.5 × V_peak × I_max × (tr + tf) × fsw  +  Qg × V_drv × fsw' },
+      { key: 'recovery_loss_per_fet_w', label: 'Recovery Loss / FET', unit: 'W', dec: 3, explain: 'Qrr × V_peak × fsw' },
+      { key: 'total_loss_per_fet_w', label: 'Total / FET', unit: 'W', dec: 3, warn: 8, danger: 15, explain: 'P_cond + P_sw + P_rr' },
+      { key: 'total_all_6_fets_w', label: 'Total (×6 FETs)', unit: 'W', dec: 1, warn: 40, danger: 60, explain: 'Total per FET × 6' },
+      { key: 'efficiency_mosfet_pct', label: 'Efficiency', unit: '%', dec: 2, explain: '100 × (P_out) / (P_out + Total_Loss)' },
     ],
   },
   {
     key: 'gate_resistors', label: 'Gate Drive', icon: '⚡',
     rows: [
-      { key: 'rg_on_recommended_ohm', label: 'Rg ON', unit: 'Ω', dec: 2 },
-      { key: 'rg_off_recommended_ohm', label: 'Rg OFF', unit: 'Ω', dec: 2 },
-      { key: 'rg_bootstrap_ohm', label: 'Rg Bootstrap', unit: 'Ω', dec: 0 },
-      { key: 'gate_rise_time_ns', label: 'Rise time', unit: 'ns', dec: 1 },
-      { key: 'gate_fall_time_ns', label: 'Fall time', unit: 'ns', dec: 1 },
-      { key: 'dv_dt_v_per_us', label: 'dV/dt', unit: 'V/µs', dec: 1 },
+      { key: 'rg_on_recommended_ohm', label: 'Rg ON', unit: 'Ω', dec: 2, explain: 'MAX( (V_drv - V_th)/I_source,  (V_drv - V_th)/(Qg/t_rise_target) ) - R_g_internal' },
+      { key: 'rg_off_recommended_ohm', label: 'Rg OFF', unit: 'Ω', dec: 2, explain: 'MAX( V_drv/I_sink, Rg_on/2 ) - R_g_internal' },
+      { key: 'rg_bootstrap_ohm', label: 'Rg Bootstrap', unit: 'Ω', dec: 0, explain: 'Hardcoded standard value (10Ω) to limit peak charging current' },
+      { key: 'gate_rise_time_ns', label: 'Rise time', unit: 'ns', dec: 1, explain: 'Q_g / ( (V_drv - V_th) / Rg_on_total )' },
+      { key: 'gate_fall_time_ns', label: 'Fall time', unit: 'ns', dec: 1, explain: 'Q_g / ( V_drv / Rg_off_total )' },
+      { key: 'dv_dt_v_per_us', label: 'dV/dt', unit: 'V/µs', dec: 1, explain: 'V_peak / t_rise_actual' },
     ],
   },
   {
     key: 'thermal', label: 'Thermal', icon: '🌡️',
     rows: [
-      { key: 't_junction_est_c', label: 'Tj estimated', unit: '°C', dec: 1, warn: 130, danger: 155 },
-      { key: 'tj_max_rated_c', label: 'Tj max rated', unit: '°C', dec: 0 },
-      { key: 'thermal_margin_c', label: 'Thermal margin', unit: '°C', dec: 1, warn: 30, danger: 0 },
-      { key: 'p_per_fet_w', label: 'P / FET', unit: 'W', dec: 3 },
-      { key: 'copper_area_per_fet_mm2', label: 'Cu area / FET', unit: 'mm²', dec: 0 },
+      { key: 't_junction_est_c', label: 'Tj estimated', unit: '°C', dec: 1, warn: 130, danger: 155, explain: 'T_ambient + (P_fet × (R_thJC + R_thCS + R_thSA))' },
+      { key: 'tj_max_rated_c', label: 'Tj max rated', unit: '°C', dec: 0, explain: 'Absolute maximum junction temp from MOSFET datasheet' },
+      { key: 'thermal_margin_c', label: 'Thermal margin', unit: '°C', dec: 1, warn: 30, danger: 0, explain: 'Tj_max_rated - Tj_estimated' },
+      { key: 'p_per_fet_w', label: 'P / FET', unit: 'W', dec: 3, explain: 'Total power dissipation per individual switch' },
+      { key: 'copper_area_per_fet_mm2', label: 'Cu area / FET', unit: 'mm²', dec: 0, explain: 'IPC-2152 estimate for required 3oz copper area to maintain steady state' },
     ],
   },
   {
     key: 'input_capacitors', label: 'Bus Capacitors', icon: '🔋',
     rows: [
-      { key: 'ripple_method', label: 'Method', string: true },
-      { key: 'i_ripple_rms_a', label: 'Ripple current', unit: 'A', dec: 2 },
-      { key: 'c_bulk_required_uf', label: 'C required', unit: 'µF', dec: 1 },
-      { key: 'n_bulk_caps', label: 'Cap count', unit: 'pcs', dec: 0 },
-      { key: 'c_total_uf', label: 'C total', unit: 'µF', dec: 0 },
-      { key: 'v_ripple_actual_v', label: 'Actual ripple', unit: 'V', dec: 3 },
-      { key: 'esr_budget_per_cap_mohm', label: 'ESR/cap budget', unit: 'mΩ', dec: 1 },
+      { key: 'ripple_method', label: 'Method', string: true, explain: 'Exact (using L_ph) vs Estimated (3-Phase SPWM factor M=0.9)' },
+      { key: 'i_ripple_rms_a', label: 'Ripple current', unit: 'A', dec: 2, explain: 'RMS bus ripple current drawn by the inverter switching' },
+      { key: 'c_bulk_required_uf', label: 'C required', unit: 'µF', dec: 1, explain: 'I_ripple_rms / (8 × f_sw × dV_target)' },
+      { key: 'n_bulk_caps', label: 'Cap count', unit: 'pcs', dec: 0, explain: 'C_bulk_required / 100uF (minimum of 4 to split ESR heating)' },
+      { key: 'c_total_uf', label: 'C total', unit: 'µF', dec: 0, explain: 'Total physical capacitance installed in the bank' },
+      { key: 'v_ripple_actual_v', label: 'Actual ripple', unit: 'V', dec: 3, explain: 'Actual voltage droop based on C_total selected' },
+      { key: 'esr_budget_per_cap_mohm', label: 'ESR/cap budget', unit: 'mΩ', dec: 1, explain: 'Maximum allowed ESR per capacitor to not exceed 105°C thermal bounds' },
     ],
   },
   {
     key: 'bootstrap_cap', label: 'Bootstrap', icon: '🔄',
     rows: [
-      { key: 'c_boot_calculated_nf', label: 'C_boot required', unit: 'nF', dec: 1 },
-      { key: 'c_boot_recommended_nf', label: 'C_boot standard', unit: 'nF', dec: 0 },
-      { key: 'v_bootstrap_v', label: 'V_bootstrap', unit: 'V', dec: 2 },
-      { key: 'min_hs_on_time_ns', label: 'Min on-time', unit: 'ns', dec: 0 },
+      { key: 'c_boot_calculated_nf', label: 'C_boot required', unit: 'nF', dec: 1, explain: '(Q_g + I_leakage×t_on) / dV_boot_droop' },
+      { key: 'c_boot_recommended_nf', label: 'C_boot standard', unit: 'nF', dec: 0, explain: 'Calculated requirement buffered by 2x safety margin and snapped to E12 series' },
+      { key: 'v_bootstrap_v', label: 'V_bootstrap', unit: 'V', dec: 2, explain: 'V_drive - V_diode_drop' },
+      { key: 'min_hs_on_time_ns', label: 'Min on-time', unit: 'ns', dec: 0, explain: '5 × R_boot × C_boot (time required to fully recharge bootstrap capacitor)' },
     ],
   },
   {
     key: 'dead_time', label: 'Dead Time', icon: '⏱️',
     rows: [
-      { key: 'dt_minimum_ns', label: 'Minimum DT', unit: 'ns', dec: 0 },
-      { key: 'dt_recommended_ns', label: 'Recommended DT', unit: 'ns', dec: 0 },
-      { key: 'dt_actual_ns', label: 'Actual (MCU)', unit: 'ns', dec: 0 },
-      { key: 'dt_pct_of_period', label: 'DT %', unit: '%', dec: 3 },
+      { key: 'dt_minimum_ns', label: 'Minimum DT', unit: 'ns', dec: 0, explain: 't_off_delay + t_fall + t_prop_delay + 20ns baseline margin' },
+      { key: 'dt_recommended_ns', label: 'Recommended DT', unit: 'ns', dec: 0, explain: 'Minimum DT × 1.5x safety multiplier, snapped to MCU timer resolution' },
+      { key: 'dt_actual_ns', label: 'Actual (MCU)', unit: 'ns', dec: 0, explain: 'Final physical dead time pushed to the timer registers' },
+      { key: 'dt_pct_of_period', label: 'DT %', unit: '%', dec: 3, explain: 'Percentage of the PWM period consumed by dead-time (limits max duty cycle)' },
     ],
   },
   {
     key: 'snubber', label: 'RC Snubber', icon: '📡',
     rows: [
-      { key: 'voltage_overshoot_v', label: 'V overshoot', unit: 'V', dec: 1, warn: 10, danger: 20 },
-      { key: 'v_sw_peak_v', label: 'V_sw peak', unit: 'V', dec: 1, warn: this?.v_peak, danger: 80 },
-      { key: 'rs_recommended_ohm', label: 'Rs snubber', unit: 'Ω', dec: 0 },
-      { key: 'cs_recommended_pf', label: 'Cs snubber', unit: 'pF', dec: 0 },
-      { key: 'p_total_6_snubbers_w', label: 'Snubber power', unit: 'W', dec: 3 },
+      { key: 'voltage_overshoot_v', label: 'V overshoot', unit: 'V', dec: 1, warn: 10, danger: 20, explain: 'I_max × √(L_stray / C_oss)' },
+      { key: 'v_sw_peak_v', label: 'V_sw peak', unit: 'V', dec: 1, warn: 60, danger: 80, explain: 'V_bus_peak + Voltage Overshoot (must not exceed MOSFET V_ds_max)' },
+      { key: 'rs_recommended_ohm', label: 'Rs snubber', unit: 'Ω', dec: 0, explain: 'Critical Damping: √(L_stray / C_oss) snapped to E24 series' },
+      { key: 'cs_recommended_pf', label: 'Cs snubber', unit: 'pF', dec: 0, explain: 'Capacitance required to damp oscillation: 3 × C_oss' },
+      { key: 'p_total_6_snubbers_w', label: 'Snubber power', unit: 'W', dec: 3, explain: '6 × (0.5 × C_s × V_peak² × f_sw)' },
     ],
   },
 ]

@@ -90,7 +90,7 @@ export default function MotorForm({ config }) {
                   }}>
                     {field.label}
                     {field.unit && (
-                      <span style={{ marginLeft: 5, fontSize: 10, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)', fontWeight: 400 }}>
+                      <span style={{ marginLeft: 5, fontSize: 10, color: 'var(--txt-2)', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>
                         [{field.unit}]
                       </span>
                     )}

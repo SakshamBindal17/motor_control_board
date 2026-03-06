@@ -5,8 +5,8 @@ export function fmtNum(val, decimals = 3) {
   if (val === null || val === undefined || val === '') return '—'
   const n = parseFloat(val)
   if (isNaN(n)) return String(val)
-  if (Math.abs(n) >= 1e6)  return (n / 1e6).toFixed(2) + 'M'
-  if (Math.abs(n) >= 1e3)  return (n / 1e3).toFixed(2) + 'k'
+  if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + 'M'
+  if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(2) + 'k'
   return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: 0 })
 }
 
@@ -20,42 +20,42 @@ export function fmtVal(val, unit = '', decimals = 3) {
 /** Block status → badge class */
 export function statusBadgeClass(status) {
   return {
-    idle:       'badge-idle',
-    uploading:  'badge-busy',
+    idle: 'badge-idle',
+    uploading: 'badge-busy',
     extracting: 'badge-busy',
-    done:       'badge-done',
-    error:      'badge-error',
+    done: 'badge-done',
+    error: 'badge-error',
   }[status] || 'badge-idle'
 }
 
 /** Block status → dot class */
 export function statusDotClass(status) {
   return {
-    idle:       'dot-idle',
-    uploading:  'dot-busy',
+    idle: 'dot-idle',
+    uploading: 'dot-busy',
     extracting: 'dot-busy',
-    done:       'dot-done',
-    error:      'dot-error',
+    done: 'dot-done',
+    error: 'dot-error',
   }[status] || 'dot-idle'
 }
 
 /** Block status → label */
 export function statusLabel(status) {
   return {
-    idle:       'Not started',
-    uploading:  'Uploading…',
+    idle: 'Not started',
+    uploading: 'Uploading…',
     extracting: 'Extracting…',
-    done:       'Complete',
-    error:      'Error',
+    done: 'Complete',
+    error: 'Error',
   }[status] || 'Unknown'
 }
 
 /** Save a blob to disk */
 export function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
-  const a   = document.createElement('a')
-  a.href    = url
-  a.download= filename
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -68,8 +68,13 @@ export function deepGet(obj, path, fallback = undefined) {
 }
 
 /** Returns CSS color class based on value threshold */
-export function thresholdClass(val, warnAbove, dangerAbove) {
-  if (dangerAbove !== undefined && val >= dangerAbove) return 'danger'
-  if (warnAbove  !== undefined && val >= warnAbove)  return 'warn'
+export function thresholdClass(val, warnLimit, dangerLimit) {
+  if (dangerLimit !== undefined && warnLimit !== undefined && dangerLimit < warnLimit) {
+    if (val <= dangerLimit) return 'danger'
+    if (val <= warnLimit) return 'warn'
+    return ''
+  }
+  if (dangerLimit !== undefined && val >= dangerLimit) return 'danger'
+  if (warnLimit !== undefined && val >= warnLimit) return 'warn'
   return ''
 }

@@ -6,14 +6,14 @@ import { useProject } from '../context/ProjectContext.jsx'
 export default function SettingsModal() {
   const { state, dispatch } = useProject()
   const { settings, project } = state
-  const [showKey,    setShowKey]    = useState(false)
-  const [localKey,   setLocalKey]   = useState(settings.api_key)
+  const [showKey, setShowKey] = useState(false)
+  const [localKey, setLocalKey] = useState(settings.api_key)
   const [localSpecs, setLocalSpecs] = useState({ ...project.system_specs })
 
   function close() { dispatch({ type: 'TOGGLE_SETTINGS' }) }
 
   function save() {
-    dispatch({ type: 'SET_SETTINGS',  payload: { api_key: localKey.trim() } })
+    dispatch({ type: 'SET_SETTINGS', payload: { api_key: localKey.trim() } })
     dispatch({ type: 'SET_SYSTEM_SPECS', payload: localSpecs })
     toast.success('Settings saved')
     close()
@@ -24,13 +24,13 @@ export default function SettingsModal() {
   }
 
   const SYS_FIELDS = [
-    { key: 'bus_voltage',        label: 'Bus Voltage (Nominal)',  unit: 'V'  },
-    { key: 'peak_voltage',       label: 'Bus Voltage (Peak)',     unit: 'V'  },
-    { key: 'power',              label: 'Power',                  unit: 'W'  },
-    { key: 'max_phase_current',  label: 'Max Phase Current',      unit: 'A'  },
-    { key: 'pwm_freq_hz',        label: 'PWM Frequency',          unit: 'Hz' },
-    { key: 'ambient_temp_c',     label: 'Ambient Temperature',    unit: '°C' },
-    { key: 'gate_drive_voltage', label: 'Gate Drive Voltage',     unit: 'V'  },
+    { key: 'bus_voltage', label: 'Bus Voltage (Nominal)', unit: 'V' },
+    { key: 'peak_voltage', label: 'Bus Voltage (Peak)', unit: 'V' },
+    { key: 'power', label: 'Power', unit: 'W' },
+    { key: 'max_phase_current', label: 'Max Phase Current', unit: 'A' },
+    { key: 'pwm_freq_hz', label: 'PWM Frequency', unit: 'Hz' },
+    { key: 'ambient_temp_c', label: 'Ambient Temperature', unit: '°C' },
+    { key: 'gate_drive_voltage', label: 'Gate Drive Voltage', unit: 'V' },
   ]
 
   // overlay
@@ -65,8 +65,8 @@ export default function SettingsModal() {
   }
 
   const unitBadge = {
-    marginLeft: 5, fontSize: 10,
-    color: 'var(--txt-3)', fontFamily: 'var(--font-mono)',
+    marginLeft: 5, fontSize: 10, fontWeight: 500,
+    color: 'var(--txt-2)', fontFamily: 'var(--font-mono)',
   }
 
   return (
@@ -85,7 +85,7 @@ export default function SettingsModal() {
             onClick={close}
             className="btn btn-ghost btn-icon"
             style={{ marginLeft: 'auto' }}
-          ><X size={15}/></button>
+          ><X size={15} /></button>
         </div>
 
         <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -111,7 +111,7 @@ export default function SettingsModal() {
                   color: 'var(--txt-3)',
                 }}
               >
-                {showKey ? <EyeOff size={14}/> : <Eye size={14}/>}
+                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
             <p style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 6, lineHeight: 1.5 }}>
@@ -160,8 +160,8 @@ export default function SettingsModal() {
                   style={{
                     padding: '6px 16px', borderRadius: 6, fontSize: 12, fontWeight: 600,
                     background: settings.theme === t ? 'var(--accent)' : 'var(--bg-3)',
-                    color:      settings.theme === t ? '#fff'          : 'var(--txt-2)',
-                    border:     `1px solid ${settings.theme === t ? 'var(--accent)' : 'var(--border-2)'}`,
+                    color: settings.theme === t ? '#fff' : 'var(--txt-2)',
+                    border: `1px solid ${settings.theme === t ? 'var(--accent)' : 'var(--border-2)'}`,
                     cursor: 'pointer',
                   }}
                 >
@@ -192,7 +192,7 @@ export default function SettingsModal() {
             className="btn btn-primary"
             style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
           >
-            <Save size={13}/> Save Settings
+            <Save size={13} /> Save Settings
           </button>
         </div>
 
