@@ -61,6 +61,7 @@ class CalculationEngine:
         self.motor    = motor_specs
         self.ovr      = overrides or {}
         self.audit_log  = []
+        self._module_meta = {}  # {module_name: {"hardcoded": [...], "fallbacks": [...]}}
 
         try:
             self.v_bus      = float(system_specs.get("bus_voltage",      48))
@@ -83,17 +84,34 @@ class CalculationEngine:
         if self.v_drv <= 0:
             raise ValueError("Gate drive voltage (gate_drive_voltage) must be > 0 V")
 
+    def _log_hc(self, module: str, name: str, value: str, reason: str):
+        """Log a hardcoded constant used in a calculation module."""
+        if module not in self._module_meta:
+            self._module_meta[module] = {"hardcoded": [], "fallbacks": []}
+        if not any(h["name"] == name for h in self._module_meta[module]["hardcoded"]):
+            self._module_meta[module]["hardcoded"].append({"name": name, "value": value, "reason": reason})
+
     def _get(self, params: dict, block_name: str, key: str, fallback=None, expected_unit: str = None):
         val = params.get(key)
         if val is None or val == "":
             if fallback is not None:
                 self.audit_log.append(f"[{block_name}] Missing '{key}', using fallback {fallback}{expected_unit or ''}")
+                mod = getattr(self, '_current_module', block_name)
+                if mod not in self._module_meta:
+                    self._module_meta[mod] = {"hardcoded": [], "fallbacks": []}
+                if not any(f["param"] == key for f in self._module_meta[mod]["fallbacks"]):
+                    self._module_meta[mod]["fallbacks"].append({"param": key, "value": str(fallback), "block": block_name})
             return fallback
         try:
             fval = float(val)
         except (TypeError, ValueError):
             if fallback is not None:
                 self.audit_log.append(f"[{block_name}] Invalid numeric value for '{key}', using fallback {fallback}{expected_unit or ''}")
+                mod = getattr(self, '_current_module', block_name)
+                if mod not in self._module_meta:
+                    self._module_meta[mod] = {"hardcoded": [], "fallbacks": []}
+                if not any(f["param"] == key for f in self._module_meta[mod]["fallbacks"]):
+                    self._module_meta[mod]["fallbacks"].append({"param": key, "value": str(fallback), "block": block_name})
             return fallback
 
         from unit_utils import to_si
@@ -107,6 +125,7 @@ class CalculationEngine:
     # 1. MOSFET Losses
     # ═══════════════════════════════════════════════════════════════════
     def calc_mosfet_losses(self) -> dict:
+        self._current_module = "mosfet_losses"
         # _get now returns SI values (Ω, C, s) automatically via unit_utils
         # fallbacks are SI values too
         rds       = self._get(self.mosfet, "MOSFET", "rds_on",  1.5e-3)   # Ω
@@ -130,6 +149,7 @@ class CalculationEngine:
         # Conduction loss with temp derating (×1.5 @ ~100°C)
         rds_hot = rds * 1.5
         self.audit_log.append("[MOSFET] Applied worst-case 1.5x thermal multiplier for Rds(on) at estimated ~100°C junction.")
+        self._log_hc("mosfet_losses", "Rds(on) thermal derating", "1.5x", "Worst-case at ~100°C junction temperature")
         p_cond  = i_rms_sw**2 * rds_hot
 
         # Switching loss (overlap model)
@@ -147,6 +167,8 @@ class CalculationEngine:
         # Junction temp estimate
         t_junc = self.t_amb + p_total_1 * (rth_jc + 0.5 + 20.0)
         self.audit_log.append("[Thermal] Used hardcoded assumption for PCB via thermal resistance: 20°C/W and TIM: 0.5°C/W.")
+        self._log_hc("mosfet_losses", "TIM resistance (Rth_CS)", "0.5 °C/W", "Thermal interface material between case and PCB")
+        self._log_hc("mosfet_losses", "PCB thermal resistance (Rth_SA)", "20 °C/W", "Natural convection, no heatsink assumed")
 
         # Inverter switching losses only (excludes motor copper/core losses)
         eff = 0 if self.power == 0 else max(0, (1 - p_total_6 / self.power) * 100)
@@ -168,12 +190,14 @@ class CalculationEngine:
                 "rr_basis":     f"Qrr={qrr_nc}nC × Vbus × fsw",
                 "improvement":  "Increase fsw reduces motor ripple but increases switching losses",
             },
+            "_meta": self._module_meta.get("mosfet_losses", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 2. Gate Resistors
     # ═══════════════════════════════════════════════════════════════════
     def calc_gate_resistors(self) -> dict:
+        self._current_module = "gate_resistors"
         qg      = self._get(self.mosfet, "MOSFET", "qg",     92e-9)   # C (SI)
         vgs_th  = self._get(self.mosfet, "MOSFET", "vgs_th",  3.0)    # V
         ciss    = self._get(self.mosfet, "MOSFET", "ciss", 3000e-12)  # F (SI)
@@ -182,6 +206,8 @@ class CalculationEngine:
         io_snk  = self._get(self.driver, "DRIVER", "io_sink",   2.5)  # A (SI)
 
         t_rise_target_ns = float(self.ovr.get("gate_rise_time_ns", 40))
+        if "gate_rise_time_ns" not in self.ovr:
+            self._log_hc("gate_resistors", "Rise time target", "40 ns", "Default gate rise time target (user-configurable)")
         t_rise = t_rise_target_ns * 1e-9
         vdrv   = self.v_drv
 
@@ -200,6 +226,7 @@ class CalculationEngine:
         rg_on_std       = _nearest_e(rg_on_raw)
 
         rg_off_raw  = rg_on_std * 0.47
+        self._log_hc("gate_resistors", "Rg_off ratio", "0.47x Rg_on", "Faster turn-off to reduce cross-conduction")
         rg_off_std  = _nearest_e(rg_off_raw)
         rg_off_min  = (vdrv) / io_snk
         if rg_off_std < rg_off_min:
@@ -207,6 +234,7 @@ class CalculationEngine:
 
         rg_boot = 10.0
         self.audit_log.append("[Gate Drive] Hardcoded bootstrap gate resistor (Rg_boot) to 10.0Ω.")
+        self._log_hc("gate_resistors", "Rg_bootstrap", "10 Ω", "Limits peak bootstrap diode charging current")
 
         t_rise_actual_ns = (rg_on_std * qg / (vdrv - vgs_th)) * 1e9
         t_fall_actual_ns = (rg_off_std * qg / vdrv) * 1e9
@@ -236,14 +264,18 @@ class CalculationEngine:
                 "placement":    "Mount within 10mm of gate pin, 0402/0603, shortest possible trace",
                 "emi_note":     f"dV/dt={round(dv_dt,1)} V/µs — adjust Rg_on if EMI issues arise",
             },
+            "_meta": self._module_meta.get("gate_resistors", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 3. Input Bus Capacitors
     # ═══════════════════════════════════════════════════════════════════
     def calc_input_capacitors(self) -> dict:
+        self._current_module = "input_capacitors"
         i_dc    = 0 if self.v_bus == 0 else self.power / self.v_bus
         delta_v = float(self.ovr.get("delta_v_ripple", 2.0))
+        if "delta_v_ripple" not in self.ovr:
+            self._log_hc("input_capacitors", "Ripple voltage target", f"{delta_v} V", "User-configurable override (default 2.0V)")
         fsw     = self.fsw
 
         # Phase current ripple — use motor inductance if available, else worst-case D=0.5
@@ -264,6 +296,7 @@ class CalculationEngine:
             # I_cap_rms ≈ (M × I_pk / 2) × √(√3/π − 3√3/(4π) × M)
             M = 0.9
             self.audit_log.append("[Motor] Phase Ripple Calculation: Used estimated SPWM modulation index M=0.9.")
+            self._log_hc("input_capacitors", "SPWM modulation index", "M = 0.9", "Standard 3-phase SPWM approximation")
             sq3 = math.sqrt(3)
             i_ripple_rms = (M * self.i_max / 2) * math.sqrt(
                 sq3 / math.pi - 3 * sq3 / (4 * math.pi) * M
@@ -274,6 +307,8 @@ class CalculationEngine:
         c_req_uf = (i_ripple_rms / (8 * fsw * delta_v)) * 1e6
 
         # Parallel 100µF/100V electrolytics (standard choice)
+        self._log_hc("input_capacitors", "Minimum bulk cap count", "4 pcs", "Minimum parallel caps for ESR and thermal distribution")
+        self._log_hc("input_capacitors", "Bulk cap size", "100 µF each", "Standard electrolytic value for bus decoupling")
         n_caps   = max(4, math.ceil(c_req_uf / 100.0))
         c_total  = n_caps * 100   # µF
         v_ripple_actual = (i_ripple_rms / (8 * fsw * c_total * 1e-6))
@@ -287,12 +322,15 @@ class CalculationEngine:
 
         # Film cap (mid-freq 1kHz–1MHz)
         c_film_uf = 4.7
+        self._log_hc("input_capacitors", "Film cap", "4.7 µF", "Mid-frequency decoupling")
 
         # MLCC HF decoupling per switch node
         c_mlcc_nf = 100
+        self._log_hc("input_capacitors", "MLCC per switch node", "100 nF", "High-frequency decoupling")
 
         # Total capacitor dissipation (at rated ESR)
         esr_typ_mohm = 50.0    # typical electrolytic ESR
+        self._log_hc("input_capacitors", "Typical ESR per cap", "50 mΩ", "Electrolytic ESR estimate for thermal calc")
         p_cap_total  = i_ripple_rms**2 * (esr_typ_mohm/1000) / n_caps
 
         self.audit_log.append("[DC Bus] Hardcoded standard decoupling: 50mΩ ESR per electrolytic, 4.7µF film, 100nF MLCC.")
@@ -326,12 +364,14 @@ class CalculationEngine:
                 "placement_mlcc":  "One per MOSFET switch node, as close as possible",
                 "polarity":        "Electrolytic — verify polarity before power-on",
             },
+            "_meta": self._module_meta.get("input_capacitors", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 4. Bootstrap Capacitor
     # ═══════════════════════════════════════════════════════════════════
     def calc_bootstrap_cap(self) -> dict:
+        self._current_module = "bootstrap_cap"
         # _get already returns SI (Coulombs) — do NOT multiply by 1e-9 again
         qg     = self._get(self.mosfet, "MOSFET", "qg", 92e-9)   # C  (SI)
         vgs_th = self._get(self.mosfet, "MOSFET", "vgs_th", 3.0)  # V
@@ -339,6 +379,8 @@ class CalculationEngine:
 
         # Allow 0.5V droop
         droop    = float(self.ovr.get("bootstrap_droop_v", 0.5))
+        if "bootstrap_droop_v" not in self.ovr:
+            self._log_hc("bootstrap_cap", "Bootstrap droop target", f"{droop} V", "Acceptable voltage sag during HS on-time")
         if droop <= 0:
             self.audit_log.append("[Bootstrap] WARNING: Bootstrap droop cannot be 0 or negative. Using 0.5V default.")
             droop = 0.5
@@ -352,21 +394,26 @@ class CalculationEngine:
                   100,120,150,180,220,270,330,470,680,1000]
         c_std_nf = float(next((v for v in E12_nF if v >= c_boot_with_margin), E12_nF[-1]))
         c_std_nf = max(100.0, c_std_nf)   # practical floor: 100nF
+        self._log_hc("bootstrap_cap", "Min practical boot cap", "100 nF", "Floor for bootstrap capacitor value")
+        self._log_hc("bootstrap_cap", "Safety margin", "2x", "C_boot multiplied by 2x before E12 snap")
 
         # Bootstrap diode Vf
         vf_diode = 0.5
+        self._log_hc("bootstrap_cap", "Schottky diode Vf", "0.5 V", "Assumed forward drop for bootstrap diode")
         v_boot   = vdrv - vf_diode
 
         # Minimum high-side on-time to refresh bootstrap
         # C_boot must recharge through R_boot(10Ω) from supply
         r_boot   = 10.0
         self.audit_log.append("[Bootstrap] Hardcoded series bootstrap diode resistor to 10.0Ω.")
+        self._log_hc("bootstrap_cap", "Series boot resistor", "10 Ω", "Limits peak charging current")
         tau_boot = r_boot * c_std_nf * 1e-9   # RC time constant
         t_min_on_ns = 3 * tau_boot * 1e9       # 3τ to charge to ~95%
 
         # Bootstrap leakage budget
         # Assuming gate leakage 1µA and driver quiescent ~2µA
         i_leakage_ua = 3.0
+        self._log_hc("bootstrap_cap", "Leakage current budget", "3 µA", "Gate 1µA + driver quiescent 2µA")
         # Time until droop = C_boot × ΔV / I_leak
         t_hold_ms = (c_std_nf * 1e-9 * droop / (i_leakage_ua * 1e-6)) * 1000
 
@@ -386,23 +433,28 @@ class CalculationEngine:
                 "refresh":       f"High-side must turn ON ≥ {round(t_min_on_ns,0):.0f}ns per PWM cycle",
                 "derating":      "Use 25V cap at 12V drive — only 50% voltage derating",
             },
+            "_meta": self._module_meta.get("bootstrap_cap", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 5. Shunt Resistors (Single + 3-phase)
     # ═══════════════════════════════════════════════════════════════════
     def calc_shunt_resistors(self) -> dict:
+        self._current_module = "shunt_resistors"
         i_max    = self.i_max
         csa_gain = self._get(self.driver, "DRIVER", "current_sense_gain", 20) or 20
 
         # Target 1.65V at ADC (3.3V ref, 50% headroom)
         v_adc_target = 1.65
+        self._log_hc("shunt_resistors", "ADC target voltage", "1.65 V", "50% of 3.3V ref for bidirectional FOC")
+        self._log_hc("shunt_resistors", "ADC reference", "3.3 V", "Standard MCU ADC reference voltage")
         self.audit_log.append("[Current Sensing] Assumed 3.3V ADC with 1.65V bias target for bidirectional FOC.")
         r_ideal_mohm = (v_adc_target / (i_max * csa_gain)) * 1000
 
         # Standard shunt values
         r1_mohm  = 0.5 if r_ideal_mohm <= 0.75 else 1.0   # single shunt
         r3_mohm  = 0.5                                      # 3-phase always 0.5
+        self._log_hc("shunt_resistors", "3-phase shunt value", "0.5 mΩ", "Standard low-side current sense resistor")
 
         # Single shunt
         v_sh1_mv   = i_max * r1_mohm * 1e-3 * 1000        # mV at Imax
@@ -448,12 +500,14 @@ class CalculationEngine:
                 "tolerance":"±1% or better for accurate FOC",
                 "jumper":   "Populate EITHER single shunt OR 3-phase shunts — use 0Ω jumper to select mode",
             },
+            "_meta": self._module_meta.get("shunt_resistors", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 6. RC Snubber (Drain-Source)
     # ═══════════════════════════════════════════════════════════════════
     def calc_snubber(self) -> dict:
+        self._current_module = "snubber"
         # Parasitic PCB trace inductance (target <5nH, assume 10nH worst case)
         l_stray_nh  = float(self.ovr.get("stray_inductance_nh", 10))
         l_stray     = l_stray_nh * 1e-9
@@ -481,10 +535,13 @@ class CalculationEngine:
         # Log the stray inductance hardcode
         if l_stray_nh == 10:
             self.audit_log.append("[Snubber] Stray layout inductance missing. Assumed 10nH default.")
+            self._log_hc("snubber", "Stray inductance", "10 nH", "Assumed PCB loop inductance (worst case)")
         self.audit_log.append("[Snubber] Targeted critical damping factor (ζ = 1) for switching overshoot resistor calculation.")
         if rs_std < 1.0: rs_std = 1.0    # practical minimum
         if rs_std > 100: rs_std = 100.0  # practical maximum
 
+        self._log_hc("snubber", "Snubber cap formula", "3x Coss", "Overdamped RC snubber design rule")
+        self._log_hc("snubber", "Rs practical limits", "1-100 Ω", "Physical resistor sizing constraints")
         # Snubber capacitor: Cs ≈ 3× Coss, snapped to nearest E12 cap decade
         cs_pf_raw = coss_pf * 3 if coss_pf > 0 else 1000.0
         E12_pF = [100,120,150,180,220,270,330,390,470,560,680,820,
@@ -518,20 +575,25 @@ class CalculationEngine:
                 "reduce_stray":   "Reducing PCB stray inductance is more effective than snubbers",
                 "pcb_technique":  "Use mirrored top/bottom copper pours for low-inductance half-bridge",
             },
+            "_meta": self._module_meta.get("snubber", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 7. Protection Voltage Dividers
     # ═══════════════════════════════════════════════════════════════════
     def calc_protection_dividers(self) -> dict:
+        self._current_module = "protection_dividers"
         v_ref = 3.3   # comparator reference
+        self._log_hc("protection_dividers", "ADC reference", "3.3 V", "Comparator/ADC reference voltage")
 
         # ── OVP: trip at Vpeak + 3% ──
         v_ovp_trip = round(self.v_peak * 1.03, 1)
+        self._log_hc("protection_dividers", "OVP trip margin", "Vpeak × 1.03", "3% above peak bus voltage")
         # V_ref = V_trip × R2 / (R1 + R2)  →  R2/R1 = V_ref / (V_trip - V_ref)
         v_ovp_diff   = v_ovp_trip - v_ref
         r_ratio_ovp  = 0 if v_ovp_diff <= 0 else v_ref / v_ovp_diff
         r1_ovp       = 100e3   # fix R1 = 100kΩ
+        self._log_hc("protection_dividers", "OVP/UVP R1", "100 kΩ", "Fixed top divider resistor for low bias current")
         r2_ovp       = r1_ovp * r_ratio_ovp
         r2_ovp_std   = _nearest_e(r2_ovp / 1e3, E24) * 1e3
         v_trip_ovp_actual = v_ovp_trip * r2_ovp_std / (r1_ovp + r2_ovp_std)
@@ -540,6 +602,8 @@ class CalculationEngine:
         # ── UVP: trip at 75% of Vnom, re-enable at 78% (2V hyst) ──
         v_uvp_trip  = round(self.v_bus * 0.75, 1)
         v_uvp_hyst  = round(self.v_bus * 0.79, 1)
+        self._log_hc("protection_dividers", "UVP trip", "75% of Vbus", "Under-voltage protection threshold")
+        self._log_hc("protection_dividers", "UVP hysteresis", "79% of Vbus", "Re-enable threshold")
         v_uvp_diff  = v_uvp_trip - v_ref
         r_ratio_uvp = 0 if v_uvp_diff <= 0 else v_ref / v_uvp_diff
         r1_uvp      = 100e3
@@ -550,10 +614,15 @@ class CalculationEngine:
         # ── OCP threshold (shunt-based) ──
         ocp_hw_a    = round(self.i_max * 1.25, 0)
         ocp_sw_a    = round(self.i_max * 1.1,  0)
+        self._log_hc("protection_dividers", "OCP hardware", "1.25x I_max", "Hardware overcurrent trip point")
+        self._log_hc("protection_dividers", "OCP software", "1.1x I_max", "Software overcurrent trip point")
 
         # ── OTP NTC divider ──
         # NTC 10kΩ@25°C, B=3950, R@80°C = 10k × exp(B×(1/353 - 1/298))
         b_ntc       = 3950
+        self._log_hc("protection_dividers", "NTC specs", "10kΩ@25°C, B=3950", "Standard NTC thermistor")
+        self._log_hc("protection_dividers", "OTP warning", "80 °C", "Temperature warning threshold")
+        self._log_hc("protection_dividers", "OTP shutdown", "100 °C", "Temperature shutdown threshold")
         t_trip_k    = 80 + 273.15
         t_25_k      = 298.15
         r_ntc_80    = 10000 * math.exp(b_ntc * (1/t_trip_k - 1/t_25_k))
@@ -566,6 +635,7 @@ class CalculationEngine:
         v_ntc_100   = 3.3 * r_ntc_100 / (r_pullup + r_ntc_100)
         
         self.audit_log.append("[Protection] Hardcoded TVS power rating to 600W (SMBJ/P6KE style) for bus clamping.")
+        self._log_hc("protection_dividers", "TVS power rating", "600 W", "SMBJ/P6KE style for bus clamping")
 
         return {
             "ovp": {
@@ -616,13 +686,18 @@ class CalculationEngine:
                 "part":                 "Si7617DN (60V, 50A) or LTC4366",
                 "vds_rating_v":         60,
             },
+            "_meta": self._module_meta.get("protection_dividers", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 8. Power Supply Bypassing
     # ═══════════════════════════════════════════════════════════════════
     def calc_power_supply_bypass(self) -> dict:
+        self._current_module = "power_supply_bypass"
         self.audit_log.append("[Power Supply] Assumed 10µF bulk and 100nF bypass logic decoupling capacitors across all ICs.")
+        self._log_hc("power_supply_bypass", "Gate driver VCC bulk", "10 µF / 25V", "Standard bulk decoupling")
+        self._log_hc("power_supply_bypass", "Bypass cap", "100 nF / 25V", "Standard HF decoupling per IC")
+        self._log_hc("power_supply_bypass", "MCU bypass count", "4 pcs", "One per MCU power pin")
         return {
             "vcc_gate_driver": {
                 "voltage_v":        self.v_drv,
@@ -655,12 +730,14 @@ class CalculationEngine:
                 "decoupling_rule":  "Every IC power pin needs 100nF within 2mm + bulk 10µF within 10mm",
                 "placement":        "Decoupling caps on same layer as IC — never on opposite side",
             },
+            "_meta": self._module_meta.get("power_supply_bypass", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 9. EMI Filter
     # ═══════════════════════════════════════════════════════════════════
     def calc_emi_filter(self) -> dict:
+        self._current_module = "emi_filter"
         i_dc    = 0 if self.v_bus == 0 else self.power / self.v_bus
         fsw  = self.fsw
 
@@ -668,13 +745,17 @@ class CalculationEngine:
         # Typical values for 20-40kHz: 100–470µH CM inductance
         lcm_uh    = 330
         r_dc_choke= 5   # mΩ typical
+        self._log_hc("emi_filter", "CM choke", "330 µH", "Baseline common-mode inductance")
+        self._log_hc("emi_filter", "CM choke DCR", "5 mΩ", "Typical DC resistance")
         p_choke   = (i_dc**2) * r_dc_choke * 1e-3
 
         # X capacitor (bus differential): 0.1µF at motor cable entry
         cx_nf     = 100
+        self._log_hc("emi_filter", "X cap", "100 nF / 100V", "Differential mode filtering")
 
         # Y capacitor (CM to chassis): 4.7nF max (leakage limits)
         cy_nf     = 4.7
+        self._log_hc("emi_filter", "Y cap", "4.7 nF max", "Common-mode to chassis (safety limit)")
         
         self.audit_log.append("[EMI] Hardcoded baseline CM choke (330µH), X-cap (100nF), and Y-cap (4.7nF) for conducted emissions filtering.")
 
@@ -693,27 +774,34 @@ class CalculationEngine:
                 "motor_output":   "Additional RC filter on motor phase outputs reduces bearing currents",
                 "pcb_ground":     "Star ground topology — separate PGND and AGND, single join point",
             },
+            "_meta": self._module_meta.get("emi_filter", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 10. Thermal Analysis
     # ═══════════════════════════════════════════════════════════════════
     def calc_thermal(self) -> dict:
+        self._current_module = "thermal"
         ml      = self.calc_mosfet_losses()
+        self._current_module = "thermal"  # restore after subroutine
         p_fet   = ml["total_loss_per_fet_w"]
         rth_jc  = self._get(self.mosfet, "MOSFET", "rth_jc", 0.5)
         tj_max  = self._get(self.mosfet, "MOSFET", "tj_max", 175)
 
         rth_cs  = 0.5    # case-to-PCB (thermal pad + solder)
         rth_sa  = 20.0   # PCB copper natural convection
+        self._log_hc("thermal", "Case-to-PCB Rth", "0.5 °C/W", "Thermal pad + solder interface")
+        self._log_hc("thermal", "PCB-to-ambient Rth", "20 °C/W", "Natural convection, no heatsink")
 
         t_case  = self.t_amb + p_fet * rth_sa
         t_junc  = t_case  + p_fet * (rth_jc + rth_cs)
 
         margin  = tj_max - t_junc
         safe    = margin > 30
+        self._log_hc("thermal", "Safe margin threshold", "> 30 °C", "Minimum acceptable thermal margin")
 
         # IPC-2152 trace width (external layer, 3oz Cu, 30°C rise)
+        self._log_hc("thermal", "IPC-2152 derating", "3oz Cu, 30°C rise", "External layer trace width calculation")
         i_trace = self.i_max
         # Simplified: A = (I / (0.048 × ΔT^0.44))^(1/0.725) for 1oz
         # For 3oz: divide area by ~2.2
@@ -723,6 +811,7 @@ class CalculationEngine:
 
         # Copper pour area for MOSFET pad (for 30°C rise from junction)
         cu_area_mm2 = p_fet * 645 / 30
+        self._log_hc("thermal", "Thermal vias", "16x 0.3mm per FET", "Heat transfer to bottom copper")
 
         return {
             "p_per_fet_w":              round(p_fet,          3),
@@ -746,12 +835,14 @@ class CalculationEngine:
                 "warning":   "⚠ CRITICAL: Tj > 150°C — add heatsink or reduce fsw" if not safe
                               else "✓ Thermal design safe for natural convection",
             },
+            "_meta": self._module_meta.get("thermal", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 11. Dead Time
     # ═══════════════════════════════════════════════════════════════════
     def calc_dead_time(self) -> dict:
+        self._current_module = "dead_time"
         # _get returns SI (seconds) — use SI fallbacks, then convert to ns for arithmetic
         td_off_s  = self._get(self.mosfet, "MOSFET", "td_off",       50e-9) or 50e-9   # seconds
         tf_s      = self._get(self.mosfet, "MOSFET", "tf",            20e-9) or 20e-9   # seconds
@@ -768,6 +859,8 @@ class CalculationEngine:
         dt_rec    = round(dt_min * 1.5)                  # ns, 50% safety margin
         
         self.audit_log.append("[Dead Time] Added hardcoded 20ns absolute margin and 1.5x (50%) recommended safety margin to switching times.")
+        self._log_hc("dead_time", "Absolute margin", "20 ns", "Baseline safety margin added to minimum")
+        self._log_hc("dead_time", "Safety multiplier", "1.5x (50%)", "Recommended margin over minimum dead time")
 
         # MCU dead-time register resolution — key "pwm_deadtime_res" (matches extraction)
         dt_res_s  = self._get(self.mcu, "MCU", "pwm_deadtime_res", 8e-9) or 8e-9   # seconds
@@ -804,14 +897,23 @@ class CalculationEngine:
                 "6step":     "6-step commutation: enforce same dead-time at each commutation event",
                 "comp_algo": "Voltage feed-forward or current-sign-based dead-time compensation",
             },
+            "_meta": self._module_meta.get("dead_time", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 12. PCB Guidelines
     # ═══════════════════════════════════════════════════════════════════
     def calc_pcb_guidelines(self) -> dict:
+        self._current_module = "pcb_guidelines"
         th = self.calc_thermal()
+        self._current_module = "pcb_guidelines"  # restore after subroutine
         trace_w = th["power_trace_width_mm"]
+
+        self._log_hc("pcb_guidelines", "Layer stack", "6-layer", "Standard motor controller PCB configuration")
+        self._log_hc("pcb_guidelines", "Gate trace width", "0.3 mm", "Minimum for controlled impedance")
+        self._log_hc("pcb_guidelines", "Signal trace width", "0.15 mm", "Standard signal routing")
+        self._log_hc("pcb_guidelines", "Power clearance", "1.0 mm", "High voltage spacing")
+        self._log_hc("pcb_guidelines", "Half-bridge loop target", "< 5 nH", "Low inductance switching loop")
 
         return {
             "layer_stack": [
@@ -838,12 +940,14 @@ class CalculationEngine:
                 "bridge_loop":   "Half-bridge Drain-Source-GND loop < 100mm² for low di/dt",
                 "copper_pour":   "Thermal pour on both L1 and L6 under each MOSFET",
             },
+            "_meta": self._module_meta.get("pcb_guidelines", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════
     # 13. Motor Parameter Validation & Sanity Checks
     # ═══════════════════════════════════════════════════════════════════
     def calc_motor_validation(self) -> dict:
+        self._current_module = "motor_validation"
         m = self.motor or {}
 
         # Parse motor specs (all optional — skip checks if not provided)
@@ -956,6 +1060,7 @@ class CalculationEngine:
 
         results["warnings"] = warnings
         results["has_motor_data"] = any(v is not None for v in [rpm, pole_pairs, ke, kt, rph_mohm])
+        results["_meta"] = self._module_meta.get("motor_validation", {"hardcoded": [], "fallbacks": []})
 
         return results
 
@@ -964,6 +1069,7 @@ class CalculationEngine:
     # ═══════════════════════════════════════════════════════════════════
     def calc_mosfet_rating_check(self) -> dict:
         """Validate that the selected MOSFET can handle system voltage and current."""
+        self._current_module = "mosfet_rating_check"
         vds_max = self._get(self.mosfet, "MOSFET", "vds_max", None)
         id_cont = self._get(self.mosfet, "MOSFET", "id_cont", None)
 
@@ -1017,6 +1123,7 @@ class CalculationEngine:
             self.audit_log.append("[MOSFET Rating] Id_cont not extracted — cannot validate current rating.")
 
         results["warnings"] = warnings
+        results["_meta"] = self._module_meta.get("mosfet_rating_check", {"hardcoded": [], "fallbacks": []})
         return results
 
     # ═══════════════════════════════════════════════════════════════════
@@ -1024,6 +1131,7 @@ class CalculationEngine:
     # ═══════════════════════════════════════════════════════════════════
     def calc_driver_compatibility(self) -> dict:
         """Validate gate driver is compatible with system specs and MCU."""
+        self._current_module = "driver_compatibility"
         warnings = []
         results = {}
 
@@ -1070,6 +1178,7 @@ class CalculationEngine:
         vbs_uvlo = self._get(self.driver, "DRIVER", "vbs_uvlo", None)
         # Bootstrap voltage = Vdrv - diode_Vf
         v_boot = self.v_drv - 0.5  # typical Schottky diode drop
+        self._log_hc("driver_compatibility", "Bootstrap diode Vf", "0.5 V", "Assumed Schottky diode forward drop")
         results["v_bootstrap_v"] = round(v_boot, 2)
 
         if vbs_uvlo is not None:
@@ -1102,6 +1211,8 @@ class CalculationEngine:
 
         # Try to get MCU output voltage (assume 3.3V if not available)
         mcu_voh = 3.3  # default MCU output high
+        if not vdd_mcu_raw:
+            self._log_hc("driver_compatibility", "MCU output voltage", "3.3 V", "Assumed default when VDD range not available")
         if vdd_mcu_raw:
             try:
                 vdd_str = str(vdd_mcu_raw)
@@ -1133,6 +1244,7 @@ class CalculationEngine:
             results["vil_v"] = round(vil, 2)
 
         results["warnings"] = warnings
+        results["_meta"] = self._module_meta.get("driver_compatibility", {"hardcoded": [], "fallbacks": []})
         return results
 
     # ═══════════════════════════════════════════════════════════════════
@@ -1140,6 +1252,7 @@ class CalculationEngine:
     # ═══════════════════════════════════════════════════════════════════
     def calc_adc_timing(self) -> dict:
         """Validate ADC can sample within center-aligned PWM window."""
+        self._current_module = "adc_timing"
         warnings = []
         results = {}
 
@@ -1148,6 +1261,7 @@ class CalculationEngine:
         # Center-aligned: sample at PWM center, need at least ~10% of half-period
         t_half_us = t_pwm_us / 2.0
         t_window_us = t_half_us * 0.1              # conservative: 10% of half-period
+        self._log_hc("adc_timing", "Sampling window", "10% of half-period", "Conservative center-aligned sampling")
         results["pwm_period_us"] = round(t_pwm_us, 2)
         results["sampling_window_us"] = round(t_window_us, 2)
 
@@ -1197,6 +1311,7 @@ class CalculationEngine:
                 results["adc_channels"] = n_ch
                 results["channels_needed"] = 7
                 results["channels_ok"] = n_ch >= 7
+                self._log_hc("adc_timing", "FOC channel requirement", "≥ 7 channels", "3 current + bus V + 2 NTC + 1 BEMF")
 
                 if n_ch < 7:
                     warnings.append(
@@ -1211,6 +1326,7 @@ class CalculationEngine:
             results["channels_ok"] = None
 
         results["warnings"] = warnings
+        results["_meta"] = self._module_meta.get("adc_timing", {"hardcoded": [], "fallbacks": []})
         return results
 
     # ═══════════════════════════════════════════════════════════════════
@@ -1237,4 +1353,16 @@ class CalculationEngine:
         }
         # Attach logs after calculations have fully populated them
         results["audit_log"] = list(dict.fromkeys(self.audit_log))
+
+        # Build transparency summary
+        transparency = {"total_hardcoded": 0, "total_fallbacks": 0, "by_module": {}}
+        for mod_name, meta in self._module_meta.items():
+            hc_count = len(meta.get("hardcoded", []))
+            fb_count = len(meta.get("fallbacks", []))
+            transparency["total_hardcoded"] += hc_count
+            transparency["total_fallbacks"] += fb_count
+            if hc_count > 0 or fb_count > 0:
+                transparency["by_module"][mod_name] = meta
+        results["transparency"] = transparency
+
         return results
