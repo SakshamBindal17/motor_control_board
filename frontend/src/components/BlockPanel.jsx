@@ -86,7 +86,6 @@ export const CALC_CRITICAL = {
     "td_off",         // dead time minimum
     "coss",           // snubber design
     "qrr",            // reverse recovery loss
-    "body_diode_vf",  // snubber / diode drop
     "rth_jc",         // thermal → Tj estimate
     "tj_max",         // thermal margin check
     "vgs_th",         // gate resistor (Vdrv - Vth drive headroom)
@@ -97,7 +96,6 @@ export const CALC_CRITICAL = {
     "io_sink",        // Rg_off calculation
     "prop_delay_on",  // dead time: dt_min = td_off + tf + prop_delay_off + margin
     "prop_delay_off", // dead time
-    "vbs_uvlo",       // bootstrap voltage check vs UVLO
     "current_sense_gain", // shunt resistor sizing (V_ADC = Ishunt × Rshunt × gain)
   ]),
   mcu: new Set([
@@ -182,7 +180,7 @@ export default function BlockPanel({ blockKey, config }) {
     }
   }
 
-  const onDrop = useCallback(files => { if (files[0]) doExtract(files[0]) }, [blockKey, settings.api_key])
+  const onDrop = useCallback(files => { if (files[0]) doExtract(files[0]) }, [blockKey, settings])
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop, accept: { 'application/pdf': ['.pdf'] }, multiple: false,
   })
@@ -454,7 +452,9 @@ export default function BlockPanel({ blockKey, config }) {
                     )}
 
                     {/* ══ MISSING / NOT EXTRACTED ══════════════════════════ */}
-                    {missingIds.length > 0 && (
+                    {/* Show when there are missing IDs OR when manual entries exist
+                        so users can always edit/delete manually-added values */}
+                    {(missingIds.length > 0 || (raw_data?.parameters || []).some(p => p.category === 'Manual Entry')) && (
                       <MissingParamsSection
                         missingIds={missingIds}
                         blockKey={blockKey}
@@ -597,7 +597,9 @@ function MissingParamsSection({ missingIds, blockKey, color, collapsed, setColla
         style={{ borderTop: '1px solid rgba(255,68,68,.2)' }}
       >
         {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-        <span style={{ color: 'var(--red)' }}>Missing / Not Extracted</span>
+        <span style={{ color: stillMissing.length > 0 ? 'var(--red)' : 'var(--green)' }}>
+          {stillMissing.length > 0 ? 'Missing / Not Extracted' : '✓ Manual Entries'}
+        </span>
         {missingCrit.length > 0 && (
           <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', padding: '1px 6px', background: 'rgba(255,68,68,.12)', color: 'var(--red)', borderRadius: 4 }}>
             {missingCrit.length} calc-critical
