@@ -218,7 +218,7 @@ export default function CalculationsPanel() {
                   {isExpanded && (
                     <div className="transparency-mod-body">
                       {hc.map((h, i) => (
-                        <div key={`hc-${i}`} className="trans-entry trans-entry-hc" title={`${h.name} = ${h.value}\n${h.reason}`}>
+                        <div key={`hc-${i}`} className="trans-entry trans-entry-hc" data-tip={`${h.name} = ${h.value}\n${h.reason}`}>
                           <span className="trans-dot trans-dot-hc" />
                           <span className="trans-entry-name">{h.name}</span>
                           <span className="trans-entry-eq">=</span>
@@ -227,7 +227,7 @@ export default function CalculationsPanel() {
                         </div>
                       ))}
                       {fb.map((f, i) => (
-                        <div key={`fb-${i}`} className="trans-entry trans-entry-fb" title={`${f.param} = ${f.value}\nMissing from ${f.block} datasheet — using fallback default`}>
+                        <div key={`fb-${i}`} className="trans-entry trans-entry-fb" data-tip={`${f.param} = ${f.value}\nMissing from ${f.block} datasheet — using fallback default`}>
                           <span className="trans-dot trans-dot-fb" />
                           <span className="trans-entry-name">{f.param}</span>
                           <span className="trans-entry-eq">=</span>
