@@ -123,3 +123,5 @@ docs/
 saved_manually/
 recent_changes.diff
 ui_changes.diff
+.claude/
+.cursor/
