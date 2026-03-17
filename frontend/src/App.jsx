@@ -9,6 +9,43 @@ import FeedbackPanel from './components/FeedbackPanel.jsx'
 import SettingsModal from './components/SettingsModal.jsx'
 import ReportPanel from './components/ReportPanel.jsx'
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+  componentDidCatch(error, info) {
+    console.error('App crashed:', error, info.componentStack)
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          minHeight: '100vh', padding: 40, background: 'var(--bg-1)', color: 'var(--txt-1)',
+        }}>
+          <h2 style={{ marginBottom: 12 }}>Something went wrong</h2>
+          <p style={{ color: 'var(--txt-3)', marginBottom: 20, maxWidth: 500, textAlign: 'center' }}>
+            {this.state.error?.message || 'An unexpected error occurred'}
+          </p>
+          <button className="btn btn-primary" onClick={() => {
+            this.setState({ hasError: false, error: null })
+          }}>
+            Try Again
+          </button>
+          <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={() => window.location.reload()}>
+            Reload Page
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export const BLOCK_CONFIGS = {
   mcu: {
     key: 'mcu',
@@ -85,23 +122,25 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <Header />
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <Sidebar blocks={BLOCK_CONFIGS} />
-        <main style={{
-          flex: 1,
-          overflow: 'auto',
-          padding: '16px',
-          display: 'flex',
-          flexDirection: 'column',
-          minWidth: 0,
-        }}>
-          {renderPanel()}
-        </main>
+    <ErrorBoundary>
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <Header />
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <Sidebar blocks={BLOCK_CONFIGS} />
+          <main style={{
+            flex: 1,
+            overflow: 'auto',
+            padding: '16px',
+            display: 'flex',
+            flexDirection: 'column',
+            minWidth: 0,
+          }}>
+            {renderPanel()}
+          </main>
+        </div>
+        {state.settings_open && <SettingsModal />}
+        {state.report_open && <ReportPanel />}
       </div>
-      {state.settings_open && <SettingsModal />}
-      {state.report_open && <ReportPanel />}
-    </div>
+    </ErrorBoundary>
   )
 }
