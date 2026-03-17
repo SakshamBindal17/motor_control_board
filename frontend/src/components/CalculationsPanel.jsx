@@ -131,19 +131,28 @@ export default function CalculationsPanel() {
   // Build tooltip for a row including formula + assumptions
   function buildRowTip(r, tc, secKey) {
     const meta = getMeta(secKey)
+    const d = C?.[secKey]
     let parts = []
 
-    // Threshold warning first
+    // Row label + computed value
+    const v = d?.[r.key]
+    if (v !== undefined && v !== null && !r.string) {
+      parts.push(`${r.label}  =  ${fmtNum(v, r.dec ?? 3)}${r.unit ? ' ' + r.unit : ''}`)
+    }
+
+    // Formula / explanation
+    if (r.explain) {
+      parts.push(``)
+      parts.push(`Formula:  ${r.explain}`)
+    }
+
+    // Threshold warning
     if (tc) {
       const wrn = r.warn, dng = r.danger
       const isMin = dng !== undefined && wrn !== undefined && dng < wrn
       const limit = tc === 'danger' ? dng : wrn
-      parts.push(`Value is ${isMin ? 'below' : 'exceeding'} safe limit of ${limit}${r.unit || ''}`)
-    }
-
-    // Formula
-    if (r.explain) {
-      parts.push(`Formula: ${r.explain}`)
+      parts.push(``)
+      parts.push(`⚠ ${isMin ? 'Below' : 'Exceeds'} safe limit of ${limit}${r.unit || ''}`)
     }
 
     // Hardcoded/fallback assumptions used in this module
@@ -151,12 +160,13 @@ export default function CalculationsPanel() {
       const hc = meta.hardcoded || []
       const fb = meta.fallbacks || []
       if (hc.length > 0 || fb.length > 0) {
-        parts.push('─── Assumptions ───')
+        parts.push(``)
+        parts.push(`── Assumptions ──`)
         for (const h of hc) {
-          parts.push(`HC: ${h.name} = ${h.value}`)
+          parts.push(`  HC  ${h.name} = ${h.value}`)
         }
         for (const f of fb) {
-          parts.push(`FB: ${f.param} = ${f.value} (${f.block})`)
+          parts.push(`  FB  ${f.param} = ${f.value}  (${f.block})`)
         }
       }
     }
@@ -375,11 +385,11 @@ export default function CalculationsPanel() {
             .map(([blk]) => blk)
           const rowIndicator = getRowIndicator(sec.key)
           return (
-            <div key={sec.key} style={{ border: `1px solid ${missingDeps.length ? 'rgba(255,171,0,.3)' : 'var(--border-1)'}`, borderRadius: 7, overflow: 'hidden' }}>
+            <div key={sec.key} style={{ border: `1px solid ${missingDeps.length ? 'rgba(255,171,0,.3)' : 'var(--border-1)'}`, borderRadius: 7, position: 'relative' }}>
               <button
                 className={`collapsible-trigger ${isOpen ? 'open' : ''}`}
                 onClick={() => toggle(sec.key)}
-                style={{ borderRadius: 0 }}
+                style={{ borderRadius: isOpen ? '7px 7px 0 0' : 7 }}
               >
                 <span>{sec.icon}</span>
                 <span>{sec.label}</span>

@@ -625,31 +625,21 @@ select.inp {
   animation: progress-shimmer 1.4s infinite;
 }
 
-/* ─── Tooltip ────────────────────────────────────────────────────────── */
-[data-tip] {
-  position: relative;
-}
-
-[data-tip]:hover::after {
-  content: attr(data-tip);
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+/* ─── Smart Tooltip (JS-positioned, viewport-aware) ──────────────────── */
+.smart-tooltip {
   background: var(--bg-0);
   color: var(--txt-1);
   border: 1px solid var(--border-3);
-  border-radius: 5px;
-  padding: 6px 10px;
+  border-radius: 8px;
+  padding: 10px 14px;
   font-size: 11px;
   font-family: var(--font-ui);
   white-space: pre-wrap;
   text-align: left;
-  line-height: 1.4;
-  min-width: 250px;
-  max-width: 320px;
-  z-index: 100;
-  pointer-events: none;
+  line-height: 1.55;
+  max-width: 380px;
+  width: max-content;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .55), 0 0 0 1px rgba(30, 144, 255, .08);
 }
 
 /* ─── Divider ────────────────────────────────────────────────────────── */
@@ -1027,38 +1017,6 @@ select.inp {
 
 .trans-entry:hover {
   background: var(--bg-4);
-}
-
-/* Tooltip overlay for trans-entry on hover (no row expansion) */
-.trans-entry {
-  position: relative;
-}
-
-.trans-entry::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 4px);
-  z-index: 100;
-  max-width: 340px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: var(--bg-3);
-  border: 1px solid var(--border-2);
-  color: var(--txt-1);
-  font-size: 10px;
-  line-height: 1.5;
-  font-style: normal;
-  white-space: pre-wrap;
-  word-break: break-word;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity .15s;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, .4);
-}
-
-.trans-entry:hover::after {
-  opacity: 1;
 }
 
 .trans-entry-hc {

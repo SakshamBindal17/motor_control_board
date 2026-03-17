@@ -8,6 +8,7 @@ import PassivesPanel from './components/PassivesPanel.jsx'
 import FeedbackPanel from './components/FeedbackPanel.jsx'
 import SettingsModal from './components/SettingsModal.jsx'
 import ReportPanel from './components/ReportPanel.jsx'
+import SmartTooltip from './components/SmartTooltip.jsx'
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -140,6 +141,7 @@ export default function App() {
         </div>
         {state.settings_open && <SettingsModal />}
         {state.report_open && <ReportPanel />}
+        <SmartTooltip />
       </div>
     </ErrorBoundary>
   )
