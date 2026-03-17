@@ -16,7 +16,6 @@ _MULTIPLIERS = {
     # Resistance
     "mω": 1e-3, "mohm": 1e-3, "mΩ": 1e-3,
     "kω": 1e3,  "kohm": 1e3,  "kΩ": 1e3,
-    "mω": 1e-3,
     "ω":  1.0,  "ohm":  1.0,  "Ω": 1.0,
 
     # Capacitance
