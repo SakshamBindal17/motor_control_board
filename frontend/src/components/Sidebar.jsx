@@ -5,7 +5,10 @@ import { statusDotClass, statusLabel } from '../utils.js'
 const BLOCK_ORDER = ['feedback', 'mcu', 'driver', 'passives', 'mosfet', 'motor']
 
 function getBlockStatus(blocks, key) {
-  if (key === 'motor')    return blocks.motor?.specs?.max_speed_rpm ? 'done' : 'idle'
+  if (key === 'motor') {
+    const specs = blocks.motor?.specs
+    return (specs?.max_speed_rpm && (specs?.rph_mohm || specs?.lph_uh)) ? 'done' : 'idle'
+  }
   if (key === 'passives') return null   // no status for passives
   if (key === 'feedback') return null
   return blocks[key]?.status || 'idle'

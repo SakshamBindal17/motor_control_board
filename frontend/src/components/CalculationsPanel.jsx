@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import { Zap, RefreshCw, ChevronDown, AlertTriangle, Info, Maximize2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
@@ -8,9 +8,9 @@ import { fmtNum, thresholdClass } from '../utils.js'
 
 // Which calc sections depend on which block being uploaded
 const BLOCK_DEPS = {
-  driver: ['gate_resistors', 'bootstrap_cap', 'shunt_resistors', 'dead_time'],
-  mcu: ['dead_time'],
-  motor: ['input_capacitors'],
+  driver: ['gate_resistors', 'bootstrap_cap', 'shunt_resistors', 'dead_time', 'driver_compatibility'],
+  mcu: ['dead_time', 'adc_timing'],
+  motor: ['input_capacitors', 'motor_validation'],
 }
 
 // What fallback values the backend uses when a block is missing
@@ -24,6 +24,7 @@ export default function CalculationsPanel() {
   const { state, dispatch } = useProject()
   const { project } = state
   const [loading, setLoading] = useState(false)
+  const calcInFlight = useRef(false)
   const [open, setOpen] = useState({ mosfet_losses: true, gate_resistors: true, thermal: true })
   const [lastWarnings, setLastWarnings] = useState([])
   const [showGrid, setShowGrid] = useState(false)
@@ -40,6 +41,7 @@ export default function CalculationsPanel() {
   })
 
   async function calc() {
+    if (calcInFlight.current) return
     if (project.blocks.mosfet.status !== 'done') {
       toast.error('MOSFET datasheet is required — upload it first'); return
     }
@@ -94,6 +96,7 @@ export default function CalculationsPanel() {
     }
 
     setLoading(true)
+    calcInFlight.current = true
     try {
       const result = await runCalculations({
         system_specs: project.system_specs,
@@ -107,7 +110,7 @@ export default function CalculationsPanel() {
       if (warnings.length === 0) toast.success('Done!', { id: 'c' })
     } catch (e) {
       toast.error(e.message, { id: 'c' })
-    } finally { setLoading(false) }
+    } finally { setLoading(false); calcInFlight.current = false }
   }
 
   const C = project.calculations
@@ -254,6 +257,11 @@ export default function CalculationsPanel() {
               </button>
               {isOpen && (
                 <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 0 }}>
+                  {sec.key === 'motor_validation' && d.has_motor_data === false && (
+                    <div style={{ padding: '8px 0', fontSize: 11, color: 'var(--txt-3)', textAlign: 'center' }}>
+                      Enter motor parameters in the Motor tab to see validation checks
+                    </div>
+                  )}
                   {sec.rows.map(r => {
                     const v = d[r.key]
                     if (v === undefined || v === null) return null
@@ -289,6 +297,16 @@ export default function CalculationsPanel() {
                       </div>
                     )
                   })}
+                  {d.warnings?.length > 0 && (
+                    <div className="note-box" style={{ marginTop: 6, background: 'rgba(255,68,68,.06)', border: '1px solid rgba(255,68,68,.2)' }}>
+                      {d.warnings.map((w, i) => (
+                        <div key={i} style={{ fontSize: 10, color: 'var(--red)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                          <AlertTriangle size={10} style={{ flexShrink: 0, marginTop: 2 }} />
+                          <span>{w}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {d.notes && (
                     <div className="note-box blue" style={{ marginTop: 6 }}>
                       {Object.values(d.notes).slice(0, 3).map((n, i) => <div key={i}>· {n}</div>)}
@@ -397,6 +415,16 @@ export default function CalculationsPanel() {
                             </div>
                           )
                         })}
+                        {d.warnings?.length > 0 && (
+                          <div className="note-box" style={{ marginTop: 8, background: 'rgba(255,68,68,.06)', border: '1px solid rgba(255,68,68,.2)' }}>
+                            {d.warnings.map((w, i) => (
+                              <div key={i} style={{ fontSize: 11, color: 'var(--red)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                                <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+                                <span>{w}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         {d.notes && (
                           <div className="note-box blue" style={{ marginTop: 'auto', paddingTop: 10 }}>
                             {Object.values(d.notes).slice(0, 3).map((n, i) => <div key={i}>· {n}</div>)}
@@ -416,6 +444,55 @@ export default function CalculationsPanel() {
 }
 
 const SECTIONS = [
+  {
+    key: 'mosfet_rating_check', label: 'MOSFET Rating Check', icon: '🛡️',
+    rows: [
+      { key: 'vds_max_v', label: 'Vds max (rated)', unit: 'V', dec: 1, explain: 'Maximum drain-source voltage from MOSFET datasheet' },
+      { key: 'v_peak_v', label: 'V peak (system)', unit: 'V', dec: 1, explain: 'Peak bus voltage from system specs' },
+      { key: 'voltage_margin_pct', label: 'Voltage margin', unit: '%', dec: 1, warn: 25, danger: 10, explain: '(Vds_max - V_peak) / Vds_max × 100 — need ≥ 20%' },
+      { key: 'id_cont_a', label: 'Id cont (rated)', unit: 'A', dec: 1, explain: 'Continuous drain current rating from MOSFET datasheet' },
+      { key: 'i_max_a', label: 'I max (system)', unit: 'A', dec: 1, explain: 'Maximum phase current from system specs' },
+      { key: 'current_margin_pct', label: 'Current margin', unit: '%', dec: 1, warn: 30, danger: 10, explain: '(Id_cont - I_max) / Id_cont × 100' },
+    ],
+  },
+  {
+    key: 'driver_compatibility', label: 'Driver Compatibility', icon: '🔗',
+    rows: [
+      { key: 'vcc_min_v', label: 'VCC min', unit: 'V', dec: 1, explain: 'Minimum supply voltage for gate driver IC' },
+      { key: 'vcc_max_v', label: 'VCC max', unit: 'V', dec: 1, explain: 'Maximum supply voltage for gate driver IC' },
+      { key: 'gate_drive_v', label: 'V_drive (system)', unit: 'V', dec: 1, explain: 'Gate drive voltage from system specs' },
+      { key: 'v_bootstrap_v', label: 'V bootstrap', unit: 'V', dec: 2, explain: 'V_drive - diode Vf drop (0.5V Schottky)' },
+      { key: 'vbs_uvlo_v', label: 'VBS UVLO', unit: 'V', dec: 2, explain: 'Bootstrap under-voltage lockout threshold' },
+      { key: 'bootstrap_margin_v', label: 'Boot margin', unit: 'V', dec: 2, warn: 1, danger: 0, explain: 'V_bootstrap - VBS_UVLO — must be positive' },
+      { key: 'vih_v', label: 'Driver VIH', unit: 'V', dec: 2, explain: 'High-level input voltage threshold on driver' },
+      { key: 'mcu_voh_v', label: 'MCU output high', unit: 'V', dec: 1, explain: 'MCU output voltage (from VDD range or assumed 3.3V)' },
+    ],
+  },
+  {
+    key: 'adc_timing', label: 'ADC Timing', icon: '📊',
+    rows: [
+      { key: 'pwm_period_us', label: 'PWM period', unit: 'µs', dec: 2, explain: '1 / f_sw' },
+      { key: 'sampling_window_us', label: 'Sample window', unit: 'µs', dec: 2, explain: '10% of half-period (center-aligned)' },
+      { key: 'adc_rate_msps', label: 'ADC rate', unit: 'MSPS', dec: 2, explain: 'Extracted ADC sample rate from MCU datasheet' },
+      { key: 'adc_conversion_us', label: 'Conversion time', unit: 'µs', dec: 3, explain: '1 / ADC_rate — time for one sample' },
+      { key: 't_3_channel_us', label: '3-ch total time', unit: 'µs', dec: 3, explain: '3 × conversion time (sequential sampling for 3-shunt)' },
+      { key: 'adc_channels', label: 'ADC channels', unit: 'ch', dec: 0, explain: 'Total ADC channels from MCU datasheet' },
+      { key: 'channels_needed', label: 'Channels needed', unit: 'ch', dec: 0, explain: '3 current + bus V + 2 NTC + 1 BEMF = 7 min' },
+    ],
+  },
+  {
+    key: 'motor_validation', label: 'Motor Checks', icon: '🌀',
+    rows: [
+      { key: 'f_electrical_hz', label: 'f_electrical', unit: 'Hz', dec: 1, explain: 'RPM × pole_pairs / 60' },
+      { key: 'fsw_to_fe_ratio', label: 'f_sw / f_e ratio', unit: '×', dec: 1, warn: 15, danger: 10, explain: 'PWM freq ÷ electrical freq — must be ≥ 10× for FOC/SPWM' },
+      { key: 'v_bemf_peak_v', label: 'Back-EMF peak', unit: 'V', dec: 1, explain: 'Ke × (RPM / 1000)' },
+      { key: 'bemf_margin_pct', label: 'V_bus headroom', unit: '%', dec: 1, warn: 15, danger: 0, explain: '(V_bus - V_BEMF) / V_bus × 100 — negative means MOSFET overvoltage risk' },
+      { key: 'i_rated_from_kt_a', label: 'I rated (from Kt)', unit: 'A', dec: 1, explain: 'Rated_Torque / Kt — current needed for rated torque' },
+      { key: 'copper_loss_3ph_w', label: 'Copper loss (3ph)', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — winding heat at rated current' },
+      { key: 'copper_loss_pct', label: 'Copper loss %', unit: '%', dec: 1, warn: 3, danger: 5, explain: 'Copper loss as percentage of rated power' },
+      { key: 'phase_time_const_ms', label: 'L/R time const', unit: 'ms', dec: 2, explain: 'Lph / Rph — electrical time constant of motor winding' },
+    ],
+  },
   {
     key: 'mosfet_losses', label: 'MOSFET Losses', icon: '🔥',
     rows: [

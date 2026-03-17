@@ -16,13 +16,15 @@ export default function Header() {
     try {
       const exportData = {
         version: 2,
-        state: state
+        state: { ...state, settings: { ...state.settings, api_key: '' } }
       }
       const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
+      a.href = url
       a.download = `${project.name.replace(/\s+/g, '_')}_session.json`
       a.click()
+      URL.revokeObjectURL(url)
       toast.success('Session saved')
     } catch { toast.error('Save failed') }
   }

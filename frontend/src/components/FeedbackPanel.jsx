@@ -92,7 +92,7 @@ export default function FeedbackPanel({ config }) {
             <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 7, fontSize: 11 }}>
               <InfoRow label="Sampling Mode"     value="Center-aligned PWM" />
               <InfoRow label="Trigger"           value="PWM Timer TRGO at center" />
-              <InfoRow label="ADC Resolution"    value="12-bit" />
+              <InfoRow label="ADC Resolution"    value={`${state.project.blocks.mcu?.raw_data?.parameters?.find(p => p.id === 'adc_resolution')?.conditions?.[0]?.selected ?? '12'}-bit`} />
               <InfoRow label="Sample Window"     value={`~${((1/sys.pwm_freq_hz)*1e6*0.1).toFixed(1)} µs min`} />
               <InfoRow label="Oversampling"      value="16× recommended" />
               <div style={{ marginTop: 4, padding: '5px 8px', borderRadius: 5, fontSize: 10, lineHeight: 1.5,
@@ -110,7 +110,7 @@ export default function FeedbackPanel({ config }) {
                 <ProtRow label="OCP (Hardware)" value={`${prot.ocp?.ocp_hw_a ?? '—'} A`}     color="var(--red)"   note="Via driver IC direct shutdown" />
                 <ProtRow label="OCP (Software)" value={`${sys.max_phase_current} A`}            color="var(--amber)" note="MCU comparator, ~10µs latency" />
                 <ProtRow label="OVP"            value={`${prot.ovp?.trip_voltage_v ?? '—'} V`} color="var(--amber)" note="Resistor divider + comparator" />
-                <ProtRow label="UVP"            value={`${prot.uvp?.trip_voltage_v ?? '—'} V`} color="var(--amber)" note={`Hyst: ${prot.uvp?.hysteresis_v ?? '—'}V`} />
+                <ProtRow label="UVP"            value={`${prot.uvp?.trip_voltage_v ?? '—'} V`} color="var(--amber)" note={`Hyst: ${prot.uvp?.hysteresis_voltage_v ?? '—'}V`} />
                 <ProtRow label="OTP (NTC 80°C)" value="80 °C"                                   color="#f59e0b"      note="NTC → ADC → software" />
               </> : (
                 <span style={{ color: 'var(--txt-3)', fontSize: 11 }}>Run calculations first</span>

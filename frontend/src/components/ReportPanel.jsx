@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { X, FileText, Table, Download } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject } from '../context/ProjectContext.jsx'
+import { downloadReport } from '../api.js'
 
 export default function ReportPanel() {
   const { state, dispatch } = useProject()
@@ -18,19 +19,13 @@ export default function ReportPanel() {
     setLoading(format)
     toast.loading(`Generating ${format.toUpperCase()} report…`, { id: 'report' })
     try {
-      const res = await fetch('/api/report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project: { name: project.name, system_specs: project.system_specs },
-          calculations: project.calculations,
-          format,
-        }),
-      })
-      if (!res.ok) throw new Error((await res.json()).detail)
-      const blob = await res.blob()
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement('a')
+      const blob = await downloadReport(
+        { name: project.name, system_specs: project.system_specs },
+        project.calculations,
+        format
+      )
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
       a.href = url
       a.download = format === 'pdf' ? 'mc_design_report.pdf' : 'mc_bom.xlsx'
       a.click()
