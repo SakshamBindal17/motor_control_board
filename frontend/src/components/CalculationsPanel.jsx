@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react'
-import { Zap, RefreshCw, ChevronDown, AlertTriangle, Info, Maximize2, X } from 'lucide-react'
+import { Zap, RefreshCw, ChevronDown, AlertTriangle, Maximize2, X, Eye } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
 import { CALC_CRITICAL } from './BlockPanel.jsx'
@@ -20,6 +20,10 @@ const FALLBACK_WARNINGS = {
   motor: 'Bus cap ripple uses SPWM estimate. Enter Lph in Motor tab for accurate C_bulk sizing.',
 }
 
+// Maps section keys to friendly labels for the transparency panel
+const SECTION_LABELS = {}
+// Will be populated from SECTIONS after definition
+
 export default function CalculationsPanel() {
   const { state, dispatch } = useProject()
   const { project } = state
@@ -28,8 +32,11 @@ export default function CalculationsPanel() {
   const [open, setOpen] = useState({ mosfet_losses: true, gate_resistors: true, thermal: true })
   const [lastWarnings, setLastWarnings] = useState([])
   const [showGrid, setShowGrid] = useState(false)
+  const [showTransparency, setShowTransparency] = useState(false)
+  const [expandedTransMods, setExpandedTransMods] = useState({})
 
   function toggle(k) { setOpen(p => ({ ...p, [k]: !p[k] })) }
+  function toggleTransMod(k) { setExpandedTransMods(p => ({ ...p, [k]: !p[k] })) }
 
   // Determine which blocks are missing
   const missing = ['driver', 'mcu', 'motor'].filter(b => {
@@ -62,7 +69,6 @@ export default function CalculationsPanel() {
       if (project.blocks[blockKey]?.status === 'done' && CALC_CRITICAL[blockKey]) {
         const flatDict = buildParamsDict(project.blocks[blockKey])
         for (const req of CALC_CRITICAL[blockKey]) {
-          // Check if the value is missing or strictly an empty string
           if (flatDict[req] === undefined || flatDict[req] === null || flatDict[req] === '') {
             missingCritical.push(`${blockKey.toUpperCase()} -> ${req}`)
           }
@@ -114,6 +120,159 @@ export default function CalculationsPanel() {
   }
 
   const C = project.calculations
+  const T = C?.transparency
+
+  // Get _meta for a section
+  function getMeta(secKey) {
+    const d = C?.[secKey]
+    return d?._meta || null
+  }
+
+  // Build tooltip for a row including formula + assumptions
+  function buildRowTip(r, tc, secKey) {
+    const meta = getMeta(secKey)
+    let parts = []
+
+    // Threshold warning first
+    if (tc) {
+      const wrn = r.warn, dng = r.danger
+      const isMin = dng !== undefined && wrn !== undefined && dng < wrn
+      const limit = tc === 'danger' ? dng : wrn
+      parts.push(`Value is ${isMin ? 'below' : 'exceeding'} safe limit of ${limit}${r.unit || ''}`)
+    }
+
+    // Formula
+    if (r.explain) {
+      parts.push(`Formula: ${r.explain}`)
+    }
+
+    // Hardcoded/fallback assumptions used in this module
+    if (meta) {
+      const hc = meta.hardcoded || []
+      const fb = meta.fallbacks || []
+      if (hc.length > 0 || fb.length > 0) {
+        parts.push('─── Assumptions ───')
+        for (const h of hc) {
+          parts.push(`HC: ${h.name} = ${h.value}`)
+        }
+        for (const f of fb) {
+          parts.push(`FB: ${f.param} = ${f.value} (${f.block})`)
+        }
+      }
+    }
+
+    return parts.length > 0 ? parts.join('\n') : undefined
+  }
+
+  // Render the transparency summary section
+  function renderTransparency() {
+    if (!T) return null
+    const { total_hardcoded: thc, total_fallbacks: tfb, by_module } = T
+    if (thc === 0 && tfb === 0) return null
+    const mods = Object.entries(by_module).filter(([, m]) =>
+      (m.hardcoded?.length > 0 || m.fallbacks?.length > 0)
+    )
+
+    return (
+      <div className="transparency-panel">
+        <button
+          className="transparency-header"
+          onClick={() => setShowTransparency(p => !p)}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Eye size={12} className="transparency-icon" />
+            <span className="transparency-title">Calculation Transparency</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="transparency-count">
+              <span className="trans-hc-count">{thc} HC</span>
+              <span className="trans-sep">·</span>
+              <span className="trans-fb-count">{tfb} FB</span>
+            </span>
+            <ChevronDown size={11} style={{ transform: showTransparency ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+          </div>
+        </button>
+
+        {showTransparency && (
+          <div className="transparency-body">
+            <div className="transparency-legend">
+              <span><span className="trans-dot trans-dot-hc" /> Hardcoded constant</span>
+              <span><span className="trans-dot trans-dot-fb" /> Fallback value</span>
+            </div>
+            {mods.map(([modKey, meta]) => {
+              const hc = meta.hardcoded || []
+              const fb = meta.fallbacks || []
+              const label = SECTION_LABELS[modKey] || modKey.replace(/_/g, ' ')
+              const isExpanded = expandedTransMods[modKey]
+
+              return (
+                <div key={modKey} className="transparency-module">
+                  <button className="transparency-mod-trigger" onClick={() => toggleTransMod(modKey)}>
+                    <span className="transparency-mod-label">{label}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      {hc.length > 0 && <span className="trans-badge trans-badge-hc">{hc.length} HC</span>}
+                      {fb.length > 0 && <span className="trans-badge trans-badge-fb">{fb.length} FB</span>}
+                      <ChevronDown size={10} style={{ color: 'var(--txt-3)', transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} />
+                    </div>
+                  </button>
+                  {isExpanded && (
+                    <div className="transparency-mod-body">
+                      {hc.map((h, i) => (
+                        <div key={`hc-${i}`} className="trans-entry trans-entry-hc" title={`${h.name} = ${h.value}\n${h.reason}`}>
+                          <span className="trans-dot trans-dot-hc" />
+                          <span className="trans-entry-name">{h.name}</span>
+                          <span className="trans-entry-eq">=</span>
+                          <span className="trans-entry-value">{h.value}</span>
+                          <span className="trans-entry-reason">{h.reason}</span>
+                        </div>
+                      ))}
+                      {fb.map((f, i) => (
+                        <div key={`fb-${i}`} className="trans-entry trans-entry-fb" title={`${f.param} = ${f.value}\nMissing from ${f.block} datasheet — using fallback default`}>
+                          <span className="trans-dot trans-dot-fb" />
+                          <span className="trans-entry-name">{f.param}</span>
+                          <span className="trans-entry-eq">=</span>
+                          <span className="trans-entry-value">{f.value}</span>
+                          <span className="trans-entry-reason">Missing from {f.block}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Render section meta badge (HC/FB counts)
+  function renderMetaBadge(secKey) {
+    const meta = getMeta(secKey)
+    if (!meta) return null
+    const hc = meta.hardcoded?.length || 0
+    const fb = meta.fallbacks?.length || 0
+    if (hc === 0 && fb === 0) return null
+
+    return (
+      <span className="section-meta-badge" title={`${hc} hardcoded constants, ${fb} fallback values used`}>
+        {hc > 0 && <span className="smb-hc">{hc} HC</span>}
+        {hc > 0 && fb > 0 && <span className="smb-sep">·</span>}
+        {fb > 0 && <span className="smb-fb">{fb} FB</span>}
+      </span>
+    )
+  }
+
+  // Check if a row's section has any HC/FB (for dot indicator)
+  function getRowIndicator(secKey) {
+    const meta = getMeta(secKey)
+    if (!meta) return null
+    const hc = meta.hardcoded?.length || 0
+    const fb = meta.fallbacks?.length || 0
+    if (fb > 0) return 'fb'
+    if (hc > 0) return 'hc'
+    return null
+  }
 
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -183,6 +342,9 @@ export default function CalculationsPanel() {
           )}
         </div>
 
+        {/* ── Transparency Panel (below run button) ───────────── */}
+        {C && renderTransparency()}
+
         {/* ── Fallback warning banner (shown after run if blocks missing) ── */}
         {lastWarnings.length > 0 && C && (
           <div style={{
@@ -203,39 +365,15 @@ export default function CalculationsPanel() {
           </div>
         )}
 
-        {/* ── Calculation Audit Log ─────────────────────────────────── */}
-        {C?.audit_log?.length > 0 && (
-          <div style={{
-            padding: '8px 10px', borderRadius: 6,
-            background: 'var(--bg-3)', border: '1px solid var(--border-2)',
-            marginTop: 4
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
-              <Info size={11} style={{ color: 'var(--cyan)', flexShrink: 0 }} />
-              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--cyan)', letterSpacing: '.05em', textTransform: 'uppercase' }}>
-                Assumptions & Audit Log
-              </span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {Math.max(C.audit_log.length, 0) > 0 && C.audit_log.map((log, i) => (
-                <div key={i} style={{ fontSize: 9, color: 'var(--txt-3)', lineHeight: 1.4, display: 'flex', gap: 6 }}>
-                  <span style={{ color: 'var(--border-3)' }}>•</span>
-                  <span>{log}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* ── Results sections ─────────────────────────────────── */}
         {C && SECTIONS.map(sec => {
           const d = C[sec.key]
           if (!d) return null
           const isOpen = open[sec.key] !== false
-          // Which blocks does this section depend on?
           const missingDeps = Object.entries(BLOCK_DEPS)
             .filter(([blk, keys]) => keys.includes(sec.key) && missing.includes(blk))
             .map(([blk]) => blk)
+          const rowIndicator = getRowIndicator(sec.key)
           return (
             <div key={sec.key} style={{ border: `1px solid ${missingDeps.length ? 'rgba(255,171,0,.3)' : 'var(--border-1)'}`, borderRadius: 7, overflow: 'hidden' }}>
               <button
@@ -245,6 +383,7 @@ export default function CalculationsPanel() {
               >
                 <span>{sec.icon}</span>
                 <span>{sec.label}</span>
+                {renderMetaBadge(sec.key)}
                 {missingDeps.length > 0 && (
                   <span style={{
                     marginLeft: 4, fontSize: 9, fontWeight: 700, color: 'var(--amber)',
@@ -278,18 +417,14 @@ export default function CalculationsPanel() {
                     if (r.key === 'tj_max_rated_c') return null
 
                     const tc = (wrn !== undefined || dng !== undefined) ? thresholdClass(v, wrn, dng) : ''
-
-                    let tip = r.explain
-                    if (tc) {
-                      const isMin = dng !== undefined && wrn !== undefined && dng < wrn
-                      const limit = tc === 'danger' ? dng : wrn
-                      const thrTip = `Value is ${isMin ? 'below' : 'exceeding'} safe limit of ${limit}${r.unit || ''}`
-                      tip = tip ? `${thrTip}\n\nFormula: ${tip}` : thrTip
-                    }
+                    const tip = buildRowTip(r, tc, sec.key)
 
                     return (
                       <div key={r.key} className="calc-row" data-tip={tip}>
-                        <span className="label">{r.label}</span>
+                        <span className="label">
+                          {rowIndicator && <span className={`row-indicator row-indicator-${rowIndicator}`} />}
+                          {r.label}
+                        </span>
                         <span className={`value ${tc}`}>
                           {fmtNum(v, r.dec ?? 3)}{r.unit ? ` ${r.unit}` : ''}
                           {tc === 'danger' && <AlertTriangle size={9} style={{ marginLeft: 3 }} />}
@@ -346,38 +481,16 @@ export default function CalculationsPanel() {
 
             <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
 
-              {/* ── Expanded Audit Log ─────────────────────────────────── */}
-              {C?.audit_log?.length > 0 && (
-                <div style={{
-                  padding: '12px 16px', borderRadius: 8,
-                  background: 'var(--bg-2)', border: '1px solid var(--border-2)',
-                  marginBottom: 20
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                    <Info size={14} style={{ color: 'var(--cyan)', flexShrink: 0 }} />
-                    <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--cyan)', letterSpacing: '.05em', textTransform: 'uppercase' }}>
-                      Assumptions & Audit Log
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {C.audit_log.map((log, i) => (
-                      <div key={i} style={{ fontSize: 11, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)', lineHeight: 1.5, display: 'flex', gap: 6 }}>
-                        <span style={{ color: 'var(--border-3)' }}>·</span>
-                        <span>{log}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
                 {SECTIONS.map(sec => {
                   const d = C[sec.key]
                   if (!d) return null
+                  const rowIndicator = getRowIndicator(sec.key)
                   return (
                     <div key={sec.key} className="card" style={{ display: 'flex', flexDirection: 'column' }}>
                       <div className="sec-head" style={{ fontSize: 13 }}>
                         <span>{sec.icon}</span> {sec.label}
+                        {renderMetaBadge(sec.key)}
                       </div>
                       <div style={{ padding: '10px 14px', flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
                         {sec.rows.map(r => {
@@ -393,21 +506,17 @@ export default function CalculationsPanel() {
                           }
                           let wrn = r.warn, dng = r.danger
                           if (r.key === 'v_sw_peak_v' && project.system_specs.peak_voltage) wrn = project.system_specs.peak_voltage
-                          if (r.key === 'tj_max_rated_c') return null // skip rendering
+                          if (r.key === 'tj_max_rated_c') return null
 
                           const tc = (wrn !== undefined || dng !== undefined) ? thresholdClass(v, wrn, dng) : ''
-
-                          let tip = r.explain
-                          if (tc) {
-                            const isMin = dng !== undefined && wrn !== undefined && dng < wrn
-                            const limit = tc === 'danger' ? dng : wrn
-                            const thrTip = `Value is ${isMin ? 'below' : 'exceeding'} safe limit of ${limit}${r.unit || ''}`
-                            tip = tip ? `${thrTip}\n\nFormula: ${tip}` : thrTip
-                          }
+                          const tip = buildRowTip(r, tc, sec.key)
 
                           return (
                             <div key={r.key} className="calc-row" data-tip={tip} style={{ padding: '6px 0', borderBottom: '1px solid var(--border-1)', borderTop: 'none' }}>
-                              <span className="label" style={{ fontSize: 13 }}>{r.label}</span>
+                              <span className="label" style={{ fontSize: 13 }}>
+                                {rowIndicator && <span className={`row-indicator row-indicator-${rowIndicator}`} />}
+                                {r.label}
+                              </span>
                               <span className={`value ${tc}`} style={{ fontSize: 13, padding: '3px 8px', minWidth: 80 }}>
                                 {fmtNum(v, r.dec ?? 3)}{r.unit ? ` ${r.unit}` : ''}
                                 {tc === 'danger' && <AlertTriangle size={11} style={{ marginLeft: 4, display: 'inline-block' }} />}
@@ -566,3 +675,8 @@ const SECTIONS = [
     ],
   },
 ]
+
+// Populate SECTION_LABELS from SECTIONS
+for (const s of SECTIONS) {
+  SECTION_LABELS[s.key] = s.label
+}

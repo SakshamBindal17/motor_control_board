@@ -861,6 +861,267 @@ select.inp {
   max-height: 480px;
 }
 
+/* ─── Transparency Panel ────────────────────────────────────────────── */
+.transparency-panel {
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-2);
+}
+
+.transparency-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-3);
+  border: none;
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.transparency-header:hover {
+  background: var(--bg-4);
+}
+
+.transparency-icon {
+  color: var(--cyan);
+  flex-shrink: 0;
+}
+
+.transparency-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--txt-2);
+}
+
+.transparency-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.trans-hc-count {
+  color: var(--cyan);
+}
+
+.trans-fb-count {
+  color: var(--amber);
+}
+
+.trans-sep {
+  color: var(--txt-3);
+}
+
+.transparency-body {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.transparency-legend {
+  display: flex;
+  gap: 14px;
+  padding: 4px 8px;
+  font-size: 9px;
+  color: var(--txt-3);
+}
+
+.transparency-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.trans-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.trans-dot-hc {
+  background: var(--cyan);
+  box-shadow: 0 0 4px rgba(0, 212, 232, .3);
+}
+
+.trans-dot-fb {
+  background: var(--amber);
+  box-shadow: 0 0 4px rgba(255, 171, 0, .3);
+}
+
+.transparency-module {
+  border: 1px solid var(--border-1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.transparency-mod-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background .12s;
+}
+
+.transparency-mod-trigger:hover {
+  background: var(--bg-3);
+}
+
+.transparency-mod-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--txt-2);
+  text-transform: capitalize;
+}
+
+.trans-badge {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.trans-badge-hc {
+  color: var(--cyan);
+  background: rgba(0, 212, 232, .1);
+}
+
+.trans-badge-fb {
+  color: var(--amber);
+  background: rgba(255, 171, 0, .1);
+}
+
+.transparency-mod-body {
+  padding: 4px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-top: 1px solid var(--border-1);
+}
+
+.trans-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 9px;
+  line-height: 1.5;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: help;
+  transition: background .12s;
+}
+
+.trans-entry:hover {
+  background: var(--bg-4);
+}
+
+.trans-entry:hover .trans-entry-reason {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+}
+
+.trans-entry-hc {
+  background: rgba(0, 212, 232, .04);
+}
+
+.trans-entry-fb {
+  background: rgba(255, 171, 0, .04);
+}
+
+.trans-entry-name {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--txt-2);
+  white-space: nowrap;
+}
+
+.trans-entry-eq {
+  color: var(--txt-3);
+}
+
+.trans-entry-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--txt-1);
+  white-space: nowrap;
+}
+
+.trans-entry-reason {
+  color: var(--txt-3);
+  font-style: italic;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Section meta badge (HC/FB counts in section headers) ──────────── */
+.section-meta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 8px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  background: rgba(0, 212, 232, .08);
+  border: 1px solid rgba(0, 212, 232, .15);
+}
+
+.smb-hc {
+  color: var(--cyan);
+}
+
+.smb-fb {
+  color: var(--amber);
+}
+
+.smb-sep {
+  color: var(--txt-3);
+  font-size: 7px;
+}
+
+/* ── Row indicator dot (shows HC/FB status per row) ────────────────── */
+.row-indicator {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 5px;
+  flex-shrink: 0;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.row-indicator-hc {
+  background: var(--cyan);
+  box-shadow: 0 0 3px rgba(0, 212, 232, .4);
+}
+
+.row-indicator-fb {
+  background: var(--amber);
+  box-shadow: 0 0 3px rgba(255, 171, 0, .4);
+}
+
 /* ─── Slide-in Drawer ────────────────────────────────────────────────── */
 @keyframes slideInRight {
   from {
