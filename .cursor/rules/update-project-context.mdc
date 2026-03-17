@@ -1,0 +1,17 @@
+---
+description: Update PROJECT_CONTEXT.md when making major changes to the codebase
+alwaysApply: true
+---
+
+# Keep PROJECT_CONTEXT.md in sync
+
+This project has a **PROJECT_CONTEXT.md** file at the repo root. It gives any new AI chat full context so the user can attach that file and one short line instead of re-explaining the whole project.
+
+**When you make major changes**, update PROJECT_CONTEXT.md in the same session:
+
+- **Add a short entry** under the "Changelog" section at the bottom (what changed and why).
+- **Edit any section** that no longer matches the code (e.g. new API endpoint, new file, new env var, changed data flow, deployment change).
+
+**Count as "major":** new features, new or removed files that affect structure, new or changed API endpoints, changes to state/reducer or buildParamsDict, new environment variables, deployment or run instructions, fixes that change user-visible or agent-relevant behavior.
+
+**Do not** update PROJECT_CONTEXT.md for tiny typo fixes, comment-only changes, or refactors that don’t change behavior or structure.
