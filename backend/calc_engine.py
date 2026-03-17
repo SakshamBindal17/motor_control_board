@@ -62,13 +62,26 @@ class CalculationEngine:
         self.ovr      = overrides or {}
         self.audit_log  = []
 
-        self.v_bus      = float(system_specs.get("bus_voltage",      48))
-        self.v_peak     = float(system_specs.get("peak_voltage",     60))
-        self.power      = float(system_specs.get("power",          3000))
-        self.i_max      = float(system_specs.get("max_phase_current", 80))
-        self.fsw        = float(system_specs.get("pwm_freq_hz",   20000))
-        self.t_amb      = float(system_specs.get("ambient_temp_c",   30))
-        self.v_drv      = float(system_specs.get("gate_drive_voltage",12))
+        try:
+            self.v_bus      = float(system_specs.get("bus_voltage",      48))
+            self.v_peak     = float(system_specs.get("peak_voltage",     60))
+            self.power      = float(system_specs.get("power",          3000))
+            self.i_max      = float(system_specs.get("max_phase_current", 80))
+            self.fsw        = float(system_specs.get("pwm_freq_hz",   20000))
+            self.t_amb      = float(system_specs.get("ambient_temp_c",   30))
+            self.v_drv      = float(system_specs.get("gate_drive_voltage",12))
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Invalid numeric value in system specs: {e}")
+
+        # Validate critical system parameters
+        if self.fsw <= 0:
+            raise ValueError("PWM frequency (pwm_freq_hz) must be > 0 Hz")
+        if self.v_bus <= 0:
+            raise ValueError("Bus voltage (bus_voltage) must be > 0 V")
+        if self.i_max <= 0:
+            raise ValueError("Max phase current (max_phase_current) must be > 0 A")
+        if self.v_drv <= 0:
+            raise ValueError("Gate drive voltage (gate_drive_voltage) must be > 0 V")
 
     def _get(self, params: dict, block_name: str, key: str, fallback=None, expected_unit: str = None):
         val = params.get(key)
@@ -171,6 +184,10 @@ class CalculationEngine:
         t_rise_target_ns = float(self.ovr.get("gate_rise_time_ns", 40))
         t_rise = t_rise_target_ns * 1e-9
         vdrv   = self.v_drv
+
+        if vdrv <= vgs_th:
+            self.audit_log.append(f"[Gate Drive] WARNING: V_drive ({vdrv}V) <= Vgs_th ({vgs_th}V). MOSFET may not fully turn on. Using V_drive - Vgs_th = 1V minimum for calculations.")
+            vgs_th = vdrv - 1.0  # clamp to avoid negative/zero resistance
 
         # display units
         qg_nc     = qg * 1e9
@@ -322,6 +339,9 @@ class CalculationEngine:
 
         # Allow 0.5V droop
         droop    = float(self.ovr.get("bootstrap_droop_v", 0.5))
+        if droop <= 0:
+            self.audit_log.append("[Bootstrap] WARNING: Bootstrap droop cannot be 0 or negative. Using 0.5V default.")
+            droop = 0.5
         c_boot   = qg / droop          # exact required capacitance (Farads)
         c_boot_nf= c_boot * 1e9
 
@@ -438,7 +458,10 @@ class CalculationEngine:
         l_stray_nh  = float(self.ovr.get("stray_inductance_nh", 10))
         l_stray     = l_stray_nh * 1e-9
 
-        coss_pf = self._get(self.mosfet, "MOSFET", "coss", 200);  coss = coss_pf * 1e-12
+        # _get returns SI value (Farads if unit is pF/nF/etc), fallback is raw value.
+        # fallback 200e-12 = 200pF in SI (Farads)
+        coss = self._get(self.mosfet, "MOSFET", "coss", 200e-12)   # Farads (SI)
+        coss_pf = coss * 1e12  # convert back to pF for display and E12 snapping
 
         # Resonant frequency of stray L and Coss
         # f_res = 1 / (2π√(L×C))
@@ -818,6 +841,379 @@ class CalculationEngine:
         }
 
     # ═══════════════════════════════════════════════════════════════════
+    # 13. Motor Parameter Validation & Sanity Checks
+    # ═══════════════════════════════════════════════════════════════════
+    def calc_motor_validation(self) -> dict:
+        m = self.motor or {}
+
+        # Parse motor specs (all optional — skip checks if not provided)
+        def _f(key):
+            v = m.get(key, "")
+            if v == "" or v is None:
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        rpm       = _f("max_speed_rpm")
+        pole_pairs = _f("pole_pairs")
+        rph_mohm  = _f("rph_mohm")
+        lph_uh    = _f("lph_uh")
+        kt        = _f("kt_nm_per_a")
+        ke        = _f("back_emf_v_per_krpm")
+        rated_tq  = _f("rated_torque_nm")
+
+        warnings = []
+        results  = {}
+
+        # ── 1. Electrical frequency vs PWM frequency ──────────────
+        if rpm is not None and pole_pairs is not None and pole_pairs > 0:
+            f_e = (rpm * pole_pairs) / 60.0
+            fsw_ratio = self.fsw / f_e if f_e > 0 else float('inf')
+            results["f_electrical_hz"] = round(f_e, 1)
+            results["fsw_to_fe_ratio"] = round(fsw_ratio, 1)
+            results["fsw_ratio_ok"] = fsw_ratio >= 10
+
+            if fsw_ratio < 10:
+                warnings.append(
+                    f"CRITICAL: f_sw/f_e = {fsw_ratio:.1f}x (need >= 10x). "
+                    f"PWM at {self.fsw/1e3:.0f}kHz is too slow for {rpm}RPM × {int(pole_pairs)}p "
+                    f"(f_e={f_e:.0f}Hz). Increase f_sw or reduce max RPM."
+                )
+                self.audit_log.append(f"[Motor] WARNING: PWM frequency ratio f_sw/f_e = {fsw_ratio:.1f}x is below 10x minimum for FOC/SPWM.")
+            else:
+                self.audit_log.append(f"[Motor] PWM frequency ratio f_sw/f_e = {fsw_ratio:.1f}x — OK (>= 10x).")
+
+        # ── 2. Back-EMF vs Bus Voltage ────────────────────────────
+        if ke is not None and rpm is not None and ke > 0:
+            v_bemf = ke * (rpm / 1000.0)
+            bemf_margin_pct = ((self.v_bus - v_bemf) / self.v_bus) * 100 if self.v_bus > 0 else 0
+            results["v_bemf_peak_v"] = round(v_bemf, 1)
+            results["bemf_margin_pct"] = round(bemf_margin_pct, 1)
+            results["bemf_ok"] = v_bemf < self.v_bus
+
+            if v_bemf >= self.v_bus:
+                warnings.append(
+                    f"DANGER: Back-EMF ({v_bemf:.1f}V) >= Bus voltage ({self.v_bus}V). "
+                    f"Motor will act as generator during freewheel — risk of MOSFET/capacitor overvoltage damage."
+                )
+                self.audit_log.append(f"[Motor] DANGER: V_BEMF={v_bemf:.1f}V exceeds V_bus={self.v_bus}V at {rpm}RPM.")
+            elif v_bemf >= self.v_bus * 0.9:
+                warnings.append(
+                    f"WARNING: Back-EMF ({v_bemf:.1f}V) is within 10% of bus voltage ({self.v_bus}V). "
+                    f"Very limited voltage headroom for current control."
+                )
+                self.audit_log.append(f"[Motor] WARNING: V_BEMF={v_bemf:.1f}V is within 10% of V_bus={self.v_bus}V — limited headroom.")
+
+        # ── 3. Kt current cross-check ────────────────────────────
+        if kt is not None and kt > 0 and rated_tq is not None:
+            i_rated = rated_tq / kt
+            results["i_rated_from_kt_a"] = round(i_rated, 1)
+            results["i_max_system_a"] = self.i_max
+            results["current_headroom_ok"] = self.i_max >= i_rated
+
+            if i_rated > self.i_max:
+                warnings.append(
+                    f"WARNING: Rated torque ({rated_tq}Nm) requires {i_rated:.1f}A "
+                    f"(from Kt={kt}Nm/A), but system max is {self.i_max}A. "
+                    f"Motor cannot reach rated torque — increase I_max or use a higher-Kt motor."
+                )
+                self.audit_log.append(f"[Motor] WARNING: Rated current {i_rated:.1f}A > system I_max={self.i_max}A.")
+            elif i_rated > self.i_max * 0.9:
+                warnings.append(
+                    f"NOTE: Rated current ({i_rated:.1f}A) is within 10% of system max ({self.i_max}A). "
+                    f"No headroom for transients or acceleration."
+                )
+
+        # ── 4. Copper loss (winding I²R) ──────────────────────────
+        if rph_mohm is not None and rph_mohm > 0:
+            rph = rph_mohm * 1e-3  # convert mΩ → Ω
+            # 3-phase RMS copper loss: 3 × I_rms² × Rph, I_rms ≈ I_max/√2
+            i_rms = self.i_max / math.sqrt(2)
+            p_copper_3ph = 3 * (i_rms ** 2) * rph
+            # Thermal derating: copper resistance rises ~0.4%/°C
+            p_copper_hot = p_copper_3ph * 1.5  # worst-case at ~150°C winding temp
+            copper_pct = (p_copper_3ph / self.power * 100) if self.power > 0 else 0
+            results["copper_loss_3ph_w"] = round(p_copper_3ph, 1)
+            results["copper_loss_hot_w"] = round(p_copper_hot, 1)
+            results["copper_loss_pct"] = round(copper_pct, 1)
+            results["copper_loss_ok"] = copper_pct < 5
+
+            if copper_pct >= 5:
+                warnings.append(
+                    f"WARNING: Motor copper loss ({p_copper_3ph:.1f}W) is {copper_pct:.1f}% of rated power. "
+                    f"Winding thermal limit may be reached. Consider forced cooling."
+                )
+                self.audit_log.append(f"[Motor] WARNING: Copper loss is {copper_pct:.1f}% of rated power ({p_copper_3ph:.1f}W / {self.power}W).")
+
+        # ── 5. L/R time constant ──────────────────────────────────
+        if rph_mohm is not None and rph_mohm > 0 and lph_uh is not None and lph_uh > 0:
+            rph = rph_mohm * 1e-3
+            lph = lph_uh * 1e-6
+            tau_ms = (lph / rph) * 1000
+            results["phase_time_const_ms"] = round(tau_ms, 2)
+
+        results["warnings"] = warnings
+        results["has_motor_data"] = any(v is not None for v in [rpm, pole_pairs, ke, kt, rph_mohm])
+
+        return results
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 14. MOSFET Rating Validation
+    # ═══════════════════════════════════════════════════════════════════
+    def calc_mosfet_rating_check(self) -> dict:
+        """Validate that the selected MOSFET can handle system voltage and current."""
+        vds_max = self._get(self.mosfet, "MOSFET", "vds_max", None)
+        id_cont = self._get(self.mosfet, "MOSFET", "id_cont", None)
+
+        warnings = []
+        results = {}
+
+        # ── Voltage rating check ──
+        if vds_max is not None:
+            v_margin_pct = ((vds_max - self.v_peak) / vds_max) * 100 if vds_max > 0 else 0
+            results["vds_max_v"] = round(vds_max, 1)
+            results["v_peak_v"] = self.v_peak
+            results["voltage_margin_pct"] = round(v_margin_pct, 1)
+            results["voltage_ok"] = vds_max >= self.v_peak * 1.2
+
+            if vds_max < self.v_peak:
+                warnings.append(
+                    f"DANGER: Vds_max ({vds_max}V) < V_peak ({self.v_peak}V). "
+                    f"MOSFET WILL FAIL under normal operation. Choose a higher-voltage part."
+                )
+                self.audit_log.append(f"[MOSFET Rating] DANGER: Vds_max ({vds_max}V) is below bus peak voltage ({self.v_peak}V).")
+            elif vds_max < self.v_peak * 1.2:
+                warnings.append(
+                    f"WARNING: Vds_max ({vds_max}V) has < 20% margin over V_peak ({self.v_peak}V). "
+                    f"Industry standard is ≥ 1.2× derating. Risk of avalanche breakdown with transients."
+                )
+                self.audit_log.append(f"[MOSFET Rating] WARNING: Vds_max margin is only {v_margin_pct:.0f}% (need ≥ 20%).")
+            else:
+                self.audit_log.append(f"[MOSFET Rating] Vds_max={vds_max}V vs V_peak={self.v_peak}V — OK ({v_margin_pct:.0f}% margin).")
+        else:
+            results["voltage_ok"] = None
+            self.audit_log.append("[MOSFET Rating] Vds_max not extracted — cannot validate voltage rating.")
+
+        # ── Current rating check ──
+        if id_cont is not None:
+            i_margin_pct = ((id_cont - self.i_max) / id_cont) * 100 if id_cont > 0 else 0
+            results["id_cont_a"] = round(id_cont, 1)
+            results["i_max_a"] = self.i_max
+            results["current_margin_pct"] = round(i_margin_pct, 1)
+            results["current_ok"] = id_cont >= self.i_max
+
+            if id_cont < self.i_max:
+                warnings.append(
+                    f"DANGER: Id_cont ({id_cont}A) < I_max ({self.i_max}A). "
+                    f"MOSFET will overheat at maximum load. Choose a higher-current part or parallel MOSFETs."
+                )
+                self.audit_log.append(f"[MOSFET Rating] DANGER: Id_cont ({id_cont}A) < I_max ({self.i_max}A).")
+            else:
+                self.audit_log.append(f"[MOSFET Rating] Id_cont={id_cont}A vs I_max={self.i_max}A — OK ({i_margin_pct:.0f}% margin).")
+        else:
+            results["current_ok"] = None
+            self.audit_log.append("[MOSFET Rating] Id_cont not extracted — cannot validate current rating.")
+
+        results["warnings"] = warnings
+        return results
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 15. Driver Compatibility Check
+    # ═══════════════════════════════════════════════════════════════════
+    def calc_driver_compatibility(self) -> dict:
+        """Validate gate driver is compatible with system specs and MCU."""
+        warnings = []
+        results = {}
+
+        # ── VCC range vs gate drive voltage ──
+        vcc_range_raw = self.driver.get("vcc_range")
+        if vcc_range_raw is not None:
+            # vcc_range might be a string like "4.5-45" or a single value
+            try:
+                vcc_str = str(vcc_range_raw)
+                if '-' in vcc_str or '–' in vcc_str or 'to' in vcc_str.lower():
+                    parts = vcc_str.replace('–', '-').lower().replace('to', '-').split('-')
+                    parts = [p.strip() for p in parts if p.strip()]
+                    vcc_min = float(parts[0])
+                    vcc_max = float(parts[-1]) if len(parts) > 1 else 100
+                else:
+                    vcc_min = float(vcc_str)
+                    vcc_max = 100  # unknown max
+                results["vcc_min_v"] = vcc_min
+                results["vcc_max_v"] = vcc_max
+                results["gate_drive_v"] = self.v_drv
+                results["vcc_ok"] = vcc_min <= self.v_drv <= vcc_max
+
+                if self.v_drv < vcc_min:
+                    warnings.append(
+                        f"DANGER: Gate drive voltage ({self.v_drv}V) < driver VCC_min ({vcc_min}V). "
+                        f"Driver will not operate. Increase VCC supply."
+                    )
+                    self.audit_log.append(f"[Driver] DANGER: V_drv ({self.v_drv}V) below VCC min ({vcc_min}V).")
+                elif self.v_drv > vcc_max:
+                    warnings.append(
+                        f"DANGER: Gate drive voltage ({self.v_drv}V) > driver VCC_max ({vcc_max}V). "
+                        f"Driver will be damaged. Reduce VCC supply."
+                    )
+                else:
+                    self.audit_log.append(f"[Driver] VCC range [{vcc_min}-{vcc_max}V] includes V_drv={self.v_drv}V — OK.")
+            except (ValueError, IndexError):
+                results["vcc_ok"] = None
+                self.audit_log.append(f"[Driver] Could not parse VCC range '{vcc_range_raw}' — skipping VCC check.")
+        else:
+            results["vcc_ok"] = None
+            self.audit_log.append("[Driver] VCC range not extracted — cannot validate supply compatibility.")
+
+        # ── Bootstrap UVLO check ──
+        vbs_uvlo = self._get(self.driver, "DRIVER", "vbs_uvlo", None)
+        # Bootstrap voltage = Vdrv - diode_Vf
+        v_boot = self.v_drv - 0.5  # typical Schottky diode drop
+        results["v_bootstrap_v"] = round(v_boot, 2)
+
+        if vbs_uvlo is not None:
+            results["vbs_uvlo_v"] = round(vbs_uvlo, 2)
+            boot_margin = v_boot - vbs_uvlo
+            results["bootstrap_margin_v"] = round(boot_margin, 2)
+            results["bootstrap_ok"] = boot_margin > 0.5  # need > 0.5V margin
+
+            if boot_margin <= 0:
+                warnings.append(
+                    f"DANGER: Bootstrap voltage ({v_boot:.1f}V) ≤ VBS_UVLO ({vbs_uvlo:.1f}V). "
+                    f"High-side gate will NOT turn on. Increase VCC or use lower-Vf diode."
+                )
+                self.audit_log.append(f"[Driver] DANGER: Bootstrap voltage ({v_boot:.1f}V) ≤ UVLO ({vbs_uvlo:.1f}V).")
+            elif boot_margin <= 0.5:
+                warnings.append(
+                    f"WARNING: Bootstrap margin is only {boot_margin:.1f}V (Vboot={v_boot:.1f}V, UVLO={vbs_uvlo:.1f}V). "
+                    f"May UVLO during fast duty cycle transitions."
+                )
+            else:
+                self.audit_log.append(f"[Driver] Bootstrap: Vboot={v_boot:.1f}V vs UVLO={vbs_uvlo:.1f}V — OK ({boot_margin:.1f}V margin).")
+        else:
+            results["bootstrap_ok"] = None
+            self.audit_log.append("[Driver] VBS UVLO not extracted — cannot validate bootstrap margin.")
+
+        # ── Logic level compatibility (MCU → Driver) ──
+        vil = self._get(self.driver, "DRIVER", "vil", None)
+        vih = self._get(self.driver, "DRIVER", "vih", None)
+        vdd_mcu_raw = self.mcu.get("vdd_range") if self.mcu else None
+
+        # Try to get MCU output voltage (assume 3.3V if not available)
+        mcu_voh = 3.3  # default MCU output high
+        if vdd_mcu_raw:
+            try:
+                vdd_str = str(vdd_mcu_raw)
+                parts = vdd_str.replace('–', '-').lower().replace('to', '-').split('-')
+                parts = [p.strip() for p in parts if p.strip()]
+                mcu_voh = float(parts[-1]) if parts else 3.3
+            except (ValueError, IndexError):
+                mcu_voh = 3.3
+
+        results["mcu_voh_v"] = mcu_voh
+
+        if vih is not None:
+            results["vih_v"] = round(vih, 2)
+            results["logic_ok"] = mcu_voh >= vih
+
+            if mcu_voh < vih:
+                warnings.append(
+                    f"WARNING: MCU output ({mcu_voh}V) may be below driver VIH ({vih}V). "
+                    f"Add level shifter or verify open-drain with pullup to VCC."
+                )
+                self.audit_log.append(f"[Driver] WARNING: MCU Voh ({mcu_voh}V) < driver VIH ({vih}V) — logic level mismatch.")
+            else:
+                self.audit_log.append(f"[Driver] Logic levels: MCU Voh={mcu_voh}V ≥ VIH={vih}V — OK.")
+        else:
+            results["logic_ok"] = None
+            self.audit_log.append("[Driver] VIH not extracted — cannot validate logic level compatibility.")
+
+        if vil is not None:
+            results["vil_v"] = round(vil, 2)
+
+        results["warnings"] = warnings
+        return results
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 16. ADC Timing Validation
+    # ═══════════════════════════════════════════════════════════════════
+    def calc_adc_timing(self) -> dict:
+        """Validate ADC can sample within center-aligned PWM window."""
+        warnings = []
+        results = {}
+
+        # PWM period and available sampling window
+        t_pwm_us = (1.0 / self.fsw) * 1e6         # full PWM period in µs
+        # Center-aligned: sample at PWM center, need at least ~10% of half-period
+        t_half_us = t_pwm_us / 2.0
+        t_window_us = t_half_us * 0.1              # conservative: 10% of half-period
+        results["pwm_period_us"] = round(t_pwm_us, 2)
+        results["sampling_window_us"] = round(t_window_us, 2)
+
+        # ADC sample rate → conversion time
+        adc_rate_raw = self._get(self.mcu, "MCU", "adc_sample_rate", None)
+        if adc_rate_raw is not None:
+            try:
+                adc_rate = float(adc_rate_raw)
+                # adc_rate could be in MSPS, KSPS, or SPS — heuristic
+                if adc_rate > 1e6:
+                    adc_sps = adc_rate               # already in SPS
+                elif adc_rate > 1000:
+                    adc_sps = adc_rate * 1e3          # was in KSPS
+                else:
+                    adc_sps = adc_rate * 1e6          # was in MSPS
+                t_conv_us = (1.0 / adc_sps) * 1e6    # conversion time in µs
+                results["adc_conversion_us"] = round(t_conv_us, 3)
+                results["adc_rate_msps"] = round(adc_sps / 1e6, 2)
+
+                # For 3-shunt FOC: need 3 sequential conversions in the window
+                t_3ch_us = t_conv_us * 3
+                results["t_3_channel_us"] = round(t_3ch_us, 3)
+                results["timing_ok"] = t_3ch_us < t_window_us
+
+                if t_3ch_us >= t_window_us:
+                    warnings.append(
+                        f"WARNING: 3-channel ADC conversion ({t_3ch_us:.1f}µs) exceeds available "
+                        f"sampling window ({t_window_us:.1f}µs at {self.fsw/1e3:.0f}kHz). "
+                        f"Consider DMA+injected channels, reducing fsw, or using simultaneous sampling."
+                    )
+                    self.audit_log.append(f"[ADC Timing] WARNING: 3-ch conversion ({t_3ch_us:.1f}µs) > window ({t_window_us:.1f}µs).")
+                else:
+                    self.audit_log.append(f"[ADC Timing] 3-ch conversion ({t_3ch_us:.1f}µs) fits in window ({t_window_us:.1f}µs) — OK.")
+            except (ValueError, TypeError):
+                results["timing_ok"] = None
+                self.audit_log.append(f"[ADC Timing] Could not parse ADC sample rate '{adc_rate_raw}'.")
+        else:
+            results["timing_ok"] = None
+            self.audit_log.append("[ADC Timing] ADC sample rate not extracted — cannot validate timing.")
+
+        # ADC channel count check
+        adc_ch = self._get(self.mcu, "MCU", "adc_channels", None)
+        if adc_ch is not None:
+            try:
+                n_ch = int(float(adc_ch))
+                # FOC needs: 3 phase currents + bus voltage + 2 NTC + 1 BEMF = 7 minimum
+                results["adc_channels"] = n_ch
+                results["channels_needed"] = 7
+                results["channels_ok"] = n_ch >= 7
+
+                if n_ch < 7:
+                    warnings.append(
+                        f"WARNING: Only {n_ch} ADC channels available, FOC needs ≥7 "
+                        f"(3 current + bus V + 2 NTC + 1 BEMF/pot). Use external MUX or reduce sensing."
+                    )
+                else:
+                    self.audit_log.append(f"[ADC Timing] {n_ch} ADC channels available, need ≥7 — OK.")
+            except (ValueError, TypeError):
+                results["channels_ok"] = None
+        else:
+            results["channels_ok"] = None
+
+        results["warnings"] = warnings
+        return results
+
+    # ═══════════════════════════════════════════════════════════════════
     # Run All
     # ═══════════════════════════════════════════════════════════════════
     def run_all(self) -> dict:
@@ -834,7 +1230,11 @@ class CalculationEngine:
             "thermal":              self.calc_thermal(),
             "dead_time":            self.calc_dead_time(),
             "pcb_guidelines":       self.calc_pcb_guidelines(),
+            "motor_validation":     self.calc_motor_validation(),
+            "mosfet_rating_check":  self.calc_mosfet_rating_check(),
+            "driver_compatibility": self.calc_driver_compatibility(),
+            "adc_timing":           self.calc_adc_timing(),
         }
         # Attach logs after calculations have fully populated them
-        results["audit_log"] = list(set(self.audit_log))
+        results["audit_log"] = list(dict.fromkeys(self.audit_log))
         return results
