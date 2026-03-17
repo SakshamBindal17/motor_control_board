@@ -70,11 +70,11 @@ def generate_pdf_report(project: dict, calculations: dict) -> bytes:
         story.append(Paragraph("2. MOSFET Loss Analysis", h1_style))
         loss_data = [
             ["Parameter", "Value", "Unit"],
-            ["Conduction Loss / MOSFET", str(ml.get("conduction_loss_per_mosfet_w", "—")), "W"],
-            ["Switching Loss / MOSFET", str(ml.get("switching_loss_per_mosfet_w", "—")), "W"],
-            ["Total Loss / MOSFET", str(ml.get("total_loss_per_mosfet_w", "—")), "W"],
-            ["Total Loss (6× MOSFETs)", str(ml.get("total_6_mosfet_loss_w", "—")), "W"],
-            ["Estimated Junction Temp", str(ml.get("junction_temp_c", "—")), "°C"],
+            ["Conduction Loss / MOSFET", str(ml.get("conduction_loss_per_fet_w", "—")), "W"],
+            ["Switching Loss / MOSFET", str(ml.get("switching_loss_per_fet_w", "—")), "W"],
+            ["Total Loss / MOSFET", str(ml.get("total_loss_per_fet_w", "—")), "W"],
+            ["Total Loss (6× MOSFETs)", str(ml.get("total_all_6_fets_w", "—")), "W"],
+            ["Estimated Junction Temp", str(ml.get("junction_temp_est_c", "—")), "°C"],
             ["Switch RMS Current", str(ml.get("i_rms_switch_a", "—")), "A"],
         ]
         story.append(_make_table(loss_data))
@@ -101,12 +101,12 @@ def generate_pdf_report(project: dict, calculations: dict) -> bytes:
         story.append(Paragraph("4. Input Capacitor Design", h1_style))
         cap_data = [
             ["Component", "Value", "Qty", "Rating"],
-            ["Bulk Electrolytic", f"{ic.get('c_bulk_per_cap_uf', 100)} µF", str(ic.get("num_bulk_caps", 4)), "100V, high ripple current"],
+            ["Bulk Electrolytic", f"{ic.get('c_per_bulk_cap_uf', 100)} µF", str(ic.get("n_bulk_caps", 4)), "100V, high ripple current"],
             ["Film Capacitor", f"{ic.get('c_film_uf', 4.7)} µF", "2", "100V, within 20mm of bridge"],
-            ["MLCC Ceramic", f"{ic.get('c_mlcc_nf', 100)} nF", str(ic.get("c_mlcc_count", 6)), "100V X7R, per switch node"],
+            ["MLCC Ceramic", f"{ic.get('c_mlcc_nf', 100)} nF", str(ic.get("c_mlcc_qty", 6)), "100V X7R, per switch node"],
         ]
         story.append(_make_table(cap_data))
-        ripple_text = f"Calculated RMS ripple current: {ic.get('i_ripple_rms_a', '—')} A | Voltage ripple: {ic.get('actual_voltage_ripple_v', '—')} V"
+        ripple_text = f"Calculated RMS ripple current: {ic.get('i_ripple_rms_a', '—')} A | Voltage ripple: {ic.get('v_ripple_actual_v', '—')} V"
         story.append(Paragraph(ripple_text, small))
         story.append(Spacer(1, 6*mm))
 
@@ -119,12 +119,12 @@ def generate_pdf_report(project: dict, calculations: dict) -> bytes:
         bg_note = LIGHT_GREEN if safe else LIGHT_RED
         therm_data = [
             ["Parameter", "Value"],
-            ["Estimated Junction Temperature", f"{th.get('tj_estimated_c', '—')} °C"],
-            ["Maximum Rated Junction Temp", f"{th.get('tj_max_c', '—')} °C"],
+            ["Estimated Junction Temperature", f"{th.get('t_junction_est_c', '—')} °C"],
+            ["Maximum Rated Junction Temp", f"{th.get('tj_max_rated_c', '—')} °C"],
             ["Thermal Margin", f"{th.get('thermal_margin_c', '—')} °C"],
-            ["Power per MOSFET", f"{th.get('p_per_mosfet_w', '—')} W"],
-            ["Total MOSFET Dissipation", f"{th.get('p_total_mosfets_w', '—')} W"],
-            ["Copper Area Required", f"{th.get('copper_area_per_mosfet_mm2', '—')} mm² / MOSFET"],
+            ["Power per MOSFET", f"{th.get('p_per_fet_w', '—')} W"],
+            ["Total MOSFET Dissipation", f"{th.get('p_total_6_fets_w', '—')} W"],
+            ["Copper Area Required", f"{th.get('copper_area_per_fet_mm2', '—')} mm² / MOSFET"],
         ]
         story.append(_make_table(therm_data))
         story.append(Spacer(1, 4*mm))
@@ -132,17 +132,22 @@ def generate_pdf_report(project: dict, calculations: dict) -> bytes:
         story.append(Spacer(1, 6*mm))
 
     # Protection
-    if "protection" in calculations:
-        pr = calculations["protection"]
+    if "protection_dividers" in calculations:
+        pr = calculations["protection_dividers"]
         story.append(Paragraph("6. Protection Thresholds", h1_style))
+        ocp = pr.get("ocp", {})
+        ovp = pr.get("ovp", {})
+        uvp = pr.get("uvp", {})
+        otp = pr.get("otp", {})
+        tvs = pr.get("tvs", {})
         prot_data = [
             ["Protection", "Threshold", "Response"],
-            ["Over-Current (OCP)", f"{pr.get('ocp_threshold_a', '—')} A", f"< {pr.get('ocp_response_time_us', 1)} µs"],
-            ["Over-Voltage (OVP)", f"{pr.get('ovp_threshold_v', '—')} V", "Hardware comparator"],
-            ["Under-Voltage (UVP)", f"{pr.get('uvp_threshold_v', '—')} V", f"Hyst: {pr.get('uvp_hysteresis_v', 2)} V"],
-            ["Over-Temp Warning", f"{pr.get('otp_warning_c', '—')} °C", "Software flag"],
-            ["Over-Temp Shutdown", f"{pr.get('otp_shutdown_c', '—')} °C", "Hardware disable"],
-            ["TVS Clamp", f"{pr.get('tvs_clamping_v', '—')} V", pr.get("tvs_part", "—")],
+            ["Over-Current (OCP)", f"{ocp.get('hw_threshold_a', '—')} A", f"< {ocp.get('hw_response_us', 1)} µs"],
+            ["Over-Voltage (OVP)", f"{ovp.get('trip_voltage_v', '—')} V", "Hardware comparator"],
+            ["Under-Voltage (UVP)", f"{uvp.get('trip_voltage_v', '—')} V", f"Hyst: {uvp.get('hysteresis_voltage_v', 2)} V"],
+            ["Over-Temp Warning", f"{otp.get('warning_temp_c', '—')} °C", "Software flag"],
+            ["Over-Temp Shutdown", f"{otp.get('shutdown_temp_c', '—')} °C", "Hardware disable"],
+            ["TVS Clamp", f"{tvs.get('clamping_v', '—')} V", tvs.get("part", "—")],
         ]
         story.append(_make_table(prot_data))
 
@@ -233,14 +238,14 @@ def _build_bom(calculations) -> list:
 
     if "input_capacitors" in calculations:
         ic = calculations["input_capacitors"]
-        add("Bulk Capacitor", "Input bus bulk electrolytic", f"{ic.get('c_bulk_per_cap_uf', 100)} µF / 100V", ic.get("num_bulk_caps", 4), "Panasonic EEU-FC2A101, high ripple", "~$0.60")
+        add("Bulk Capacitor", "Input bus bulk electrolytic", f"{ic.get('c_per_bulk_cap_uf', 100)} µF / 100V", ic.get("n_bulk_caps", 4), "Panasonic EEU-FC2A101, high ripple", "~$0.60")
         add("Film Capacitor", "Mid-freq decoupling", f"{ic.get('c_film_uf', 4.7)} µF / 100V", 2, "WIMA MKP or equiv.", "~$0.80")
         add("MLCC Decoupling", "HF switch node decoupling", f"{ic.get('c_mlcc_nf', 100)} nF / 100V X7R", 6, "0603, X7R", "~$0.05")
 
     if "bootstrap_cap" in calculations:
         bc = calculations["bootstrap_cap"]
         add("Bootstrap Cap", "High-side gate drive bootstrap", f"{bc.get('c_boot_recommended_nf', 220)} nF / 25V", 3, "X7R MLCC, 0603", "~$0.05")
-        add("Bootstrap Diode", "Bootstrap charge Schottky", bc.get("boot_diode", "B0540W"), 3, "40V, 500mA, fast", "~$0.20")
+        add("Bootstrap Diode", "Bootstrap charge Schottky", bc.get("bootstrap_diode", "B0540W"), 3, "40V, 500mA, fast", "~$0.20")
 
     if "shunt_resistors" in calculations:
         sr = calculations["shunt_resistors"]
