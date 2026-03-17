@@ -48,9 +48,13 @@ async def extract_datasheet(
         logger.info(f"Extracted {len(result.get('parameters', []))} parameters from {result.get('component_name', '?')}")
         return {"success": True, "data": result}
     except Exception as e:
-        logger.error(f"Extraction error:\n{traceback.format_exc()}")
-        # Return the real error message so user can debug
-        raise HTTPException(500, f"{type(e).__name__}: {str(e)}")
+        error_msg = str(e)
+        # Sanitize: never leak API keys or auth tokens in responses
+        if "api_key" in error_msg.lower() or "sk-" in error_msg or "key" in error_msg.lower():
+            logger.error(f"Extraction auth error (details suppressed for security)")
+            raise HTTPException(500, "Authentication error — check your API key in Settings")
+        logger.error(f"Extraction error: {type(e).__name__}: {error_msg}")
+        raise HTTPException(500, f"{type(e).__name__}: {error_msg}")
 
 
 # ─── Calculations ─────────────────────────────────────────────────────────────
@@ -76,9 +80,11 @@ async def calculate(req: CalcRequest):
         )
         results = engine.run_all()
         return {"success": True, "data": results}
+    except ValueError as e:
+        raise HTTPException(422, f"Validation error: {str(e)}")
     except Exception as e:
-        logger.error(f"Calc error:\n{traceback.format_exc()}")
-        raise HTTPException(500, f"{type(e).__name__}: {str(e)}")
+        logger.error(f"Calc error: {type(e).__name__}: {str(e)}")
+        raise HTTPException(500, f"Calculation failed: {type(e).__name__}: {str(e)}")
 
 
 # ─── Reports ──────────────────────────────────────────────────────────────────
