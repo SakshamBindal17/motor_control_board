@@ -80,6 +80,22 @@ export default function Sidebar({ blocks }) {
 
       {/* Block navigation */}
       <nav style={{ flex: 1, padding: '10px 0' }}>
+        {/* Dashboard & Charts */}
+        <div style={{ padding: '0 8px 6px', marginBottom: 4 }}>
+          <NavItem
+            cfg={blocks.dashboard}
+            isActive={active_block === 'dashboard'}
+            status={hasCalc ? 'done' : null}
+            onClick={() => select('dashboard')}
+          />
+          <NavItem
+            cfg={blocks.charts}
+            isActive={active_block === 'charts'}
+            status={b.mosfet?.status === 'done' ? 'done' : null}
+            onClick={() => select('charts')}
+          />
+        </div>
+
         {/* Feedback (special — horizontal) */}
         <div style={{ padding: '0 8px 6px', marginBottom: 4 }}>
           <div style={{
@@ -87,7 +103,7 @@ export default function Sidebar({ blocks }) {
             textTransform: 'uppercase', color: 'var(--txt-3)',
             padding: '0 8px', marginBottom: 4,
           }}>
-            Horizontal Block
+            Sensing
           </div>
           <NavItem
             cfg={blocks.feedback}
@@ -105,7 +121,7 @@ export default function Sidebar({ blocks }) {
           borderTop: '1px solid var(--border-1)',
           marginBottom: 4,
         }}>
-          Vertical Blocks
+          Components
         </div>
 
         {['mcu','driver','passives','mosfet','motor'].map(key => (
@@ -173,8 +189,10 @@ function NavItem({ cfg, isActive, status, onClick, isHorizontal }) {
         gap: 9,
         padding: isHorizontal ? '7px 16px' : '8px 16px',
         background: isActive ? `${cfg.color}12` : 'transparent',
+        borderTop: 'none',
+        borderRight: 'none',
+        borderBottom: 'none',
         borderLeft: isActive ? `3px solid ${cfg.color}` : '3px solid transparent',
-        border: 'none',
         borderRadius: 0,
         cursor: 'pointer',
         textAlign: 'left',

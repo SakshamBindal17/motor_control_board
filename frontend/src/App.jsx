@@ -6,8 +6,11 @@ import BlockPanel from './components/BlockPanel.jsx'
 import MotorForm from './components/MotorForm.jsx'
 import PassivesPanel from './components/PassivesPanel.jsx'
 import FeedbackPanel from './components/FeedbackPanel.jsx'
+import DashboardPanel from './components/DashboardPanel.jsx'
+import ChartsPanel from './components/ChartsPanel.jsx'
 import SettingsModal from './components/SettingsModal.jsx'
 import ReportPanel from './components/ReportPanel.jsx'
+import DesignConstantsModal from './components/DesignConstantsModal.jsx'
 import SmartTooltip from './components/SmartTooltip.jsx'
 
 class ErrorBoundary extends React.Component {
@@ -48,6 +51,24 @@ class ErrorBoundary extends React.Component {
 }
 
 export const BLOCK_CONFIGS = {
+  dashboard: {
+    key: 'dashboard',
+    label: 'Dashboard',
+    fullLabel: 'Design Dashboard',
+    icon: '📊',
+    color: '#1e90ff',
+    type: 'dashboard',
+    desc: 'Overview — health score, loss breakdown, thermal analysis, key metrics',
+  },
+  charts: {
+    key: 'charts',
+    label: 'Charts',
+    fullLabel: 'Interactive Charts',
+    icon: '📉',
+    color: '#bb86fc',
+    type: 'charts',
+    desc: 'Parametric sweeps — loss vs frequency, derating, efficiency, gate timing',
+  },
   mcu: {
     key: 'mcu',
     label: 'MCU',
@@ -114,6 +135,8 @@ export default function App() {
   function renderPanel() {
     if (!cfg) return null
     switch (cfg.type) {
+      case 'dashboard': return <DashboardPanel config={cfg} />
+      case 'charts': return <ChartsPanel config={cfg} />
       case 'upload': return <BlockPanel key={state.active_block} blockKey={state.active_block} config={cfg} />
       case 'motor': return <MotorForm config={cfg} />
       case 'passives': return <PassivesPanel config={cfg} />
@@ -141,6 +164,7 @@ export default function App() {
         </div>
         {state.settings_open && <SettingsModal />}
         {state.report_open && <ReportPanel />}
+        {state.constants_open && <DesignConstantsModal />}
         <SmartTooltip />
       </div>
     </ErrorBoundary>

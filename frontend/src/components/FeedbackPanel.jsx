@@ -108,10 +108,10 @@ export default function FeedbackPanel({ config }) {
             <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, fontSize: 11 }}>
               {prot ? <>
                 <ProtRow label="OCP (Hardware)" value={`${prot.ocp?.ocp_hw_a ?? '—'} A`}     color="var(--red)"   note="Via driver IC direct shutdown" />
-                <ProtRow label="OCP (Software)" value={`${sys.max_phase_current} A`}            color="var(--amber)" note="MCU comparator, ~10µs latency" />
+                <ProtRow label="OCP (Software)" value={`${prot.ocp?.sw_threshold_a ?? sys.max_phase_current} A`} color="var(--amber)" note="MCU comparator, ~10µs latency" />
                 <ProtRow label="OVP"            value={`${prot.ovp?.trip_voltage_v ?? '—'} V`} color="var(--amber)" note="Resistor divider + comparator" />
                 <ProtRow label="UVP"            value={`${prot.uvp?.trip_voltage_v ?? '—'} V`} color="var(--amber)" note={`Hyst: ${prot.uvp?.hysteresis_voltage_v ?? '—'}V`} />
-                <ProtRow label="OTP (NTC 80°C)" value="80 °C"                                   color="#f59e0b"      note="NTC → ADC → software" />
+                <ProtRow label={`OTP (NTC ${prot.otp?.warning_temp_c ?? 80}°C)`} value={`${prot.otp?.warning_temp_c ?? 80} °C`} color="#f59e0b" note="NTC → ADC → software" />
               </> : (
                 <span style={{ color: 'var(--txt-3)', fontSize: 11 }}>Run calculations first</span>
               )}

@@ -34,12 +34,32 @@ export async function runCalculations(payload) {
   return (await res.json()).data
 }
 
+/** Run reverse calculations (target → component values) */
+export async function runReverseCalculation(payload) {
+  const res = await _req('/api/reverse-calculate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json()).data
+}
+
 /** Download PDF report — returns a Blob */
 export async function downloadReport(project, calculations, format) {
   const res = await _req('/api/report', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ project, calculations, format }),
+  })
+  return res.blob()
+}
+
+/** Download SPICE netlist — returns a Blob */
+export async function downloadSpice(systemSpecs, calculations, mosfetParams) {
+  const res = await _req('/api/export/spice', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ system_specs: systemSpecs, calculations, mosfet_params: mosfetParams }),
   })
   return res.blob()
 }

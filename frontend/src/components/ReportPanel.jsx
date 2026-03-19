@@ -1,8 +1,8 @@
 import React, { useState } from 'react'
-import { X, FileText, Table, Download } from 'lucide-react'
+import { X, FileText, Table, Download, Cpu } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useProject } from '../context/ProjectContext.jsx'
-import { downloadReport } from '../api.js'
+import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
+import { downloadReport, downloadSpice } from '../api.js'
 
 export default function ReportPanel() {
   const { state, dispatch } = useProject()
@@ -33,6 +33,33 @@ export default function ReportPanel() {
       toast.success('Download started!', { id: 'report' })
     } catch (err) {
       toast.error(`Report failed: ${err.message}`, { id: 'report' })
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  async function downloadSpiceNetlist() {
+    if (!project.calculations) {
+      toast.error('Run calculations first before exporting SPICE')
+      return
+    }
+    setLoading('spice')
+    toast.loading('Generating SPICE netlist…', { id: 'report' })
+    try {
+      const blob = await downloadSpice(
+        project.system_specs,
+        project.calculations,
+        buildParamsDict(project.blocks.mosfet)
+      )
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'mc_halfbridge.cir'
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('SPICE netlist downloaded!', { id: 'report' })
+    } catch (err) {
+      toast.error(`SPICE export failed: ${err.message}`, { id: 'report' })
     } finally {
       setLoading(null)
     }
@@ -116,6 +143,9 @@ export default function ReportPanel() {
             <ExportCard icon={<Table size={20}/>} title="Excel BOM + Calculations"
               desc="Bill of Materials with component values, quantities, and all calculation results"
               color="#22c55e" loading={loading === 'excel'} onClick={() => download('excel')} />
+            <ExportCard icon={<Cpu size={20}/>} title="SPICE Netlist (.cir)"
+              desc="Half-bridge ngspice netlist with gate drive, bootstrap, snubber, bus caps — ready for simulation"
+              color="#bb86fc" loading={loading === 'spice'} onClick={downloadSpiceNetlist} />
           </div>
         </div>
 

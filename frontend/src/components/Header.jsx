@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react'
-import { Settings, Moon, Sun, Save, FolderOpen, FileText } from 'lucide-react'
+import { Settings, Moon, Sun, Save, FolderOpen, FileText, SlidersHorizontal } from 'lucide-react'
 import { useProject } from '../context/ProjectContext.jsx'
 import toast from 'react-hot-toast'
 
@@ -113,6 +113,13 @@ export default function Header() {
           { icon: <FolderOpen size={15} />, tip: 'Load session', fn: load },
           { icon: <FileText size={15} />, tip: 'Generate report', fn: () => dispatch({ type: 'TOGGLE_REPORT' }) },
           {
+            icon: <SlidersHorizontal size={15} />,
+            tip: 'Design Constants',
+            fn: () => dispatch({ type: 'TOGGLE_CONSTANTS' }),
+            highlight: Object.keys(project.design_constants || {}).length > 0,
+            highlightColor: 'var(--amber)',
+          },
+          {
             icon: settings.theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />,
             tip: 'Toggle theme',
             fn: () => dispatch({ type: 'SET_SETTINGS', payload: { theme: settings.theme === 'dark' ? 'light' : 'dark' } }),
@@ -129,7 +136,7 @@ export default function Header() {
             onClick={btn.fn}
             className="btn btn-ghost btn-icon"
             data-tip={btn.tip}
-            style={btn.highlight ? { borderColor: 'var(--red)', color: 'var(--red)' } : {}}
+            style={btn.highlight ? { borderColor: btn.highlightColor || 'var(--red)', color: btn.highlightColor || 'var(--red)' } : {}}
           >
             {btn.icon}
           </button>

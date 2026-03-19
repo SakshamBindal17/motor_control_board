@@ -1,54 +1,32 @@
 import React, { createContext, useContext, useReducer, useEffect } from 'react'
+import { PARAM_LABELS } from '../constants.js'
 
 const ProjectContext = createContext(null)
 
-// Mirror of BlockPanel's PARAM_LABELS — used by the reducer to name synthetic
-// (manually-entered) parameters. Must stay in sync with BlockPanel's PARAM_LABELS.
-const PARAM_LABELS_CTX = {
-  // MOSFET essential
-  vds_max: 'Max Drain-Source Voltage', id_cont: 'Continuous Drain Current',
-  rds_on: 'On-Resistance', vgs_th: 'Gate Threshold Voltage',
-  qg: 'Total Gate Charge', qgd: 'Gate-Drain (Miller) Charge',
-  qgs: 'Gate-Source Charge', qrr: 'Reverse Recovery Charge',
-  trr: 'Reverse Recovery Time', coss: 'Output Capacitance',
-  td_on: 'Turn-On Delay Time', tr: 'Rise Time',
-  td_off: 'Turn-Off Delay Time', tf: 'Fall Time',
-  rth_jc: 'Thermal Resistance (J-C)', tj_max: 'Max Junction Temperature',
-  body_diode_vf: 'Body Diode Forward Voltage',
-  // MOSFET good-to-have
-  vgs_max: 'Max Gate-Source Voltage', id_pulsed: 'Pulsed Drain Current',
-  ciss: 'Input Capacitance', crss: 'Reverse Transfer Capacitance',
-  avalanche_energy: 'Avalanche Energy', rg_int: 'Internal Gate Resistance',
-  vgs_plateau: 'Gate Plateau Voltage', qoss: 'Output Charge (Qoss)',
-  // Gate Driver essential
-  vcc_range: 'VCC Supply Voltage Range', vcc_uvlo: 'VCC UVLO',
-  vbs_max: 'Max Bootstrap Voltage', vbs_uvlo: 'Bootstrap UVLO',
-  io_source: 'Peak Source Current', io_sink: 'Peak Sink Current',
-  prop_delay_on: 'Prop Delay (Turn-On)', prop_delay_off: 'Prop Delay (Turn-Off)',
-  deadtime_min: 'Minimum Dead Time', deadtime_default: 'Default Dead Time',
-  vil: 'Input Logic Low (VIL)', vih: 'Input Logic High (VIH)',
-  rth_ja: 'Thermal Resistance (J-A)',
-  // Gate Driver good-to-have
-  ocp_threshold: 'OCP Threshold', ocp_response: 'OCP Blanking Time',
-  thermal_shutdown: 'Thermal Shutdown Temp',
-  current_sense_gain: 'Current Sense Amplifier Gain',
-  rise_time_out: 'Driver Output Rise Time',
-  fall_time_out: 'Driver Output Fall Time',
-  // MCU essential
-  cpu_freq_max: 'Max CPU Frequency',
-  adc_resolution: 'ADC Resolution', adc_channels: 'ADC Channels',
-  adc_sample_rate: 'ADC Sample Rate', pwm_timers: 'Advanced PWM Timers',
-  pwm_resolution: 'PWM Timer Resolution',
-  pwm_deadtime_res: 'Dead-Time Generator Resolution',
-  pwm_deadtime_max: 'Max Programmable Dead Time',
-  complementary_outputs: 'Complementary Output Pairs',
-  vdd_range: 'VDD Voltage Range',
-  // MCU good-to-have
-  flash_size: 'Flash Memory Size', ram_size: 'RAM / SRAM Size',
-  spi_count: 'SPI Interfaces', uart_count: 'UART / USART Interfaces',
-  idd_run: 'Run Mode Current', temp_range: 'Operating Temperature Range',
-  gpio_count: 'Total GPIO Count', encoder_interface: 'Encoder / Hall Interface',
-  can_count: 'CAN Bus Interfaces', dma_channels: 'DMA Channels',
+/** Validate a numeric value — returns the value if finite, or fallback if NaN/Infinity */
+function _validNum(val, fallback = null) {
+  if (val === '' || val === null || val === undefined) return fallback
+  const n = typeof val === 'number' ? val : parseFloat(val)
+  if (!Number.isFinite(n)) return fallback
+  return n
+}
+
+/** Sanitize an object of specs — reject NaN/Infinity, keep valid values */
+function _sanitizeSpecs(incoming, current) {
+  const result = {}
+  for (const [k, v] of Object.entries(incoming)) {
+    if (typeof v === 'string' && typeof current[k] === 'string') {
+      // String fields (motor_type, control_mode, cooling, etc.) pass through
+      result[k] = v
+    } else if (v === '' || v === null || v === undefined) {
+      // Allow clearing fields (e.g. motor spec inputs)
+      result[k] = v
+    } else {
+      const n = _validNum(v)
+      result[k] = n !== null ? n : current[k]  // reject invalid, keep current
+    }
+  }
+  return result
 }
 
 const DEFAULT_SYSTEM_SPECS = {
@@ -99,16 +77,19 @@ const INITIAL_STATE = {
       mcu: { ...DEFAULT_BLOCK },
       driver: { ...DEFAULT_BLOCK },
       mosfet: { ...DEFAULT_BLOCK },
+      mosfet_b: null,  // null = no comparison, DEFAULT_BLOCK shape when active
       motor: { specs: DEFAULT_MOTOR_SPECS },
       passives: { overrides: {}, calculated: null },
       feedback: { calculated: null },
     },
     calculations: null,
+    design_constants: {},
     last_saved: null,
   },
   // UI state
-  active_block: 'mcu',
+  active_block: 'dashboard',
   settings_open: false,
+  constants_open: false,
   report_open: false,
 }
 
@@ -125,6 +106,25 @@ function reducer(state, action) {
 
     case 'TOGGLE_REPORT':
       return { ...state, report_open: !state.report_open }
+
+    case 'TOGGLE_CONSTANTS':
+      return { ...state, constants_open: !state.constants_open }
+
+    case 'SET_DESIGN_CONSTANT': {
+      const { key, value } = action.payload
+      const dc = { ...state.project.design_constants }
+      if (value === null || value === undefined) {
+        delete dc[key]
+      } else {
+        const n = _validNum(value)
+        if (n === null) return state  // reject NaN/Infinity
+        dc[key] = n
+      }
+      return { ...state, project: { ...state.project, design_constants: dc } }
+    }
+
+    case 'RESET_ALL_DESIGN_CONSTANTS':
+      return { ...state, project: { ...state.project, design_constants: {} } }
 
     case 'SET_BLOCK_STATUS': {
       const { block, status, error } = action.payload
@@ -187,6 +187,9 @@ function reducer(state, action) {
 
     case 'SET_PARAM_OVERRIDE': {
       const { block, param_id, override } = action.payload
+      const parsed = override === '' ? null : _validNum(override)
+      // If user typed something invalid (NaN/Infinity), don't apply it
+      if (override !== '' && parsed === null) return state
       return {
         ...state,
         project: {
@@ -199,7 +202,7 @@ function reducer(state, action) {
                 ...state.project.blocks[block].selected_params,
                 [param_id]: {
                   ...state.project.blocks[block].selected_params[param_id],
-                  override: override === '' ? null : parseFloat(override),
+                  override: parsed,
                 },
               },
             },
@@ -208,26 +211,30 @@ function reducer(state, action) {
       }
     }
 
-    case 'SET_MOTOR_SPECS':
+    case 'SET_MOTOR_SPECS': {
+      const sanitized = _sanitizeSpecs(action.payload, state.project.blocks.motor.specs)
       return {
         ...state,
         project: {
           ...state.project,
           blocks: {
             ...state.project.blocks,
-            motor: { specs: { ...state.project.blocks.motor.specs, ...action.payload } },
+            motor: { specs: { ...state.project.blocks.motor.specs, ...sanitized } },
           },
         },
       }
+    }
 
-    case 'SET_SYSTEM_SPECS':
+    case 'SET_SYSTEM_SPECS': {
+      const sanitized = _sanitizeSpecs(action.payload, state.project.system_specs)
       return {
         ...state,
         project: {
           ...state.project,
-          system_specs: { ...state.project.system_specs, ...action.payload },
+          system_specs: { ...state.project.system_specs, ...sanitized },
         },
       }
+    }
 
     case 'SET_PASSIVES_OVERRIDE': {
       const { key, value } = action.payload
@@ -250,12 +257,14 @@ function reducer(state, action) {
       // User manually entered a value for a param that wasn't extracted
       // Store as an override in selected_params AND inject a synthetic raw_data entry
       const { block, param_id, value, unit } = action.payload
+      // Reject NaN/Infinity
+      if (!Number.isFinite(typeof value === 'number' ? value : parseFloat(value))) return state
       const blockData = state.project.blocks[block]
       const existingParams = blockData.raw_data?.parameters || []
       // Add/replace the synthetic param in raw_data
       const syntheticParam = {
         id: param_id,
-        name: PARAM_LABELS_CTX[param_id] || param_id,
+        name: PARAM_LABELS[param_id] || param_id,
         symbol: param_id,
         category: 'Manual Entry',
         conditions: [{
@@ -350,7 +359,23 @@ function reducer(state, action) {
     case 'LOAD_PROJECT': {
       const payload = action.payload
       if (payload.version === 2 && payload.state) {
-        return { ...payload.state }
+        const restored = { ...payload.state }
+        // Backward compat: ensure design_constants exists
+        if (!restored.project.design_constants) {
+          restored.project = { ...restored.project, design_constants: {} }
+        }
+        // Ensure constants_open UI flag exists
+        if (restored.constants_open === undefined) {
+          restored.constants_open = false
+        }
+        // Backward compat: ensure mosfet_b exists (can be null)
+        if (!('mosfet_b' in (restored.project?.blocks || {}))) {
+          restored.project = {
+            ...restored.project,
+            blocks: { ...restored.project.blocks, mosfet_b: null },
+          }
+        }
+        return restored
       }
       // Legacy fallback
       return { ...state, project: payload.project || payload }
@@ -358,6 +383,7 @@ function reducer(state, action) {
 
     case 'RESET_BLOCK': {
       const block = action.payload
+      // Resetting mosfet_b sets it back to DEFAULT_BLOCK (not null — use REMOVE_MOSFET_B for that)
       return {
         ...state,
         project: {
@@ -369,6 +395,31 @@ function reducer(state, action) {
         },
       }
     }
+
+    case 'ADD_MOSFET_B':
+      if (state.project.blocks.mosfet_b) return state  // already exists
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          blocks: {
+            ...state.project.blocks,
+            mosfet_b: { ...DEFAULT_BLOCK },
+          },
+        },
+      }
+
+    case 'REMOVE_MOSFET_B':
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          blocks: {
+            ...state.project.blocks,
+            mosfet_b: null,
+          },
+        },
+      }
 
     default:
       return state

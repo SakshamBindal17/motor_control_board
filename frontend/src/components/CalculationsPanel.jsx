@@ -1,15 +1,31 @@
-import React, { useState, useRef } from 'react'
-import { Zap, RefreshCw, ChevronDown, AlertTriangle, Maximize2, X, Eye } from 'lucide-react'
+import React, { useState, useRef, useMemo } from 'react'
+import { Zap, RefreshCw, ChevronDown, AlertTriangle, Maximize2, X, Eye, ArrowUpRight, ArrowDownRight, Scale, Pencil, CornerDownLeft } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
 import { CALC_CRITICAL } from './BlockPanel.jsx'
-import { runCalculations } from '../api.js'
+import { runCalculations, runReverseCalculation } from '../api.js'
 import { fmtNum, thresholdClass } from '../utils.js'
+import ComparisonCard, { MOSFET_DEPENDENT_SECTIONS } from './ComparisonCard.jsx'
+
+// Directions for inline comparison annotations
+const METRIC_DIRS = {
+  voltage_margin_pct: 'higher', current_margin_pct: 'higher',
+  conduction_loss_per_fet_w: 'lower', switching_loss_per_fet_w: 'lower',
+  recovery_loss_per_fet_w: 'lower', total_loss_per_fet_w: 'lower',
+  total_all_6_fets_w: 'lower', efficiency_mosfet_pct: 'higher',
+  t_junction_est_c: 'lower', thermal_margin_c: 'higher',
+  p_per_fet_w: 'lower', copper_area_per_fet_mm2: 'lower',
+  system_total_loss_w: 'lower',
+  dt_minimum_ns: 'lower', dt_recommended_ns: 'lower',
+  dt_actual_ns: 'lower', dt_pct_of_period: 'lower',
+  voltage_overshoot_v: 'lower', v_sw_peak_v: 'lower',
+  p_total_6_snubbers_w: 'lower', min_hs_on_time_ns: 'lower',
+}
 
 // Which calc sections depend on which block being uploaded
 const BLOCK_DEPS = {
-  driver: ['gate_resistors', 'bootstrap_cap', 'shunt_resistors', 'dead_time', 'driver_compatibility'],
-  mcu: ['dead_time', 'adc_timing'],
+  driver: ['gate_resistors', 'bootstrap_cap', 'shunt_resistors', 'dead_time', 'driver_compatibility', 'cross_validation'],
+  mcu: ['dead_time', 'adc_timing', 'cross_validation'],
   motor: ['input_capacitors', 'motor_validation'],
 }
 
@@ -18,6 +34,39 @@ const FALLBACK_WARNINGS = {
   driver: 'io_source=1.5A, io_sink=2.5A, prop_delay=60ns, csa_gain=20',
   mcu: 'dt_resolution=8ns',
   motor: 'Bus cap ripple uses SPWM estimate. Enter Lph in Motor tab for accurate C_bulk sizing.',
+}
+
+// ── Reverse calculation: which output keys are invertible ─────────────────
+const REVERSIBLE_KEYS = new Set([
+  'gate_rise_time_ns', 'gate_fall_time_ns', 'dv_dt_v_per_us',
+  'c_boot_recommended_nf', 'min_hs_on_time_ns',
+  'dt_pct_of_period', 'dt_actual_ns',
+  'voltage_overshoot_v', 'p_total_6_snubbers_w',
+])
+
+// Quick verdict score from two result sets
+function quickVerdictScore(resA, resB) {
+  if (!resA || !resB) return null
+  const metrics = [
+    { key: 'total_loss_per_fet_w', section: 'mosfet_losses', dir: 'lower' },
+    { key: 'efficiency_mosfet_pct', section: 'mosfet_losses', dir: 'higher' },
+    { key: 't_junction_est_c', section: 'thermal', dir: 'lower' },
+    { key: 'thermal_margin_c', section: 'thermal', dir: 'higher' },
+    { key: 'dt_minimum_ns', section: 'dead_time', dir: 'lower' },
+    { key: 'voltage_margin_pct', section: 'mosfet_rating_check', dir: 'higher' },
+    { key: 'current_margin_pct', section: 'mosfet_rating_check', dir: 'higher' },
+    { key: 'voltage_overshoot_v', section: 'snubber', dir: 'lower' },
+  ]
+  let a = 0, b = 0, t = 0
+  for (const m of metrics) {
+    const vA = resA?.[m.section]?.[m.key]
+    const vB = resB?.[m.section]?.[m.key]
+    if (vA == null || vB == null || typeof vA !== 'number' || typeof vB !== 'number') { t++; continue }
+    if (Math.abs(vA - vB) < 0.001) { t++; continue }
+    const aWins = m.dir === 'lower' ? vA < vB : vA > vB
+    if (aWins) a++; else b++
+  }
+  return { a, b, t }
 }
 
 // Maps section keys to friendly labels for the transparency panel
@@ -34,6 +83,11 @@ export default function CalculationsPanel() {
   const [showGrid, setShowGrid] = useState(false)
   const [showTransparency, setShowTransparency] = useState(false)
   const [expandedTransMods, setExpandedTransMods] = useState({})
+  const [compResults, setCompResults] = useState(null) // MOSFET B calc results
+  const [showComparison, setShowComparison] = useState(false)
+  const [reverseEditing, setReverseEditing] = useState({}) // { key: value_string }
+  const [reverseResults, setReverseResults] = useState({}) // { key: result_object }
+  const [reverseLoading, setReverseLoading] = useState({}) // { key: bool }
 
   function toggle(k) { setOpen(p => ({ ...p, [k]: !p[k] })) }
   function toggleTransMod(k) { setExpandedTransMods(p => ({ ...p, [k]: !p[k] })) }
@@ -104,19 +158,74 @@ export default function CalculationsPanel() {
     setLoading(true)
     calcInFlight.current = true
     try {
+      const basePayload = {
+        system_specs: project.system_specs,
+        driver_params: buildParamsDict(project.blocks.driver),
+        mcu_params: buildParamsDict(project.blocks.mcu),
+        motor_specs: project.blocks.motor.specs || {},
+        passives_overrides: project.blocks.passives.overrides || {},
+        design_constants: project.design_constants || {},
+      }
+
+      // Run primary MOSFET calculation
       const result = await runCalculations({
+        ...basePayload,
+        mosfet_params: buildParamsDict(project.blocks.mosfet),
+      })
+      dispatch({ type: 'SET_CALCULATIONS', payload: result })
+
+      // Run comparison MOSFET calculation if mosfet_b is uploaded and has valid params
+      const mosfetB = project.blocks.mosfet_b
+      if (mosfetB?.status === 'done' && mosfetB?.raw_data?.parameters?.length > 0) {
+        try {
+          const resultB = await runCalculations({
+            ...basePayload,
+            mosfet_params: buildParamsDict(mosfetB),
+          })
+          setCompResults(resultB)
+        } catch (eB) {
+          console.warn('MOSFET B calculation failed:', eB.message)
+          setCompResults(null)
+        }
+      } else {
+        setCompResults(null)
+      }
+
+      if (warnings.length === 0) toast.success('Done!', { id: 'c' })
+    } catch (e) {
+      toast.error(e.message, { id: 'c' })
+    } finally { setLoading(false); calcInFlight.current = false }
+  }
+
+  // Quick score for comparison button
+  const quickScore = useMemo(() => quickVerdictScore(project.calculations, compResults), [project.calculations, compResults])
+  const nameA = project.blocks.mosfet?.raw_data?.component_name || 'Primary'
+  const nameB = project.blocks.mosfet_b?.raw_data?.component_name || 'Compare'
+
+  // Reverse calculation solver
+  async function solveReverse(key) {
+    const targetVal = reverseEditing[key]
+    if (targetVal === '' || targetVal === undefined) return
+    setReverseLoading(p => ({ ...p, [key]: true }))
+    try {
+      const result = await runReverseCalculation({
         system_specs: project.system_specs,
         mosfet_params: buildParamsDict(project.blocks.mosfet),
         driver_params: buildParamsDict(project.blocks.driver),
         mcu_params: buildParamsDict(project.blocks.mcu),
         motor_specs: project.blocks.motor.specs || {},
         passives_overrides: project.blocks.passives.overrides || {},
+        design_constants: project.design_constants || {},
+        targets: { [key]: parseFloat(targetVal) },
       })
-      dispatch({ type: 'SET_CALCULATIONS', payload: result })
-      if (warnings.length === 0) toast.success('Done!', { id: 'c' })
+      if (result[key]) {
+        setReverseResults(p => ({ ...p, [key]: result[key] }))
+      }
     } catch (e) {
-      toast.error(e.message, { id: 'c' })
-    } finally { setLoading(false); calcInFlight.current = false }
+      toast.error(`Reverse calc failed: ${e.message}`)
+    } finally {
+      setReverseLoading(p => ({ ...p, [key]: false }))
+    }
   }
 
   const C = project.calculations
@@ -352,6 +461,15 @@ export default function CalculationsPanel() {
           )}
         </div>
 
+        {/* ── MOSFET Comparison Button (when comparing) ──────────── */}
+        {C && compResults && quickScore && (
+          <button className="btn comp-results-btn" onClick={() => setShowComparison(true)}>
+            <Scale size={13} />
+            <span>Compare: {nameA} vs {nameB}</span>
+            <span className="comp-results-btn-badge">{quickScore.a}–{quickScore.t}–{quickScore.b}</span>
+          </button>
+        )}
+
         {/* ── Transparency Panel (below run button) ───────────── */}
         {C && renderTransparency()}
 
@@ -374,6 +492,77 @@ export default function CalculationsPanel() {
             ))}
           </div>
         )}
+
+        {/* ── Cross-Datasheet Validation ──────────────────────── */}
+        {C?.cross_validation && (() => {
+          const cv = C.cross_validation
+          const sm = cv.summary || {}
+          const isOpen = open.cross_validation !== false
+          const statusColors = { pass: 'var(--green)', warn: 'var(--amber)', fail: 'var(--red)', skip: 'var(--txt-4)' }
+          const statusIcons = { pass: '\u2713', warn: '!', fail: '\u2717', skip: '\u2013' }
+          const scorePct = sm.health_score
+          const scoreColor = scorePct == null ? 'var(--txt-4)' : scorePct >= 80 ? 'var(--green)' : scorePct >= 50 ? 'var(--amber)' : 'var(--red)'
+          return (
+            <div style={{ border: `1px solid ${sm.fail > 0 ? 'rgba(255,68,68,.35)' : sm.warn > 0 ? 'rgba(255,171,0,.3)' : 'var(--border-1)'}`, borderRadius: 7 }}>
+              <button
+                className={`collapsible-trigger ${isOpen ? 'open' : ''}`}
+                onClick={() => toggle('cross_validation')}
+                style={{ borderRadius: isOpen ? '7px 7px 0 0' : 7 }}
+              >
+                <span>{'\u{1F50D}'}</span>
+                <span>Cross-Datasheet Validation</span>
+                {scorePct != null && (
+                  <span style={{
+                    marginLeft: 6, fontSize: 10, fontWeight: 700, color: scoreColor,
+                    background: `${scoreColor}15`, padding: '1px 6px', borderRadius: 3, fontFamily: 'var(--font-mono)',
+                  }}>
+                    {scorePct}/100
+                  </span>
+                )}
+                {sm.fail > 0 && <span style={{ fontSize: 9, color: 'var(--red)', fontWeight: 700, marginLeft: 4 }}>{sm.fail} FAIL</span>}
+                {sm.warn > 0 && <span style={{ fontSize: 9, color: 'var(--amber)', fontWeight: 700, marginLeft: 4 }}>{sm.warn} WARN</span>}
+                <span className="chevron"><ChevronDown size={11} /></span>
+              </button>
+              {isOpen && (
+                <div style={{ padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {/* Summary bar */}
+                  <div style={{ display: 'flex', gap: 10, fontSize: 10, color: 'var(--txt-3)', marginBottom: 4, padding: '4px 0', borderBottom: '1px solid var(--border-1)' }}>
+                    <span style={{ color: 'var(--green)' }}>{sm.pass || 0} pass</span>
+                    <span style={{ color: 'var(--amber)' }}>{sm.warn || 0} warn</span>
+                    <span style={{ color: 'var(--red)' }}>{sm.fail || 0} fail</span>
+                    <span style={{ color: 'var(--txt-4)' }}>{sm.skip || 0} skip</span>
+                    <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{sm.total || 0} checks</span>
+                  </div>
+                  {(cv.checks || []).map((chk, i) => (
+                    <div key={chk.id || i} style={{
+                      display: 'flex', gap: 6, padding: '4px 6px', borderRadius: 5,
+                      background: chk.status === 'fail' ? 'rgba(255,68,68,.06)' : chk.status === 'warn' ? 'rgba(255,171,0,.05)' : 'transparent',
+                      alignItems: 'flex-start', fontSize: 10,
+                    }}>
+                      <span style={{
+                        width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 9, fontWeight: 700, flexShrink: 0, marginTop: 1,
+                        color: statusColors[chk.status], border: `1.5px solid ${statusColors[chk.status]}`,
+                        background: `${statusColors[chk.status]}12`,
+                      }}>
+                        {statusIcons[chk.status]}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, color: 'var(--txt-1)', fontSize: 11 }}>{chk.title}</div>
+                        <div style={{ color: 'var(--txt-3)', lineHeight: 1.5 }}>{chk.detail}</div>
+                        {chk.advice && (
+                          <div style={{ color: statusColors[chk.status], fontSize: 9, marginTop: 2, fontStyle: 'italic' }}>
+                            {chk.advice}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* ── Results sections ─────────────────────────────────── */}
         {C && SECTIONS.map(sec => {
@@ -429,16 +618,107 @@ export default function CalculationsPanel() {
                     const tc = (wrn !== undefined || dng !== undefined) ? thresholdClass(v, wrn, dng) : ''
                     const tip = buildRowTip(r, tc, sec.key)
 
+                    // Inline comparison annotation
+                    const compV = compResults?.[sec.key]?.[r.key]
+                    const showComp = compV != null && MOSFET_DEPENDENT_SECTIONS.has(sec.key) && typeof compV === 'number'
+                    const compDelta = showComp && v !== 0 ? ((compV - v) / Math.abs(v) * 100) : 0
+                    const compDir = METRIC_DIRS[r.key]
+                    const compBetter = compDir ? (compDir === 'lower' ? compV < v : compDir === 'higher' ? compV > v : null) : null
+
+                    // Reverse calculation state
+                    const isReversible = REVERSIBLE_KEYS.has(r.key)
+                    const isEditing = reverseEditing[r.key] !== undefined
+                    const revResult = reverseResults[r.key]
+                    const revLoading = reverseLoading[r.key]
+
                     return (
-                      <div key={r.key} className="calc-row" data-tip={tip}>
-                        <span className="label">
-                          {rowIndicator && <span className={`row-indicator row-indicator-${rowIndicator}`} />}
-                          {r.label}
-                        </span>
-                        <span className={`value ${tc}`}>
-                          {fmtNum(v, r.dec ?? 3)}{r.unit ? ` ${r.unit}` : ''}
-                          {tc === 'danger' && <AlertTriangle size={9} style={{ marginLeft: 3 }} />}
-                        </span>
+                      <div key={r.key}>
+                        <div className={`calc-row ${isReversible ? 'calc-row-reversible' : ''}`} data-tip={tip}>
+                          <span className="label">
+                            {rowIndicator && <span className={`row-indicator row-indicator-${rowIndicator}`} />}
+                            {r.label}
+                          </span>
+                          <div className="calc-row-values">
+                            {isEditing ? (
+                              <div className="reverse-input-row">
+                                <input
+                                  type="number" step="any"
+                                  className="inp inp-mono reverse-input"
+                                  value={reverseEditing[r.key]}
+                                  onChange={e => setReverseEditing(p => ({ ...p, [r.key]: e.target.value }))}
+                                  onKeyDown={e => { if (e.key === 'Enter') solveReverse(r.key); if (e.key === 'Escape') setReverseEditing(p => { const n = { ...p }; delete n[r.key]; return n }) }}
+                                  autoFocus
+                                  placeholder={fmtNum(v, r.dec ?? 3)}
+                                />
+                                <span className="reverse-input-unit">{r.unit || ''}</span>
+                                <button
+                                  className="btn btn-ghost reverse-solve-btn"
+                                  onClick={() => solveReverse(r.key)}
+                                  disabled={revLoading || !reverseEditing[r.key]}
+                                  title="Solve reverse"
+                                >
+                                  {revLoading ? <RefreshCw size={9} style={{ animation: 'spin 1s linear infinite' }} /> : <CornerDownLeft size={9} />}
+                                  <span>Solve</span>
+                                </button>
+                                <button
+                                  className="btn btn-ghost reverse-cancel-btn"
+                                  onClick={() => { setReverseEditing(p => { const n = { ...p }; delete n[r.key]; return n }); setReverseResults(p => { const n = { ...p }; delete n[r.key]; return n }) }}
+                                  title="Cancel"
+                                >
+                                  <X size={9} />
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <span className={`value ${tc}`}>
+                                  {fmtNum(v, r.dec ?? 3)}{r.unit ? ` ${r.unit}` : ''}
+                                  {tc === 'danger' && <AlertTriangle size={9} style={{ marginLeft: 3 }} />}
+                                </span>
+                                {isReversible && (
+                                  <button
+                                    className="reverse-trigger"
+                                    onClick={() => setReverseEditing(p => ({ ...p, [r.key]: '' }))}
+                                    title="Set target value (reverse calculate)"
+                                  >
+                                    <Pencil size={8} />
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            {showComp && compV !== v && !isEditing && (
+                              <span className={`comp-inline ${compBetter === true ? 'better' : compBetter === false ? 'worse' : 'neutral'}`}
+                                    title={`${project.blocks.mosfet_b?.raw_data?.component_name || 'MOSFET B'}: ${fmtNum(compV, r.dec ?? 3)}${r.unit ? ' ' + r.unit : ''}`}>
+                                {compDelta > 0 ? <ArrowUpRight size={8} /> : <ArrowDownRight size={8} />}
+                                <span>{fmtNum(compV, r.dec ?? 3)}</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        {/* Reverse result card */}
+                        {revResult && (
+                          <div className={`reverse-result ${revResult.feasible ? 'feasible' : 'infeasible'}`}>
+                            <div className="reverse-result-header">
+                              <span className={`reverse-result-badge ${revResult.feasible ? 'feasible' : 'infeasible'}`}>
+                                {revResult.feasible ? '✓' : '✗'}
+                              </span>
+                              <span className="reverse-result-label">
+                                Set <strong>{revResult.solved_key?.replace(/_/g, ' ')}</strong> = <strong>{revResult.solved_value} {revResult.solved_unit}</strong>
+                              </span>
+                            </div>
+                            <div className="reverse-result-detail">
+                              <span>Achieves: {revResult.actual_output} {revResult.actual_output_unit}</span>
+                              {revResult.ideal_value !== revResult.solved_value && (
+                                <span className="reverse-result-snap">E-series: {revResult.ideal_value} → {revResult.solved_value} {revResult.solved_unit}</span>
+                              )}
+                            </div>
+                            {revResult.constraint && (
+                              <div className="reverse-result-constraint">{revResult.constraint}</div>
+                            )}
+                            {revResult.note && (
+                              <div className="reverse-result-note">{revResult.note}</div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -471,6 +751,38 @@ export default function CalculationsPanel() {
       </div>
 
       {/* ── Grid Viewer Modal ─────────────────────────────────── */}
+      {/* ── Comparison Slide-out Panel ───────────────────────── */}
+      {showComparison && C && compResults && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex' }}>
+          <div style={{ flex: 1, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }} onClick={() => setShowComparison(false)} />
+          <div style={{
+            width: '85%', maxWidth: 1000, background: 'var(--bg-1)',
+            borderLeft: '1px solid var(--border-3)',
+            boxShadow: '-10px 0 30px rgba(0,0,0,0.5)',
+            display: 'flex', flexDirection: 'column',
+            animation: 'slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
+          }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Scale size={18} style={{ color: 'var(--cyan)' }} />
+                <h2 style={{ margin: 0, fontSize: 18, color: 'var(--txt-1)' }}>MOSFET Comparison</h2>
+                <span style={{ fontSize: 12, color: 'var(--txt-3)' }}>{nameA} vs {nameB}</span>
+              </div>
+              <button className="btn btn-ghost btn-icon" onClick={() => setShowComparison(false)}><X size={20} /></button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+              <ComparisonCard
+                resultsA={C}
+                resultsB={compResults}
+                nameA={nameA}
+                nameB={nameB}
+                iMax={project.system_specs.max_phase_current}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {showGrid && C && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex' }}>
           <div style={{ flex: 1, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }} onClick={() => setShowGrid(false)} />
@@ -641,6 +953,8 @@ const SECTIONS = [
       { key: 'tj_max_rated_c', label: 'Tj max rated', unit: '°C', dec: 0, explain: 'Absolute maximum junction temp from MOSFET datasheet' },
       { key: 'thermal_margin_c', label: 'Thermal margin', unit: '°C', dec: 1, warn: 30, danger: 0, explain: 'Tj_max_rated - Tj_estimated' },
       { key: 'p_per_fet_w', label: 'P / FET', unit: 'W', dec: 3, explain: 'Total power dissipation per individual switch' },
+      { key: 'motor_copper_loss_w', label: 'Motor Cu loss', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — motor winding copper loss (requires Rph in Motor tab)' },
+      { key: 'system_total_loss_w', label: 'System total', unit: 'W', dec: 1, explain: 'MOSFET losses (×6) + motor copper loss — full system power budget' },
       { key: 'copper_area_per_fet_mm2', label: 'Cu area / FET', unit: 'mm²', dec: 0, explain: 'IPC-2152 estimate for required 3oz copper area to maintain steady state' },
     ],
   },

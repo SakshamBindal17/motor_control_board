@@ -1,21 +1,35 @@
 import React, { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, RefreshCw, CheckCircle, AlertCircle, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
+import { Upload, RefreshCw, CheckCircle, AlertCircle, ChevronDown, ChevronRight, AlertTriangle, X, Plus } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject } from '../context/ProjectContext.jsx'
 import { extractDatasheet } from '../api.js'
+import { PARAM_LABELS } from '../constants.js'
 import ParameterTable from './ParameterTable.jsx'
 import CalculationsPanel from './CalculationsPanel.jsx'
 import UnitPicker from './UnitPicker.jsx'
+
+// Config for the second MOSFET (comparison)
+const MOSFET_B_CONFIG = {
+  key: 'mosfet_b',
+  label: 'MOSFET B',
+  fullLabel: 'MOSFET B (Compare)',
+  icon: '🔋',
+  color: '#ff8844',
+  type: 'upload',
+  extractionType: 'mosfet',
+  desc: 'Second MOSFET for side-by-side comparison',
+}
 
 // ── ESSENTIAL PARAMS ────────────────────────────────────────────────────────
 // These are required for calculations and board design.
 // If Claude fails to extract any of these they appear in the Missing Params
 // section so the user can enter them manually.
 const EXPECTED_PARAMS = {
-  // 17 essential MOSFET params — cover all switching, thermal, and gate-charge calcs
+  // 21 essential MOSFET params — cover all switching, thermal, gate-charge, and snubber calcs
   mosfet: [
     'vds_max',        // absolute max voltage rating
+    'vgs_max',        // max gate voltage → Vdrv safety validation
     'id_cont',        // continuous current rating
     'rds_on',         // conduction loss
     'vgs_th',         // gate drive headroom (Vdrv - Vth)
@@ -23,23 +37,25 @@ const EXPECTED_PARAMS = {
     'qgd',            // Miller charge (gate resistor calc)
     'qgs',            // gate-source charge
     'qrr',            // reverse recovery loss
-    'trr',            // reverse recovery time
+    'trr',            // reverse recovery time → dead-time trr check
     'coss',           // output capacitance (snubber design)
+    'qoss',           // output charge → snubber energy validation & Coss loss
     'td_on',          // switching timing
     'tr',             // rise time (switching loss)
     'td_off',         // turn-off delay (dead-time minimum)
     'tf',             // fall time (switching loss)
     'rth_jc',         // thermal: junction temperature estimate
     'tj_max',         // thermal: margin check
-    'body_diode_vf',  // body diode forward drop
+    'body_diode_vf',  // body diode forward drop → dead-time conduction loss
+    'rg_int',         // internal gate resistance → Rg_ext calculation
     'ciss',           // input capacitance (for gate resistor Qg fallback)
   ],
-  // 15 essential Gate Driver params — supply, drive current, timing, logic thresholds
+  // 17 essential Gate Driver params — supply, drive current, timing, logic thresholds, thermal
   driver: [
     'vcc_range',       // supply voltage range
     'vcc_uvlo',        // under-voltage lockout (supply)
     'vbs_max',         // max bootstrap voltage
-    'vbs_uvlo',        // bootstrap UVLO
+    'vbs_uvlo',        // bootstrap UVLO → bootstrap margin check
     'io_source',       // peak source current → Rg_on calculation
     'io_sink',         // peak sink current → Rg_off calculation
     'prop_delay_on',   // turn-on propagation delay → dead-time calc
@@ -48,16 +64,19 @@ const EXPECTED_PARAMS = {
     'deadtime_default',// default/fixed dead time (if present)
     'vil',             // logic low threshold
     'vih',             // logic high threshold
-    'rth_ja',          // thermal resistance
-    'tj_max',          // max junction temperature
+    'rth_ja',          // thermal resistance → driver thermal analysis
+    'tj_max',          // max junction temperature → driver thermal check
     'current_sense_gain', // used for shunt resistor sizing
+    'rise_time_out',   // driver output rise time → gate drive dV/dt
+    'fall_time_out',   // driver output fall time → dead-time budget
   ],
-  // 10 essential MCU params — the ones that feed into dead-time and ADC calculations
+  // 11 essential MCU params — dead-time, ADC, and protection calculations
   mcu: [
     'cpu_freq_max',        // max CPU clock
     'adc_resolution',      // ADC bits → shunt SNR (bits_used calc)
     'adc_channels',        // number of ADC inputs
     'adc_sample_rate',     // ADC conversion speed
+    'adc_ref',             // ADC reference voltage → protection dividers & shunt sizing
     'pwm_timers',          // advanced-control timer count
     'pwm_resolution',      // PWM counter width (bits)
     'pwm_deadtime_res',    // dead-time LSB → dt_register = dt_ns / resolution
@@ -85,11 +104,15 @@ export const CALC_CRITICAL = {
     "tf",             // switching loss
     "td_off",         // dead time minimum
     "coss",           // snubber design
+    "qoss",           // snubber energy validation & Coss loss
     "qrr",            // reverse recovery loss
+    "trr",            // dead-time vs reverse recovery check
     "rth_jc",         // thermal → Tj estimate
     "tj_max",         // thermal margin check
     "vgs_th",         // gate resistor (Vdrv - Vth drive headroom)
-    "ciss",           // gate resistor (alternative Qg path)
+    "vgs_max",        // gate drive voltage safety validation
+    "rg_int",         // internal gate R → Rg_ext = Rg_total - Rg_int
+    "body_diode_vf",  // dead-time body diode conduction loss
   ]),
   driver: new Set([
     "io_source",      // Rg_on calculation
@@ -97,66 +120,39 @@ export const CALC_CRITICAL = {
     "prop_delay_on",  // dead time: dt_min = td_off + tf + prop_delay_off + margin
     "prop_delay_off", // dead time
     "current_sense_gain", // shunt resistor sizing (V_ADC = Ishunt × Rshunt × gain)
+    "rise_time_out",  // gate drive dV/dt & dead-time budget
+    "fall_time_out",  // dead-time budget (driver output fall adds to turn-off)
+    "rth_ja",         // driver IC thermal analysis
+    "tj_max",         // driver thermal margin check
+    "vbs_uvlo",       // bootstrap voltage margin validation
   ]),
   mcu: new Set([
     "pwm_deadtime_res",  // dead time register calculation (dt_reg = dt_ns / resolution)
     "pwm_deadtime_max",  // dead time feasibility check
     "adc_resolution",    // shunt ADC SNR / bits-used calculation
+    "adc_ref",           // ADC reference voltage → protection dividers & shunt sizing
   ]),
-}
-
-const PARAM_LABELS = {
-  // ── MOSFET essential ────────────────────────────────────────────────────
-  vds_max: 'Max Drain-Source Voltage', id_cont: 'Continuous Drain Current',
-  rds_on: 'On-Resistance', vgs_th: 'Gate Threshold Voltage',
-  qg: 'Total Gate Charge', qgd: 'Gate-Drain (Miller) Charge',
-  qgs: 'Gate-Source Charge', qrr: 'Reverse Recovery Charge',
-  trr: 'Reverse Recovery Time', coss: 'Output Capacitance',
-  td_on: 'Turn-On Delay Time', tr: 'Rise Time',
-  td_off: 'Turn-Off Delay Time', tf: 'Fall Time',
-  rth_jc: 'Thermal Resistance (J-C)', tj_max: 'Max Junction Temperature',
-  body_diode_vf: 'Body Diode Forward Voltage',
-  // ── MOSFET good-to-have ─────────────────────────────────────────────────
-  vgs_max: 'Max Gate-Source Voltage', id_pulsed: 'Pulsed Drain Current',
-  ciss: 'Input Capacitance', crss: 'Reverse Transfer Capacitance',
-  avalanche_energy: 'Avalanche Energy', rg_int: 'Internal Gate Resistance',
-  vgs_plateau: 'Gate Plateau Voltage', qoss: 'Output Charge (Qoss)',
-  // ── Gate Driver essential ────────────────────────────────────────────────
-  vcc_range: 'VCC Supply Voltage Range', vcc_uvlo: 'VCC UVLO',
-  vbs_max: 'Max Bootstrap Voltage', vbs_uvlo: 'Bootstrap UVLO',
-  io_source: 'Peak Source Current', io_sink: 'Peak Sink Current',
-  prop_delay_on: 'Prop Delay (Turn-On)', prop_delay_off: 'Prop Delay (Turn-Off)',
-  deadtime_min: 'Minimum Dead Time', deadtime_default: 'Default Dead Time',
-  vil: 'Input Logic Low (VIL)', vih: 'Input Logic High (VIH)',
-  rth_ja: 'Thermal Resistance (J-A)',
-  // ── Gate Driver good-to-have ─────────────────────────────────────────────
-  ocp_threshold: 'OCP Threshold', ocp_response: 'OCP Blanking Time',
-  thermal_shutdown: 'Thermal Shutdown Temp',
-  current_sense_gain: 'Current Sense Amplifier Gain',
-  rise_time_out: 'Driver Output Rise Time',
-  fall_time_out: 'Driver Output Fall Time',
-  // ── MCU essential ────────────────────────────────────────────────────────
-  cpu_freq_max: 'Max CPU Frequency',
-  adc_resolution: 'ADC Resolution', adc_channels: 'ADC Channels',
-  adc_sample_rate: 'ADC Sample Rate', pwm_timers: 'Advanced PWM Timers',
-  pwm_resolution: 'PWM Timer Resolution',
-  pwm_deadtime_res: 'Dead-Time Generator Resolution',
-  pwm_deadtime_max: 'Max Programmable Dead Time',
-  complementary_outputs: 'Complementary Output Pairs',
-  vdd_range: 'VDD Voltage Range',
-  // ── MCU good-to-have ────────────────────────────────────────────────────
-  flash_size: 'Flash Memory Size', ram_size: 'RAM / SRAM Size',
-  spi_count: 'SPI Interfaces', uart_count: 'UART / USART Interfaces',
-  idd_run: 'Run Mode Current', temp_range: 'Operating Temperature Range',
-  gpio_count: 'Total GPIO Count', encoder_interface: 'Encoder / Hall Interface',
-  can_count: 'CAN Bus Interfaces', dma_channels: 'DMA Channels',
 }
 
 export default function BlockPanel({ blockKey, config }) {
   const { state, dispatch } = useProject()
-  const blockState = state.project.blocks[blockKey]
   const { settings } = state
   const [collapsed, setCollapsed] = useState({})
+  const [mosfetTab, setMosfetTab] = useState('primary')
+
+  // ── MOSFET comparison tab logic ─────────────────────────────────────
+  const isMosfet = blockKey === 'mosfet'
+  const hasCompare = isMosfet && state.project.blocks.mosfet_b != null
+
+  // If compare was removed while on compare tab, snap back to primary
+  const effectiveTab = (mosfetTab === 'compare' && !hasCompare) ? 'primary' : mosfetTab
+
+  // Determine effective block/config for the active tab
+  const activeBlockKey = (isMosfet && effectiveTab === 'compare' && hasCompare) ? 'mosfet_b' : blockKey
+  const activeConfig = (activeBlockKey === 'mosfet_b') ? MOSFET_B_CONFIG : config
+
+  const blockState = state.project.blocks[activeBlockKey]
+  if (!blockState) return null // safety for null mosfet_b
 
   async function doExtract(file) {
     if (!settings.api_key) {
@@ -164,23 +160,24 @@ export default function BlockPanel({ blockKey, config }) {
       dispatch({ type: 'TOGGLE_SETTINGS' })
       return
     }
-    dispatch({ type: 'SET_BLOCK_STATUS', payload: { block: blockKey, status: 'uploading' } })
+    dispatch({ type: 'SET_BLOCK_STATUS', payload: { block: activeBlockKey, status: 'uploading' } })
     toast.loading(`Uploading ${file.name}…`, { id: 'ex' })
     try {
-      dispatch({ type: 'SET_BLOCK_STATUS', payload: { block: blockKey, status: 'extracting' } })
+      dispatch({ type: 'SET_BLOCK_STATUS', payload: { block: activeBlockKey, status: 'extracting' } })
       toast.loading('Claude is reading the datasheet…', { id: 'ex' })
-      // FIX: use blockKey directly (not config.extractionType) to avoid stale closure
-      const data = await extractDatasheet(blockKey, file, settings.api_key)
-      dispatch({ type: 'SET_BLOCK_DATA', payload: { block: blockKey, filename: file.name, raw_data: data } })
+      // Use extractionType for API call (mosfet_b → 'mosfet'), activeBlockKey for dispatch
+      const extractionType = activeConfig.extractionType || activeBlockKey
+      const data = await extractDatasheet(extractionType, file, settings.api_key)
+      dispatch({ type: 'SET_BLOCK_DATA', payload: { block: activeBlockKey, filename: file.name, raw_data: data } })
       const cacheNote = data._from_cache ? ' (from cache)' : ''
       toast.success(`Extracted ${data.parameters?.length || 0} parameters — ${data.component_name}${cacheNote}`, { id: 'ex', duration: 5000 })
     } catch (err) {
-      dispatch({ type: 'SET_BLOCK_STATUS', payload: { block: blockKey, status: 'error', error: err.message } })
+      dispatch({ type: 'SET_BLOCK_STATUS', payload: { block: activeBlockKey, status: 'error', error: err.message } })
       toast.error(err.message, { id: 'ex' })
     }
   }
 
-  const onDrop = useCallback(files => { if (files[0]) doExtract(files[0]) }, [blockKey, settings])
+  const onDrop = useCallback(files => { if (files[0]) doExtract(files[0]) }, [doExtract])
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop, accept: { 'application/pdf': ['.pdf'] }, multiple: false,
   })
@@ -195,9 +192,10 @@ export default function BlockPanel({ blockKey, config }) {
     groups[cat].push(p)
   }
 
-  // Detect missing expected params
+  // Detect missing expected params (mosfet_b uses same expected params as mosfet)
   const extractedIds = new Set((raw_data?.parameters || []).map(p => p.id))
-  const expectedIds = EXPECTED_PARAMS[blockKey] || []
+  const paramsLookupKey = activeBlockKey === 'mosfet_b' ? 'mosfet' : activeBlockKey
+  const expectedIds = EXPECTED_PARAMS[paramsLookupKey] || []
   const missingIds = expectedIds.filter(id => !extractedIds.has(id))
 
   // Count multi-condition params per category (for closed-header badge)
@@ -210,30 +208,83 @@ export default function BlockPanel({ blockKey, config }) {
       {/* ─── Left: Upload + params ─────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0, overflowY: 'auto', paddingRight: 4 }}>
 
+        {/* ── MOSFET comparison tab bar ────────────────────────────── */}
+        {isMosfet && (
+          <div className="mosfet-tab-bar">
+            <button
+              className={`mosfet-tab ${effectiveTab === 'primary' ? 'active' : ''}`}
+              onClick={() => setMosfetTab('primary')}
+            >
+              <span className="mosfet-tab-icon">🔋</span>
+              <span>Primary</span>
+              {state.project.blocks.mosfet?.raw_data?.component_name && (
+                <span className="mosfet-tab-chip">{state.project.blocks.mosfet.raw_data.component_name}</span>
+              )}
+              {state.project.blocks.mosfet?.status === 'done' && <span className="mosfet-tab-dot done" />}
+            </button>
+
+            {hasCompare ? (
+              <button
+                className={`mosfet-tab ${effectiveTab === 'compare' ? 'active' : ''}`}
+                onClick={() => setMosfetTab('compare')}
+              >
+                <span className="mosfet-tab-icon">🔋</span>
+                <span>Compare</span>
+                {state.project.blocks.mosfet_b?.raw_data?.component_name && (
+                  <span className="mosfet-tab-chip compare">{state.project.blocks.mosfet_b.raw_data.component_name}</span>
+                )}
+                {state.project.blocks.mosfet_b?.status === 'done' && <span className="mosfet-tab-dot done" />}
+                <span
+                  className="mosfet-tab-remove"
+                  onClick={e => {
+                    e.stopPropagation()
+                    dispatch({ type: 'REMOVE_MOSFET_B' })
+                    setMosfetTab('primary')
+                  }}
+                  title="Remove comparison MOSFET"
+                >
+                  <X size={10} />
+                </span>
+              </button>
+            ) : (
+              <button
+                className="mosfet-tab add-tab"
+                onClick={() => {
+                  dispatch({ type: 'ADD_MOSFET_B' })
+                  setMosfetTab('compare')
+                }}
+              >
+                <Plus size={12} />
+                <span>Compare MOSFET</span>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Block info card */}
         <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
             width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-            background: `${config.color}18`,
-            border: `1px solid ${config.color}35`,
+            background: `${activeConfig.color}18`,
+            border: `1px solid ${activeConfig.color}35`,
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
-          }}>{config.icon}</div>
+          }}>{activeConfig.icon}</div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>{config.fullLabel}</span>
-              <StatusChip status={status} color={config.color} />
+              <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>{activeConfig.fullLabel}</span>
+              <StatusChip status={status} color={activeConfig.color} />
               {raw_data?.component_name && (
                 <span style={{
                   fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
-                  color: config.color, background: `${config.color}15`,
+                  color: activeConfig.color, background: `${activeConfig.color}15`,
                   padding: '1px 8px', borderRadius: 4,
                 }}>
                   {raw_data.component_name}
                 </span>
               )}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 2 }}>{config.desc}</div>
+            <div style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 2 }}>{activeConfig.desc}</div>
             {raw_data?.manufacturer && (
               <div style={{ fontSize: 11, color: 'var(--txt-2)', marginTop: 1 }}>
                 {raw_data.manufacturer}
@@ -245,7 +296,7 @@ export default function BlockPanel({ blockKey, config }) {
 
           {status === 'done' && (
             <button
-              onClick={() => dispatch({ type: 'RESET_BLOCK', payload: blockKey })}
+              onClick={() => dispatch({ type: 'RESET_BLOCK', payload: activeBlockKey })}
               className="btn btn-ghost"
               style={{ fontSize: 12, flexShrink: 0 }}
             >
@@ -264,15 +315,15 @@ export default function BlockPanel({ blockKey, config }) {
             <input {...getInputProps()} />
             <div style={{
               width: 60, height: 60, borderRadius: 16,
-              background: `${config.color}15`,
-              border: `1px solid ${config.color}30`,
+              background: `${activeConfig.color}15`,
+              border: `1px solid ${activeConfig.color}30`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <Upload size={26} style={{ color: config.color }} />
+              <Upload size={26} style={{ color: activeConfig.color }} />
             </div>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--txt-1)', marginBottom: 4 }}>
-                {isDragActive ? 'Drop PDF here' : `Upload ${config.fullLabel} Datasheet`}
+                {isDragActive ? 'Drop PDF here' : `Upload ${activeConfig.fullLabel} Datasheet`}
               </div>
               <div style={{ fontSize: 12, color: 'var(--txt-3)' }}>
                 PDF only · Claude Haiku extracts all parameters with test conditions
@@ -290,8 +341,8 @@ export default function BlockPanel({ blockKey, config }) {
           <div className="card" style={{ padding: '40px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
             <div style={{
               width: 60, height: 60, borderRadius: 16,
-              background: `${config.color}15`,
-              border: `1px solid ${config.color}30`,
+              background: `${activeConfig.color}15`,
+              border: `1px solid ${activeConfig.color}30`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               animation: 'pulse-dot 1.4s infinite',
             }}>
@@ -317,15 +368,15 @@ export default function BlockPanel({ blockKey, config }) {
             <div className="sec-head">
               <CheckCircle size={13} style={{ color: 'var(--green)' }} />
               Extracted Parameters
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: config.color, marginLeft: 4 }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: activeConfig.color, marginLeft: 4 }}>
                 {raw_data.parameters?.length || 0}
               </span>
             </div>
 
             <div style={{ flex: 1, overflow: 'auto' }}>
               {(() => {
-                const essentialSet = ESSENTIAL_PARAMS[blockKey] || new Set()
-                const calcCritSet = CALC_CRITICAL[blockKey] || new Set()
+                const essentialSet = ESSENTIAL_PARAMS[paramsLookupKey] || new Set()
+                const calcCritSet = CALC_CRITICAL[paramsLookupKey] || new Set()
 
                 // Partition ALL extracted params into essential vs good-to-have
                 const allParams = raw_data.parameters || []
@@ -376,7 +427,7 @@ export default function BlockPanel({ blockKey, config }) {
                       </button>
                       {catOpen && (
                         <div className="table-wrap">
-                          <ParameterTable params={params} blockKey={blockKey} color={config.color}
+                          <ParameterTable params={params} blockKey={activeBlockKey} color={activeConfig.color}
                             calcCritical={isCrit ? calcCritSet : null} />
                         </div>
                       )}
@@ -457,8 +508,8 @@ export default function BlockPanel({ blockKey, config }) {
                     {(missingIds.length > 0 || (raw_data?.parameters || []).some(p => p.category === 'Manual Entry')) && (
                       <MissingParamsSection
                         missingIds={missingIds}
-                        blockKey={blockKey}
-                        color={config.color}
+                        blockKey={activeBlockKey}
+                        color={activeConfig.color}
                         collapsed={collapsed}
                         setCollapsed={setCollapsed}
                       />
@@ -505,7 +556,8 @@ function MissingParamsSection({ missingIds, blockKey, color, collapsed, setColla
   const stillMissing = missingIds.filter(id => !manualIds.has(id))
 
   // Split still-missing into calc-critical vs good-to-have
-  const critSet = CALC_CRITICAL[blockKey] || new Set()
+  const critLookup = blockKey === 'mosfet_b' ? 'mosfet' : blockKey
+  const critSet = CALC_CRITICAL[critLookup] || new Set()
   const missingCrit = stillMissing.filter(id => critSet.has(id))
   const missingGth = stillMissing.filter(id => !critSet.has(id))
 
