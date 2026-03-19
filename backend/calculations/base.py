@@ -1,0 +1,644 @@
+"""
+Motor Controller Hardware Design — Calculation Engine v2
+All passives calculations: gate resistors, capacitors, snubbers,
+protection dividers, shunts, thermal, dead time, bootstrap, EMI filter.
+"""
+import math
+from unit_utils import to_si
+
+# ─── E-series standard values ─────────────────────────────────────────────────
+E24 = [1.0,1.1,1.2,1.3,1.5,1.6,1.8,2.0,2.2,2.4,2.7,3.0,
+       3.3,3.6,3.9,4.3,4.7,5.1,5.6,6.2,6.8,7.5,8.2,9.1]
+E12 = [1.0,1.2,1.5,1.8,2.2,2.7,3.3,3.9,4.7,5.6,6.8,8.2]
+
+
+# ─── User-configurable design constants ──────────────────────────────────────
+# Each entry: (default, unit, category, label, description)
+# These are the ~28 most impactful constants engineers want to tweak.
+# The rest stay inline as they are standard values that rarely change.
+DESIGN_CONSTANTS = {
+    # Thermal
+    "thermal.rds_derating":    (1.5,  "x",    "Thermal",     "Rds(on) thermal derating",     "Worst-case multiplier at ~100°C junction"),
+    "thermal.rth_cs":          (0.5,  "°C/W", "Thermal",     "TIM resistance (case-to-PCB)", "Thermal interface material resistance"),
+    "thermal.rth_sa":          (20.0, "°C/W", "Thermal",     "PCB-to-ambient Rth",           "Natural convection, no heatsink"),
+    "thermal.safe_margin":     (30,   "°C",   "Thermal",     "Safe margin threshold",        "Minimum acceptable Tj headroom"),
+    "thermal.vias_per_fet":    (16,   "pcs",  "Thermal",     "Thermal vias per FET",         "0.3mm vias under thermal pad"),
+    # Gate Drive
+    "gate.rise_time_target":   (40,   "ns",   "Gate Drive",  "Rise time target",             "Default target for Rg_on sizing"),
+    "gate.rg_off_ratio":       (0.47, "x",    "Gate Drive",  "Rg_off ratio",                 "Rg_off as fraction of Rg_on (faster turn-off)"),
+    "gate.rg_bootstrap":       (10.0, "Ω",    "Gate Drive",  "Bootstrap series R",           "Limits bootstrap diode charging current"),
+    "gate.bootstrap_vf":       (1.0,  "V",    "Gate Drive",  "Bootstrap diode Vf",           "Default for integrated boot diode (~1V). Set to 0.5V if using external Schottky."),
+    # Bootstrap
+    "boot.min_cap":            (100,  "nF",   "Bootstrap",   "Min practical boot cap",       "Floor for bootstrap capacitor value"),
+    "boot.safety_margin":      (2.0,  "x",    "Bootstrap",   "Safety margin multiplier",     "Applied before E12 snap"),
+    "boot.leakage_ua":         (115,  "µA",   "Bootstrap",   "Leakage current budget",       "Gate 1µA + driver quiescent ~110µA + FET leakage ~4µA"),
+    # Input Capacitors
+    "input.spwm_mod_index":    (0.9,  "",     "Input Caps",  "SPWM modulation index",        "3-phase SPWM approx when Lph unavailable"),
+    "input.min_bulk_count":    (4,    "pcs",  "Input Caps",  "Min bulk cap count",           "Minimum parallel caps for ESR distribution"),
+    "input.bulk_cap_uf":       (100,  "µF",   "Input Caps",  "Bulk cap size",                "Standard electrolytic per-cap value"),
+    "input.esr_per_cap":       (50,   "mΩ",   "Input Caps",  "Typical ESR per cap",          "Electrolytic ESR estimate for thermal calc"),
+    # Protection
+    "prot.adc_ref":            (3.3,  "V",    "Protection",  "ADC reference voltage",        "MCU ADC full-scale reference"),
+    "prot.ovp_margin":         (1.05, "x",    "Protection",  "OVP trip margin",              "Multiplier above peak bus voltage"),
+    "prot.uvp_trip":           (0.75, "x",    "Protection",  "UVP trip threshold",           "Fraction of nominal bus voltage"),
+    "prot.ocp_hw":             (1.25, "x",    "Protection",  "OCP hardware threshold",       "Hardware overcurrent trip multiplier"),
+    "prot.ocp_sw":             (1.1,  "x",    "Protection",  "OCP software threshold",       "Software overcurrent limit multiplier"),
+    "prot.otp_warn":           (80,   "°C",   "Protection",  "OTP warning temp",             "Temperature at which to warn user"),
+    "prot.otp_shutdown":       (100,  "°C",   "Protection",  "OTP shutdown temp",            "Temperature at which to shut down"),
+    # Dead Time
+    "dt.abs_margin":           (20,   "ns",   "Dead Time",   "Absolute margin",              "Fixed safety margin added to minimum DT"),
+    "dt.safety_mult":          (1.5,  "x",    "Dead Time",   "Safety multiplier",            "Recommended margin over minimum DT"),
+    # Snubber
+    "snub.coss_mult":          (3,    "x",    "Snubber",     "Coss multiplier",              "Snubber cap = N × Coss for overdamped response"),
+    "snub.stray_l_default":    (10,   "nH",   "Snubber",     "Default stray inductance",     "Assumed PCB power loop inductance"),
+    # EMI Filter
+    "emi.cm_choke_uh":         (330,  "µH",   "EMI Filter",  "CM choke inductance",          "Common-mode choke baseline value"),
+}
+
+# ─── Reverse calculation map ──────────────────────────────────────────────────
+# Maps output keys → (module, label, unit, solved_key)
+REVERSE_MAP = {
+    "gate_rise_time_ns":     ("gate_resistors", "Rise time",     "ns",   "rg_on_recommended_ohm"),
+    "gate_fall_time_ns":     ("gate_resistors", "Fall time",     "ns",   "rg_off_recommended_ohm"),
+    "dv_dt_v_per_us":        ("gate_resistors", "dV/dt",         "V/µs", "rg_on_recommended_ohm"),
+    "c_boot_recommended_nf": ("bootstrap_cap",  "Boot cap",      "nF",   "bootstrap_droop_v"),
+    "min_hs_on_time_ns":     ("bootstrap_cap",  "Min on-time",   "ns",   "c_boot_recommended_nf"),
+    "v_adc_v":               ("shunt_resistors","ADC voltage",   "V",    "value_mohm"),
+    "dt_pct_of_period":      ("dead_time",      "DT duty loss",  "%",    "dt_actual_ns"),
+    "dt_actual_ns":          ("dead_time",      "Dead time",     "ns",   "dt_register_count"),
+    "voltage_overshoot_v":   ("snubber",        "V overshoot",   "V",    "cs_recommended_pf"),
+    "p_total_6_snubbers_w":  ("snubber",        "Snubber power", "W",    "cs_recommended_pf"),
+}
+
+
+def _nearest_e(value: float, series=E24) -> float:
+    if value <= 0: return 1.0
+    decade = 10 ** math.floor(math.log10(value))
+    norm = value / decade
+    for e in series:
+        if e >= norm:
+            return round(e * decade, 4)
+    # All series values < norm → snap to first value of NEXT decade
+    return round(series[0] * decade * 10, 4)
+
+
+def _get(params: dict, key: str, fallback=None, expected_unit: str = None):
+    """
+    Get value from flat params dict and convert to SI.
+
+    The frontend sends:
+      params[key]           = raw numeric value (in datasheet units, e.g. 1.5 for mΩ)
+      params[key + '__unit'] = unit string from datasheet (e.g. "mΩ")
+
+    If expected_unit is provided (e.g. "mΩ"), the value is assumed to already
+    be in that unit and is converted to SI automatically.
+    If __unit key is present, that overrides expected_unit.
+    """
+    val = params.get(key)
+    if val is None or val == "":
+        return fallback
+    try:
+        fval = float(val)
+    except (TypeError, ValueError):
+        return fallback
+
+    # Determine unit: prefer what frontend sent, fall back to expected_unit
+    unit = params.get(key + '__unit', expected_unit or '')
+    if unit:
+        return to_si(fval, unit)
+    return fval
+
+
+# ─── Main Engine ──────────────────────────────────────────────────────────────
+
+
+# Import mixins
+from calculations.mosfet import MosfetMixin
+from calculations.gate_drive import GateDriveMixin
+from calculations.passives import PassivesMixin
+from calculations.protection import ProtectionMixin
+from calculations.thermal import ThermalMixin
+from calculations.validation import ValidationMixin
+
+
+class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMixin, ThermalMixin, ValidationMixin):
+    def __init__(self, system_specs, mosfet_params, driver_params,
+                 mcu_params, motor_specs, overrides, design_constants=None):
+        self.sys      = system_specs
+        self.mosfet   = mosfet_params
+        self.driver   = driver_params
+        self.mcu      = mcu_params
+        self.motor    = motor_specs
+        self.ovr      = overrides or {}
+        self.design_constants = design_constants or {}
+        self.audit_log  = []
+        self._module_meta = {}  # {module_name: {"hardcoded": [...], "fallbacks": [...]}}
+        self._cached_results = {}  # cache for sub-calcs called by multiple modules
+
+        try:
+            self.v_bus      = float(system_specs.get("bus_voltage",      48))
+            self.v_peak     = float(system_specs.get("peak_voltage",     60))
+            self.power      = float(system_specs.get("power",          3000))
+            self.i_max      = float(system_specs.get("max_phase_current", 80))
+            self.fsw        = float(system_specs.get("pwm_freq_hz",   20000))
+            self.t_amb      = float(system_specs.get("ambient_temp_c",   30))
+            self.v_drv      = float(system_specs.get("gate_drive_voltage",12))
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Invalid numeric value in system specs: {e}")
+
+        # Validate critical system parameters
+        if self.fsw <= 0:
+            raise ValueError("PWM frequency (pwm_freq_hz) must be > 0 Hz")
+        if self.v_bus <= 0:
+            raise ValueError("Bus voltage (bus_voltage) must be > 0 V")
+        if self.i_max <= 0:
+            raise ValueError("Max phase current (max_phase_current) must be > 0 A")
+        if self.v_drv <= 0:
+            raise ValueError("Gate drive voltage (gate_drive_voltage) must be > 0 V")
+
+    def _dc(self, key: str) -> float:
+        """Get a design constant — user override if set, else default."""
+        if key in self.design_constants:
+            try:
+                return float(self.design_constants[key])
+            except (TypeError, ValueError):
+                pass
+        return float(DESIGN_CONSTANTS[key][0])
+
+    def _log_hc(self, module: str, name: str, value: str, reason: str, dc_key: str = None):
+        """Log a hardcoded constant used in a calculation module."""
+        if module not in self._module_meta:
+            self._module_meta[module] = {"hardcoded": [], "fallbacks": []}
+        if not any(h["name"] == name for h in self._module_meta[module]["hardcoded"]):
+            entry = {"name": name, "value": value, "reason": reason}
+            if dc_key and dc_key in self.design_constants:
+                entry["overridden"] = True
+                entry["user_value"] = str(self.design_constants[dc_key])
+            self._module_meta[module]["hardcoded"].append(entry)
+
+    def _get(self, params: dict, block_name: str, key: str, fallback=None, expected_unit: str = None):
+        val = params.get(key)
+        if val is None or val == "":
+            if fallback is not None:
+                self.audit_log.append(f"[{block_name}] Missing '{key}', using fallback {fallback}{expected_unit or ''}")
+                mod = getattr(self, '_current_module', block_name)
+                if mod not in self._module_meta:
+                    self._module_meta[mod] = {"hardcoded": [], "fallbacks": []}
+                if not any(f["param"] == key for f in self._module_meta[mod]["fallbacks"]):
+                    self._module_meta[mod]["fallbacks"].append({"param": key, "value": str(fallback), "block": block_name})
+            return fallback
+        try:
+            fval = float(val)
+        except (TypeError, ValueError):
+            if fallback is not None:
+                self.audit_log.append(f"[{block_name}] Invalid numeric value for '{key}', using fallback {fallback}{expected_unit or ''}")
+                mod = getattr(self, '_current_module', block_name)
+                if mod not in self._module_meta:
+                    self._module_meta[mod] = {"hardcoded": [], "fallbacks": []}
+                if not any(f["param"] == key for f in self._module_meta[mod]["fallbacks"]):
+                    self._module_meta[mod]["fallbacks"].append({"param": key, "value": str(fallback), "block": block_name})
+            return fallback
+
+        from unit_utils import to_si
+        unit = params.get(key + '__unit', expected_unit or '')
+        if unit:
+            return to_si(fval, unit)
+        return fval
+
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 1. MOSFET Losses
+    # ═══════════════════════════════════════════════════════════════════
+
+    # ═══════════════════════════════════════════════════════════════════
+
+    def reverse_calculate(self, targets: dict) -> dict:
+        """
+        Given target output values, compute what component values achieve them.
+        Each result is re-verified through the forward formula.
+        """
+        results = {}
+        for target_key, target_value in targets.items():
+            try:
+                target_value = float(target_value)
+            except (TypeError, ValueError):
+                continue
+            if target_key == 'gate_rise_time_ns':
+                results[target_key] = self._rev_gate_rise(target_value)
+            elif target_key == 'gate_fall_time_ns':
+                results[target_key] = self._rev_gate_fall(target_value)
+            elif target_key == 'dv_dt_v_per_us':
+                results[target_key] = self._rev_dv_dt(target_value)
+            elif target_key == 'c_boot_recommended_nf':
+                results[target_key] = self._rev_boot_cap(target_value)
+            elif target_key == 'min_hs_on_time_ns':
+                results[target_key] = self._rev_boot_on_time(target_value)
+            elif target_key == 'v_adc_v':
+                results[target_key] = self._rev_shunt_adc(target_value)
+            elif target_key == 'dt_pct_of_period':
+                results[target_key] = self._rev_dt_pct(target_value)
+            elif target_key == 'dt_actual_ns':
+                results[target_key] = self._rev_dt_actual(target_value)
+            elif target_key == 'voltage_overshoot_v':
+                results[target_key] = self._rev_snub_overshoot(target_value)
+            elif target_key == 'p_total_6_snubbers_w':
+                results[target_key] = self._rev_snub_power(target_value)
+        return results
+
+    # ── Gate Rise Time → Rg_on ─────────────────────────────────────
+    def _rev_gate_rise(self, target_ns: float) -> dict:
+        qg     = self._get(self.mosfet, "MOSFET", "qg",     92e-9)
+        vgs_th = self._get(self.mosfet, "MOSFET", "vgs_th",  3.0)
+        io_src = self._get(self.driver, "DRIVER", "io_source", 1.5)
+        vdrv   = self.v_drv
+        vdiff  = max(vdrv - vgs_th, 0.5)
+
+        # Inverse: Rg_on = t_rise × (Vdrv - Vth) / Qg
+        t_rise_s = target_ns * 1e-9
+        rg_ideal = t_rise_s * vdiff / qg
+        rg_min   = vdiff / io_src  # driver current constraint
+
+        feasible    = rg_ideal >= rg_min
+        rg_clamped  = max(rg_ideal, rg_min)
+        rg_std      = _nearest_e(rg_clamped)
+
+        # Forward verify: t_rise_actual = (Rg × Qg) / (Vdrv - Vth)
+        t_actual_ns = (rg_std * qg / vdiff) * 1e9
+
+        return {
+            "target_key": "gate_rise_time_ns",
+            "target_value": target_ns,
+            "solved_key": "rg_on_recommended_ohm",
+            "solved_value": rg_std,
+            "solved_unit": "\u03a9",
+            "ideal_value": round(rg_ideal, 3),
+            "actual_output": round(t_actual_ns, 1),
+            "actual_output_unit": "ns",
+            "feasible": feasible,
+            "constraint": f"Driver source current limits Rg_on \u2265 {round(rg_min, 2)}\u03a9" if not feasible else None,
+            "note": f"E24: {round(rg_ideal, 2)}\u03a9 \u2192 {rg_std}\u03a9 gives {round(t_actual_ns, 1)}ns actual",
+        }
+
+    # ── Gate Fall Time → Rg_off ────────────────────────────────────
+    def _rev_gate_fall(self, target_ns: float) -> dict:
+        qg     = self._get(self.mosfet, "MOSFET", "qg",    92e-9)
+        io_snk = self._get(self.driver, "DRIVER", "io_sink", 2.5)
+        vdrv   = self.v_drv
+
+        t_fall_s = target_ns * 1e-9
+        rg_ideal = t_fall_s * vdrv / qg
+        rg_min   = vdrv / io_snk
+
+        feasible    = rg_ideal >= rg_min
+        rg_clamped  = max(rg_ideal, rg_min)
+        rg_std      = _nearest_e(rg_clamped)
+
+        t_actual_ns = (rg_std * qg / vdrv) * 1e9
+
+        return {
+            "target_key": "gate_fall_time_ns",
+            "target_value": target_ns,
+            "solved_key": "rg_off_recommended_ohm",
+            "solved_value": rg_std,
+            "solved_unit": "\u03a9",
+            "ideal_value": round(rg_ideal, 3),
+            "actual_output": round(t_actual_ns, 1),
+            "actual_output_unit": "ns",
+            "feasible": feasible,
+            "constraint": f"Driver sink current limits Rg_off \u2265 {round(rg_min, 2)}\u03a9" if not feasible else None,
+            "note": f"E24: {round(rg_ideal, 2)}\u03a9 \u2192 {rg_std}\u03a9 gives {round(t_actual_ns, 1)}ns actual",
+        }
+
+    # ── dV/dt → Rg_on (via rise time) ─────────────────────────────
+    def _rev_dv_dt(self, target_v_per_us: float) -> dict:
+        if target_v_per_us <= 0:
+            return {"target_key": "dv_dt_v_per_us", "target_value": target_v_per_us,
+                    "feasible": False, "constraint": "dV/dt must be > 0"}
+        # t_rise = V_peak / (dv_dt × 1e6)  [seconds]
+        t_rise_s = self.v_peak / (target_v_per_us * 1e6)
+        t_rise_ns = t_rise_s * 1e9
+        # Now solve for Rg_on from this rise time
+        result = self._rev_gate_rise(t_rise_ns)
+        result["target_key"] = "dv_dt_v_per_us"
+        result["target_value"] = target_v_per_us
+        # Re-compute actual dV/dt from actual rise time
+        if result.get("actual_output", 0) > 0:
+            actual_dvdt = self.v_peak / (result["actual_output"] * 1e-9) / 1e6
+            result["actual_output"] = round(actual_dvdt, 1)
+            result["actual_output_unit"] = "V/\u00b5s"
+        result["note"] = f"Target dV/dt={target_v_per_us} V/\u00b5s \u2192 t_rise={round(t_rise_ns, 1)}ns \u2192 Rg_on={result.get('solved_value', '?')}\u03a9"
+        return result
+
+    # ── Bootstrap Cap (target nF → implied droop) ──────────────────
+    def _rev_boot_cap(self, target_nf: float) -> dict:
+        qg = self._get(self.mosfet, "MOSFET", "qg", 92e-9)
+
+        # Forward: C_boot = Qg / droop → droop = Qg / C_target
+        c_target_f = target_nf * 1e-9
+        if c_target_f <= 0:
+            return {"target_key": "c_boot_recommended_nf", "target_value": target_nf,
+                    "feasible": False, "constraint": "Capacitance must be > 0"}
+
+        droop_implied = qg / c_target_f
+        feasible = 0.05 <= droop_implied <= 2.0  # reasonable droop range
+
+        # Snap target to E12
+        E12_nF = [1,1.2,1.5,1.8,2.2,2.7,3.3,3.9,4.7,5.6,6.8,8.2,
+                  10,12,15,18,22,27,33,39,47,56,68,82,
+                  100,120,150,180,220,270,330,470,680,1000]
+        boot_min_cap = self._dc("boot.min_cap")
+        c_std_nf = float(next((v for v in E12_nF if v >= target_nf), E12_nF[-1]))
+        c_std_nf = max(boot_min_cap, c_std_nf)
+
+        # Actual droop with snapped value
+        actual_droop = qg / (c_std_nf * 1e-9)
+
+        return {
+            "target_key": "c_boot_recommended_nf",
+            "target_value": target_nf,
+            "solved_key": "bootstrap_droop_v",
+            "solved_value": round(actual_droop, 3),
+            "solved_unit": "V",
+            "ideal_value": round(droop_implied, 3),
+            "actual_output": c_std_nf,
+            "actual_output_unit": "nF",
+            "feasible": feasible,
+            "constraint": f"Droop {round(droop_implied, 2)}V is {'too high (>2V)' if droop_implied > 2 else 'too low (<0.05V)'}" if not feasible else None,
+            "note": f"C_boot={c_std_nf}nF (E12) implies {round(actual_droop, 2)}V droop",
+        }
+
+    # ── Min HS On-Time → C_boot ────────────────────────────────────
+    def _rev_boot_on_time(self, target_ns: float) -> dict:
+        r_boot = self._dc("gate.rg_bootstrap")
+
+        # Forward: t_min = 3 × R_boot × C_boot → C = t / (3 × R)
+        t_s = target_ns * 1e-9
+        c_ideal_f = t_s / (3.0 * r_boot)
+        c_ideal_nf = c_ideal_f * 1e9
+
+        E12_nF = [1,1.2,1.5,1.8,2.2,2.7,3.3,3.9,4.7,5.6,6.8,8.2,
+                  10,12,15,18,22,27,33,39,47,56,68,82,
+                  100,120,150,180,220,270,330,470,680,1000]
+        boot_min_cap = self._dc("boot.min_cap")
+        c_std_nf = float(next((v for v in E12_nF if v >= c_ideal_nf), E12_nF[-1]))
+        c_std_nf = max(boot_min_cap, c_std_nf)
+
+        # Forward verify
+        t_actual_ns = 3.0 * r_boot * c_std_nf * 1e-9 * 1e9
+
+        return {
+            "target_key": "min_hs_on_time_ns",
+            "target_value": target_ns,
+            "solved_key": "c_boot_recommended_nf",
+            "solved_value": c_std_nf,
+            "solved_unit": "nF",
+            "ideal_value": round(c_ideal_nf, 1),
+            "actual_output": round(t_actual_ns, 1),
+            "actual_output_unit": "ns",
+            "feasible": c_ideal_nf > 0,
+            "constraint": None,
+            "note": f"C_boot={c_std_nf}nF (E12) gives t_min={round(t_actual_ns, 0):.0f}ns @ R_boot={r_boot}\u03a9",
+        }
+
+    # ── Shunt: Target ADC Voltage → R_shunt ────────────────────────
+    def _rev_shunt_adc(self, target_v: float) -> dict:
+        i_max    = self.i_max
+        csa_gain = self._get(self.driver, "DRIVER", "current_sense_gain", 20) or 20
+        adc_ref  = self._dc("prot.adc_ref")
+
+        # Inverse: R = V_adc / (I_max × gain) × 1000 [mΩ]
+        if i_max <= 0 or csa_gain <= 0:
+            return {"target_key": "v_adc_v", "target_value": target_v,
+                    "feasible": False, "constraint": "Invalid I_max or CSA gain"}
+
+        r_ideal_mohm = (target_v / (i_max * csa_gain)) * 1000
+
+        # Snap to standard shunt values
+        if r_ideal_mohm <= 0.75:
+            r_std_mohm = 0.5
+        elif r_ideal_mohm <= 1.5:
+            r_std_mohm = 1.0
+        elif r_ideal_mohm <= 3.0:
+            r_std_mohm = 2.0
+        else:
+            r_std_mohm = 5.0
+
+        # Forward verify
+        v_actual = i_max * r_std_mohm * 1e-3 * csa_gain
+        feasible = v_actual <= adc_ref  # must not exceed ADC reference
+
+        return {
+            "target_key": "v_adc_v",
+            "target_value": target_v,
+            "solved_key": "value_mohm",
+            "solved_value": r_std_mohm,
+            "solved_unit": "m\u03a9",
+            "ideal_value": round(r_ideal_mohm, 3),
+            "actual_output": round(v_actual, 3),
+            "actual_output_unit": "V",
+            "feasible": feasible,
+            "constraint": f"ADC output {round(v_actual, 2)}V exceeds {adc_ref}V reference" if not feasible else None,
+            "note": f"R_shunt={r_std_mohm}m\u03a9 @ I_max={i_max}A, gain={csa_gain}\u00d7 \u2192 {round(v_actual, 3)}V at ADC",
+        }
+
+    # ── Dead Time % → dt_actual ────────────────────────────────────
+    def _rev_dt_pct(self, target_pct: float) -> dict:
+        period_ns = 1e9 / self.fsw
+        dt_target_ns = target_pct * period_ns / 100.0
+
+        # Get minimum dead time components
+        td_off_s  = self._get(self.mosfet, "MOSFET", "td_off",       50e-9) or 50e-9
+        tf_s      = self._get(self.mosfet, "MOSFET", "tf",            20e-9) or 20e-9
+        t_prop_s  = self._get(self.driver, "DRIVER", "prop_delay_off", 60e-9) or 60e-9
+        dt_abs_margin = self._dc("dt.abs_margin")
+        dt_min_ns = (td_off_s + tf_s + t_prop_s) * 1e9 + dt_abs_margin
+
+        feasible = dt_target_ns >= dt_min_ns
+
+        # Snap to MCU resolution
+        dt_res_s  = self._get(self.mcu, "MCU", "pwm_deadtime_res", 8e-9) or 8e-9
+        dt_res_ns = dt_res_s * 1e9
+        dt_effective = max(dt_target_ns, dt_min_ns)
+        dt_reg    = math.ceil(dt_effective / dt_res_ns)
+        dt_actual = dt_reg * dt_res_ns
+        dt_actual_pct = (dt_actual / period_ns) * 100
+
+        return {
+            "target_key": "dt_pct_of_period",
+            "target_value": target_pct,
+            "solved_key": "dt_actual_ns",
+            "solved_value": round(dt_actual, 1),
+            "solved_unit": "ns",
+            "ideal_value": round(dt_target_ns, 1),
+            "actual_output": round(dt_actual_pct, 3),
+            "actual_output_unit": "%",
+            "feasible": feasible,
+            "constraint": f"Minimum dead time is {round(dt_min_ns, 0):.0f}ns ({round(dt_min_ns/period_ns*100, 3):.3f}%)" if not feasible else None,
+            "note": f"DT={round(dt_actual, 0):.0f}ns (reg={dt_reg} \u00d7 {dt_res_ns:.1f}ns) = {round(dt_actual_pct, 3)}% of period",
+        }
+
+    # ── Dead Time Actual → register count ──────────────────────────
+    def _rev_dt_actual(self, target_ns: float) -> dict:
+        td_off_s  = self._get(self.mosfet, "MOSFET", "td_off",       50e-9) or 50e-9
+        tf_s      = self._get(self.mosfet, "MOSFET", "tf",            20e-9) or 20e-9
+        t_prop_s  = self._get(self.driver, "DRIVER", "prop_delay_off", 60e-9) or 60e-9
+        dt_abs_margin = self._dc("dt.abs_margin")
+        dt_min_ns = (td_off_s + tf_s + t_prop_s) * 1e9 + dt_abs_margin
+
+        dt_res_s  = self._get(self.mcu, "MCU", "pwm_deadtime_res", 8e-9) or 8e-9
+        dt_res_ns = dt_res_s * 1e9
+        dt_max_s  = self._get(self.mcu, "MCU", "pwm_deadtime_max", 1000e-9) or 1000e-9
+        dt_max_ns = dt_max_s * 1e9
+
+        feasible_min = target_ns >= dt_min_ns
+        feasible_max = target_ns <= dt_max_ns
+
+        dt_reg    = math.ceil(target_ns / dt_res_ns)
+        dt_actual = dt_reg * dt_res_ns
+
+        period_ns = 1e9 / self.fsw
+        dt_pct    = (dt_actual / period_ns) * 100
+
+        constraint = None
+        if not feasible_min:
+            constraint = f"Below minimum {round(dt_min_ns, 0):.0f}ns (td_off + tf + prop + margin)"
+        elif not feasible_max:
+            constraint = f"Exceeds MCU max dead time {round(dt_max_ns, 0):.0f}ns"
+
+        return {
+            "target_key": "dt_actual_ns",
+            "target_value": target_ns,
+            "solved_key": "dt_register_count",
+            "solved_value": dt_reg,
+            "solved_unit": "counts",
+            "ideal_value": round(target_ns / dt_res_ns, 2),
+            "actual_output": round(dt_actual, 1),
+            "actual_output_unit": "ns",
+            "feasible": feasible_min and feasible_max,
+            "constraint": constraint,
+            "note": f"Register={dt_reg} \u00d7 {dt_res_ns:.1f}ns = {round(dt_actual, 0):.0f}ns ({round(dt_pct, 3)}% period)",
+        }
+
+    # ── Snubber: Target Overshoot → Cs, Rs ─────────────────────────
+    def _rev_snub_overshoot(self, target_v: float) -> dict:
+        l_stray_nh = float(self.ovr.get("stray_inductance_nh", self._dc("snub.stray_l_default")))
+        l_stray    = l_stray_nh * 1e-9
+        coss       = self._get(self.mosfet, "MOSFET", "coss", 200e-12)
+        i_max      = self.i_max
+
+        if target_v <= 0:
+            return {"target_key": "voltage_overshoot_v", "target_value": target_v,
+                    "feasible": False, "constraint": "Target overshoot must be > 0"}
+
+        # Inverse: V_ov = I × √(L/C) → C = L × (I/V)²
+        c_required_f = l_stray * (i_max / target_v) ** 2
+        c_required_pf = c_required_f * 1e12
+
+        # Snap to E12 pF (extended for reverse calc — snubber caps can be large)
+        E12_pF = [100,120,150,180,220,270,330,390,470,560,680,820,
+                  1000,1200,1500,1800,2200,2700,3300,4700,
+                  5600,6800,8200,10000,12000,15000,18000,22000,27000,33000,47000,
+                  56000,68000,82000,100000,120000,150000,180000,220000,270000,330000,470000,
+                  560000,680000,820000,1000000]
+        cs_std = float(next((v for v in E12_pF if v >= c_required_pf), E12_pF[-1]))
+        cs_std = max(100.0, cs_std)
+
+        # Rs = √(L/Cs) for critical damping
+        rs_crit = math.sqrt(l_stray / (cs_std * 1e-12))
+        rs_std  = _nearest_e(rs_crit)
+        rs_std  = max(1.0, min(100.0, rs_std))
+
+        # Forward verify
+        v_actual = i_max * math.sqrt(l_stray / max(cs_std * 1e-12, 1e-15))
+
+        return {
+            "target_key": "voltage_overshoot_v",
+            "target_value": target_v,
+            "solved_key": "cs_recommended_pf",
+            "solved_value": cs_std,
+            "solved_unit": "pF",
+            "ideal_value": round(c_required_pf, 1),
+            "actual_output": round(v_actual, 1),
+            "actual_output_unit": "V",
+            "feasible": True,
+            "constraint": None,
+            "note": f"Cs={cs_std}pF + Rs={rs_std}\u03a9 gives {round(v_actual, 1)}V overshoot (L_stray={l_stray_nh}nH)",
+        }
+
+    # ── Snubber: Target Power → Cs ─────────────────────────────────
+    def _rev_snub_power(self, target_w: float) -> dict:
+        if target_w <= 0:
+            return {"target_key": "p_total_6_snubbers_w", "target_value": target_w,
+                    "feasible": False, "constraint": "Target power must be > 0"}
+
+        # Forward: P_total = 6 × 0.5 × Cs × V² × fsw → Cs = 2P / (6 × V² × fsw)
+        cs_ideal_f  = (2 * target_w) / (6 * self.v_peak ** 2 * self.fsw)
+        cs_ideal_pf = cs_ideal_f * 1e12
+
+        E12_pF = [100,120,150,180,220,270,330,390,470,560,680,820,
+                  1000,1200,1500,1800,2200,2700,3300,4700,
+                  5600,6800,8200,10000,12000,15000,18000,22000,27000,33000,47000,
+                  56000,68000,82000,100000,120000,150000,180000,220000,270000,330000,470000,
+                  560000,680000,820000,1000000]
+        cs_std = float(next((v for v in E12_pF if v >= cs_ideal_pf), E12_pF[-1]))
+        cs_std = max(100.0, cs_std)
+
+        # Forward verify
+        p_actual = 6 * 0.5 * (cs_std * 1e-12) * (self.v_peak ** 2) * self.fsw
+
+        return {
+            "target_key": "p_total_6_snubbers_w",
+            "target_value": target_w,
+            "solved_key": "cs_recommended_pf",
+            "solved_value": cs_std,
+            "solved_unit": "pF",
+            "ideal_value": round(cs_ideal_pf, 1),
+            "actual_output": round(p_actual, 3),
+            "actual_output_unit": "W",
+            "feasible": True,
+            "constraint": None,
+            "note": f"Cs={cs_std}pF \u2192 P_total={round(p_actual, 3)}W @ Vpeak={self.v_peak}V, fsw={self.fsw/1e3:.0f}kHz",
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
+    # Run All
+    # ═══════════════════════════════════════════════════════════════════
+
+
+    # ═══════════════════════════════════════════════════════════════════
+    def run_all(self) -> dict:
+        results = {
+            "mosfet_losses":        self.calc_mosfet_losses(),
+            "gate_resistors":       self.calc_gate_resistors(),
+            "input_capacitors":     self.calc_input_capacitors(),
+            "bootstrap_cap":        self.calc_bootstrap_cap(),
+            "shunt_resistors":      self.calc_shunt_resistors(),
+            "snubber":              self.calc_snubber(),
+            "protection_dividers":  self.calc_protection_dividers(),
+            "power_supply_bypass":  self.calc_power_supply_bypass(),
+            "emi_filter":           self.calc_emi_filter(),
+            "thermal":              self.calc_thermal(),
+            "dead_time":            self.calc_dead_time(),
+            "pcb_guidelines":       self.calc_pcb_guidelines(),
+            "motor_validation":     self.calc_motor_validation(),
+            "mosfet_rating_check":  self.calc_mosfet_rating_check(),
+            "driver_compatibility": self.calc_driver_compatibility(),
+            "adc_timing":           self.calc_adc_timing(),
+            "cross_validation":     self.calc_cross_validation(),
+        }
+        # Attach logs after calculations have fully populated them
+        results["audit_log"] = list(dict.fromkeys(self.audit_log))
+
+        # Build transparency summary
+        transparency = {"total_hardcoded": 0, "total_fallbacks": 0, "by_module": {}}
+        for mod_name, meta in self._module_meta.items():
+            hc_count = len(meta.get("hardcoded", []))
+            fb_count = len(meta.get("fallbacks", []))
+            transparency["total_hardcoded"] += hc_count
+            transparency["total_fallbacks"] += fb_count
+            if hc_count > 0 or fb_count > 0:
+                transparency["by_module"][mod_name] = meta
+        results["transparency"] = transparency
+
+        return results
+

@@ -11,13 +11,14 @@ logger = logging.getLogger(__name__)
 from claude_service import extract_parameters_from_pdf
 from calc_engine import CalculationEngine
 from report_generator import generate_pdf_report, generate_excel_report
+from spice_export import generate_spice_netlist
 
 app = FastAPI(title="MC Hardware Designer API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all origins for easy cloud deployment (Vercel/Netlify)
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -50,7 +51,7 @@ async def extract_datasheet(
     except Exception as e:
         error_msg = str(e)
         # Sanitize: never leak API keys or auth tokens in responses
-        if "api_key" in error_msg.lower() or "sk-" in error_msg or "key" in error_msg.lower():
+        if "api_key" in error_msg.lower() or "sk-" in error_msg or "authentication" in error_msg.lower():
             logger.error(f"Extraction auth error (details suppressed for security)")
             raise HTTPException(500, "Authentication error — check your API key in Settings")
         logger.error(f"Extraction error: {type(e).__name__}: {error_msg}")
@@ -65,7 +66,8 @@ class CalcRequest(BaseModel):
     driver_params: dict
     mcu_params: dict
     motor_specs: dict
-    passives_overrides: Optional[dict] = {}
+    passives_overrides: Optional[dict] = None
+    design_constants: Optional[dict] = None
 
 @app.post("/api/calculate")
 async def calculate(req: CalcRequest):
@@ -77,6 +79,7 @@ async def calculate(req: CalcRequest):
             mcu_params=req.mcu_params,
             motor_specs=req.motor_specs,
             overrides=req.passives_overrides or {},
+            design_constants=req.design_constants or {},
         )
         results = engine.run_all()
         return {"success": True, "data": results}
@@ -85,6 +88,39 @@ async def calculate(req: CalcRequest):
     except Exception as e:
         logger.error(f"Calc error: {type(e).__name__}: {str(e)}")
         raise HTTPException(500, f"Calculation failed: {type(e).__name__}: {str(e)}")
+
+
+# ─── Reverse Calculations ─────────────────────────────────────────────────
+
+class ReverseCalcRequest(BaseModel):
+    system_specs: dict
+    mosfet_params: dict
+    driver_params: dict
+    mcu_params: dict
+    motor_specs: dict
+    passives_overrides: Optional[dict] = None
+    design_constants: Optional[dict] = None
+    targets: dict  # { "gate_rise_time_ns": 25.0, ... }
+
+@app.post("/api/reverse-calculate")
+async def reverse_calculate(req: ReverseCalcRequest):
+    try:
+        engine = CalculationEngine(
+            system_specs=req.system_specs,
+            mosfet_params=req.mosfet_params,
+            driver_params=req.driver_params,
+            mcu_params=req.mcu_params,
+            motor_specs=req.motor_specs,
+            overrides=req.passives_overrides or {},
+            design_constants=req.design_constants or {},
+        )
+        results = engine.reverse_calculate(req.targets)
+        return {"success": True, "data": results}
+    except ValueError as e:
+        raise HTTPException(422, f"Validation error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Reverse calc error: {type(e).__name__}: {str(e)}")
+        raise HTTPException(500, f"Reverse calculation failed: {type(e).__name__}: {str(e)}")
 
 
 # ─── Reports ──────────────────────────────────────────────────────────────────
@@ -116,6 +152,37 @@ async def create_report(req: ReportRequest):
     except Exception as e:
         logger.error(f"Report error:\n{traceback.format_exc()}")
         raise HTTPException(500, f"{type(e).__name__}: {str(e)}")
+
+
+# ─── SPICE Export ────────────────────────────────────────────────────────────
+
+class SpiceRequest(BaseModel):
+    system_specs: dict
+    calculations: dict
+    mosfet_params: dict
+
+@app.post("/api/export/spice")
+async def export_spice(req: SpiceRequest):
+    try:
+        netlist = generate_spice_netlist(req.system_specs, req.calculations, req.mosfet_params)
+        buf = io.BytesIO(netlist.encode('utf-8'))
+        return StreamingResponse(
+            buf,
+            media_type="text/plain",
+            headers={"Content-Disposition": "attachment; filename=mc_halfbridge.cir"},
+        )
+    except Exception as e:
+        logger.error(f"SPICE export error:\n{traceback.format_exc()}")
+        raise HTTPException(500, f"{type(e).__name__}: {str(e)}")
+
+
+@app.get("/api/design-constants")
+def get_design_constants():
+    from calc_engine import DESIGN_CONSTANTS
+    result = {}
+    for key, (default, unit, cat, label, desc) in DESIGN_CONSTANTS.items():
+        result[key] = {"default": default, "unit": unit, "category": cat, "label": label, "description": desc}
+    return {"success": True, "data": result}
 
 
 @app.get("/api/health")

@@ -165,7 +165,7 @@ def generate_excel_report(project: dict, calculations: dict) -> bytes:
     # ── BOM Sheet ──
     ws_bom = wb.active
     ws_bom.title = "BOM"
-    _excel_bom_sheet(ws_bom, calculations)
+    _excel_bom_sheet(ws_bom, calculations, project)
 
     # ── Calculations Sheet ──
     ws_calc = wb.create_sheet("Calculations")
@@ -176,11 +176,11 @@ def generate_excel_report(project: dict, calculations: dict) -> bytes:
     return buf.getvalue()
 
 
-def _excel_bom_sheet(ws, calculations):
+def _excel_bom_sheet(ws, calculations, project=None):
     headers = ["#", "Component", "Description", "Value/Part No.", "Qty", "Rating", "Est. Cost ($)"]
     _style_header_row(ws, 1, headers, "1e40af")
 
-    bom = _build_bom(calculations)
+    bom = _build_bom(calculations, project)
     for i, row in enumerate(bom, start=2):
         for j, val in enumerate(row, start=1):
             cell = ws.cell(row=i, column=j, value=val)
@@ -219,17 +219,22 @@ def _excel_calc_sheet(ws, calculations):
         ws.column_dimensions[col].width = 28
 
 
-def _build_bom(calculations) -> list:
+def _build_bom(calculations, project=None) -> list:
     rows = []
     n = 1
+    project = project or {}
+
+    # Extract actual component names from project data if available
+    mosfet_name = project.get("mosfet_params", {}).get("component_name", "N-ch Power MOSFET")
+    driver_name = project.get("driver_params", {}).get("component_name", "3-phase gate driver")
 
     def add(component, desc, value, qty, rating, cost):
         nonlocal n
         rows.append([n, component, desc, value, qty, rating, cost])
         n += 1
 
-    add("MOSFET", "Power switch, N-ch", "Infineon IPT015N10N5 or equiv.", 6, "100V / Rds(on) per datasheet", "~$2.10 each")
-    add("Gate Driver", "3-phase non-isolated bootstrap", "TI DRV8353RS or equiv.", 1, "6–60V VCC, 3-phase, SPI", "~$4.50")
+    add("MOSFET", "Power switch, N-ch", f"{mosfet_name} or equiv.", 6, "Per datasheet ratings", "—")
+    add("Gate Driver", "3-phase non-isolated bootstrap", f"{driver_name} or equiv.", 1, "Per datasheet ratings", "—")
 
     if "gate_resistors" in calculations:
         gr = calculations["gate_resistors"]

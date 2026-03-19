@@ -43,12 +43,11 @@ _MULTIPLIERS = {
     # Thermal resistance
     "°c/w": 1.0, "c/w": 1.0,
 
-    # Temperature
-    "°c": 1.0, "c": 1.0,
+    # Temperature (use "°c" — bare "c" is reserved for Coulombs above)
+    "°c": 1.0,
 
     # Memory
     "kb": 1024, "mb": 1024**2, "gb": 1024**3,
-    "k": 1024,  # for flash size "4K"
 
     # Bits
     "bit": 1.0, "bits": 1.0,
@@ -111,7 +110,8 @@ def to_si(value: float, unit: str) -> float:
     """Convert value in given unit to SI base unit value."""
     if value is None:
         return None
-    key = unit.strip().lower().replace("ω", "ω")
+    # Normalize Unicode: Ω (U+2126 OHM SIGN) and Ω (U+03A9 GREEK CAPITAL OMEGA) → ω
+    key = unit.strip().lower().replace("\u2126", "ω").replace("Ω", "ω").replace("ω", "ω")
     mult = _MULTIPLIERS.get(key)
     if mult is None:
         # Try without unicode normalisation issues

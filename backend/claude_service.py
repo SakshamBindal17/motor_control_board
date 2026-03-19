@@ -12,12 +12,17 @@ import json
 import os
 import re
 
+# ─── In-flight dedup ─────────────────────────────────────────────────────────
+# Prevents duplicate API calls when the same PDF is uploaded concurrently
+_inflight_lock = asyncio.Lock()
+_inflight: dict[str, asyncio.Event] = {}  # key → Event (set when done)
+
 # ─── Cache setup ─────────────────────────────────────────────────────────────
 
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 
 # Bump this string whenever prompts change — forces cache re-extraction automatically
-PROMPT_VERSION = "v5"
+PROMPT_VERSION = "v8"
 
 def _cache_path(block_type: str, pdf_hash: str) -> str:
     folder = os.path.join(CACHE_DIR, block_type)
@@ -163,21 +168,29 @@ id="body_diode_vf"
   Name: Body Diode Forward Voltage
   Aliases: Vsd · VSD · VF(body) · VF(diode) · Vf · IS · Body Diode Forward Voltage · Diode Forward Voltage Drop
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- GOOD-TO-HAVE PARAMETERS  (extract only if present — omit entirely if not found)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 id="vgs_max"
   Name: Maximum Gate-Source Voltage
   Aliases: VGSS · VGS(max) · VGSmax · Gate-Source Voltage Rating · Maximum Gate Voltage
 
-id="id_pulsed"
-  Name: Pulsed Drain Current (peak)
-  Aliases: IDM · I_DM · IDpulse · IDM(peak) · Peak Drain Current · Pulsed Drain Current
-
 id="ciss"
   Name: Input Capacitance
   Aliases: Ciss · C_iss · Cin · Input Capacitance · CGS+CGD
+
+id="rg_int"
+  Name: Internal Gate Resistance
+  Aliases: Rg · RG · Rint · Rg(int) · Internal Gate Resistance · Gate Series Resistance (internal)
+
+id="qoss"
+  Name: Output Charge (energy stored in Coss)
+  Aliases: Qoss · Q_oss · Qo · Output Charge
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ GOOD-TO-HAVE PARAMETERS  (extract only if present — omit entirely if not found)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+id="id_pulsed"
+  Name: Pulsed Drain Current (peak)
+  Aliases: IDM · I_DM · IDpulse · IDM(peak) · Peak Drain Current · Pulsed Drain Current
 
 id="crss"
   Name: Reverse Transfer Capacitance
@@ -187,17 +200,9 @@ id="avalanche_energy"
   Name: Single-Pulse Avalanche Energy
   Aliases: Eas · EAS · EAR · Ear · Avalanche Energy · Single-Pulse Avalanche Energy · Drain-Source Avalanche Energy
 
-id="rg_int"
-  Name: Internal Gate Resistance
-  Aliases: Rg · RG · Rint · Rg(int) · Internal Gate Resistance · Gate Series Resistance (internal)
-
 id="vgs_plateau"
   Name: Gate Plateau Voltage (Miller Plateau)
-  Aliases: VGS(pl) · Vplateau · Vpl · Gate Plateau · Miller Plateau Voltage · Vgs(plateau)
-
-id="qoss"
-  Name: Output Charge (energy stored in Coss)
-  Aliases: Qoss · Q_oss · Qo · Output Charge"""
+  Aliases: VGS(pl) · Vplateau · Vpl · Gate Plateau · Miller Plateau Voltage · Vgs(plateau)"""
 
 
 DRIVER_PROMPT = """You are a power electronics engineer. Extract gate driver IC parameters from this datasheet for a 48V motor controller design.
@@ -301,6 +306,19 @@ id="tj_max"
   Name: Maximum Junction Temperature
   Aliases: TJ(max) · TjMAX · Tjmax · Maximum Junction Temperature · Maximum Operating Junction Temperature
 
+id="current_sense_gain"
+  Name: Current Sense Amplifier Gain
+  Aliases: CSA Gain · GAIN · KGAIN · Current Sense Amplifier Gain · Transconductance Gain · Sense Amplifier Gain · CSA_GAIN
+  Note: Only include if a current sense amplifier is integrated into this IC — skip if not applicable
+
+id="rise_time_out"
+  Name: Output Rise Time (driver output)
+  Aliases: tr(out) · tr · Output Rise Time · Driver Output Rise Time · Gate Rise Time (driver output)
+
+id="fall_time_out"
+  Name: Output Fall Time (driver output)
+  Aliases: tf(out) · tf · Output Fall Time · Driver Output Fall Time · Gate Fall Time (driver output)
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  GOOD-TO-HAVE PARAMETERS  (extract only if present — omit entirely if not found)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -319,18 +337,10 @@ id="thermal_shutdown"
   Name: Thermal Shutdown Temperature
   Aliases: TSD · T_SD · Thermal Shutdown Threshold · Over-Temperature Protection · TJ_SHUTDOWN · TSHDN · Thermal Shutdown temp
 
-id="current_sense_gain"
-  Name: Current Sense Amplifier Gain
-  Aliases: CSA Gain · GAIN · KGAIN · Current Sense Amplifier Gain · Transconductance Gain · Sense Amplifier Gain · CSA_GAIN
-  Note: Only include if a current sense amplifier is integrated into this IC
-
-id="rise_time_out"
-  Name: Output Rise Time (driver output)
-  Aliases: tr(out) · tr · Output Rise Time · Driver Output Rise Time · Gate Rise Time (driver output)
-
-id="fall_time_out"
-  Name: Output Fall Time (driver output)
-  Aliases: tf(out) · tf · Output Fall Time · Driver Output Fall Time · Gate Fall Time (driver output)"""
+id="idd_quiescent"
+  Name: Quiescent Supply Current (driver standby/operating current)
+  Aliases: IDD · IQ · ICC · Quiescent current · Operating current · Supply current · Standby current · IDD(Q) · IQ(DD)
+  Note: Extract at typical VDD operating conditions. This is used for bootstrap capacitor leakage budget calculations."""
 
 
 MCU_PROMPT = """You are an embedded engineer. Extract motor-control MCU parameters from this datasheet for a motor controller design.
@@ -410,10 +420,16 @@ id="pwm_deadtime_max"
 id="complementary_outputs"
   Name: Number of Complementary PWM Output Pairs
   Aliases: Complementary pairs · CHxN outputs · Complementary channels · High-side/Low-side pairs · 3-phase PWM channels · Complementary PWM outputs · Number of CHxN pairs · Complementary channel count
+  Note: Count only TRUE complementary output pairs (e.g. TIM1_CH1/CH1N on STM32, or FTM CH0/CH1 in complementary mode). Do NOT count independent timer channels as complementary pairs. Simple TPM/GPT timers with independent channels are NOT complementary — report 0 unless explicitly documented.
 
 id="vdd_range"
   Name: VDD / Supply Voltage Operating Range
   Aliases: VDD · VCORE · Supply voltage range · Operating voltage range · VCC range · Power supply voltage · VDD operating range · VDD min/max · Operating VDD
+
+id="adc_ref"
+  Name: ADC Reference Voltage
+  Aliases: VREF · VREF+ · ADC reference · ADC VREF · Reference voltage (ADC) · VDDA · Analog reference voltage · ADC reference voltage · VREFH · VREF_ADC · ADC supply voltage
+  Note: If the ADC reference is tied to VDD (e.g. VREF=VDD), extract the VDD value here. Express in Volts.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  GOOD-TO-HAVE PARAMETERS  (extract only if present — omit entirely if not found)
@@ -473,60 +489,84 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
     if cached:
         return cached
 
-    prompt  = prompts[block_type]
-    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+    # Dedup: if same PDF+block is already in-flight, wait for it
+    dedup_key = f"{block_type}:{pdf_hash}"
+    event = None
+    async with _inflight_lock:
+        if dedup_key in _inflight:
+            event = _inflight[dedup_key]
 
-    def _call_claude():
-        client = anthropic.Anthropic(api_key=api_key)
-        return client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=16000,
-            extra_headers={"anthropic-beta": "pdfs-2024-09-25"},
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": pdf_b64,
-                        },
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }],
-        )
+    if event:
+        await event.wait()
+        cached = _load_cache(block_type, pdf_hash)
+        if cached:
+            return cached
 
-    response = await asyncio.to_thread(_call_claude)
-    raw = response.content[0].text.strip()
+    # Register this request as in-flight
+    done_event = asyncio.Event()
+    async with _inflight_lock:
+        _inflight[dedup_key] = done_event
 
-    # Strip markdown fences if present
-    raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE).strip()
-    raw = re.sub(r"```\s*$",          "", raw, flags=re.MULTILINE).strip()
-
-    # Parse JSON
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if match:
-            data = json.loads(match.group())
-        else:
-            raise ValueError(
-                f"Claude returned non-JSON.\nFirst 400 chars:\n{raw[:400]}"
+        prompt  = prompts[block_type]
+        pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+
+        def _call_claude():
+            client = anthropic.Anthropic(api_key=api_key, timeout=120.0)
+            return client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=16000,
+                extra_headers={"anthropic-beta": "pdfs-2024-09-25"},
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": pdf_b64,
+                            },
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }],
             )
 
-    # Post-process: set selected value and override slot
-    for param in data.get("parameters", []):
-        for cond in param.get("conditions", []):
-            cond["selected"] = _pick(cond)
-            cond["override"] = None
+        response = await asyncio.wait_for(asyncio.to_thread(_call_claude), timeout=150)
+        raw = response.content[0].text.strip()
 
-    # Save to cache
-    _save_cache(block_type, pdf_hash, data)
+        # Strip markdown fences if present
+        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE).strip()
+        raw = re.sub(r"```\s*$",          "", raw, flags=re.MULTILINE).strip()
 
-    return data
+        # Parse JSON
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            match = re.search(r'\{.*\}', raw, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+            else:
+                raise ValueError(
+                    f"Claude returned non-JSON.\nFirst 400 chars:\n{raw[:400]}"
+                )
+
+        # Post-process: set selected value and override slot
+        for param in data.get("parameters", []):
+            for cond in param.get("conditions", []):
+                cond["selected"] = _pick(cond)
+                cond["override"] = None
+
+        # Save to cache
+        _save_cache(block_type, pdf_hash, data)
+
+        return data
+    finally:
+        # Signal waiters and clean up
+        done_event.set()
+        async with _inflight_lock:
+            _inflight.pop(dedup_key, None)
 
 
 def _pick(cond: dict):
