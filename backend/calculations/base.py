@@ -119,9 +119,10 @@ from calculations.passives import PassivesMixin
 from calculations.protection import ProtectionMixin
 from calculations.thermal import ThermalMixin
 from calculations.validation import ValidationMixin
+from calculations.waveform import WaveformMixin
 
 
-class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMixin, ThermalMixin, ValidationMixin):
+class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMixin, ThermalMixin, ValidationMixin, WaveformMixin):
     def __init__(self, system_specs, mosfet_params, driver_params,
                  mcu_params, motor_specs, overrides, design_constants=None):
         self.sys      = system_specs
@@ -625,6 +626,7 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             "driver_compatibility": self.calc_driver_compatibility(),
             "adc_timing":           self.calc_adc_timing(),
             "cross_validation":     self.calc_cross_validation(),
+            "waveform":             self.calc_waveform(),
         }
         # Attach logs after calculations have fully populated them
         results["audit_log"] = list(dict.fromkeys(self.audit_log))

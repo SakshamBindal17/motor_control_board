@@ -40,8 +40,9 @@ class PassivesMixin:
             )
             ripple_method = f"3-phase SPWM estimate M={M} — enter motor Lph for accurate calc"
 
-        # Required bulk capacitance
-        c_req_uf = (i_ripple_rms / (8 * fsw * delta_v)) * 1e6
+        # Required bulk capacitance for 3-phase inverter DC bus
+        # C = I_ripple / (2 * fsw * delta_V) — standard formula for VSI DC-link
+        c_req_uf = (i_ripple_rms / (2 * fsw * delta_v)) * 1e6
 
         # Parallel electrolytics (standard choice)
         min_bulk = int(self._dc("input.min_bulk_count"))
@@ -50,7 +51,7 @@ class PassivesMixin:
         self._log_hc("input_capacitors", "Bulk cap size", f"{bulk_uf} µF each", "Standard electrolytic value for bus decoupling", "input.bulk_cap_uf")
         n_caps   = max(min_bulk, math.ceil(c_req_uf / bulk_uf))
         c_total  = n_caps * bulk_uf   # µF
-        v_ripple_actual = (i_ripple_rms / (8 * fsw * c_total * 1e-6))
+        v_ripple_actual = (i_ripple_rms / (2 * fsw * c_total * 1e-6))
 
         # ESR budget
         esr_total_budget_mohm = 0 if i_ripple_rms == 0 else (delta_v / i_ripple_rms) * 1000

@@ -79,10 +79,10 @@ class TestUnitUtils:
 # ── Calculation Engine ────────────────────────────────────────────────────────
 
 class TestCalculationEngine:
-    def test_run_all_returns_16_modules(self, engine):
+    def test_run_all_returns_18_modules(self, engine):
         results = engine.run_all()
         modules = [k for k in results if k not in ("audit_log", "transparency")]
-        assert len(modules) == 16
+        assert len(modules) == 18
 
     def test_mosfet_losses_positive(self, engine):
         ml = engine.calc_mosfet_losses()
