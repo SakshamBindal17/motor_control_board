@@ -16,19 +16,22 @@ function computeLossVsFreq(mosfetParams, systemSpecs) {
   const tr = mosfetParams.tr_si || 10e-9
   const tf = mosfetParams.tf_si || 8e-9
   const qrr = mosfetParams.qrr_si || 100e-9
-  const vPeak = systemSpecs.peak_voltage || 60
+  const vBus = systemSpecs.bus_voltage || 48
   const iMax = systemSpecs.max_phase_current || 80
   const vDrv = systemSpecs.gate_drive_voltage || 12
-  const rdsHot = rds * 1.5 // thermal derating
+  const rdsHot = rds * 1.5 // thermal derating at ~125°C
 
-  const iRms = iMax * 0.707
+  // 3-phase SPWM per-FET RMS: I_peak * sqrt(1/6 + sqrt(3)/(4*pi))
+  const iRms = iMax * Math.sqrt(1/6 + Math.sqrt(3) / (4 * Math.PI))
 
   const points = []
   for (let f = 5000; f <= 100000; f += 2500) {
     const pCond = iRms * iRms * rdsHot
-    const pSw = 0.5 * vPeak * iMax * (tr + tf) * f
+    // Average switching loss over sinusoidal cycle: uses 2/pi * I_peak
+    const iSwAvg = iMax * 2 / Math.PI
+    const pSw = 0.5 * vBus * iSwAvg * (tr + tf) * f
     const pGate = qg * vDrv * f
-    const pRr = qrr * vPeak * f
+    const pRr = qrr * vBus * f
     const pTotal = pCond + pSw + pGate + pRr
     points.push({
       freq: f / 1000,
@@ -49,8 +52,9 @@ function computeThermalDerating(mosfetParams, systemSpecs) {
   const rds = mosfetParams.rds_on_si || 1.5e-3
   const tjMax = mosfetParams.tj_max_si || 175
   const rthJC = mosfetParams.rth_jc_si || 0.5
-  const rthTotal = rthJC + 0.5 + 20 // JC + CS + SA (typical)
-  const vPeak = systemSpecs.peak_voltage || 60
+  // JC + case-to-sink (TIM) + sink-to-ambient (forced air heatsink for 3kW)
+  const rthTotal = rthJC + 0.5 + 3.0
+  const vBus = systemSpecs.bus_voltage || 48
   const qg = mosfetParams.qg_si || 92e-9
   const tr = mosfetParams.tr_si || 10e-9
   const tf = mosfetParams.tf_si || 8e-9
@@ -58,32 +62,32 @@ function computeThermalDerating(mosfetParams, systemSpecs) {
   const vDrv = systemSpecs.gate_drive_voltage || 12
   const fsw = systemSpecs.pwm_freq_hz || 20000
 
+  // SPWM RMS factor
+  const kRms = Math.sqrt(1/6 + Math.sqrt(3) / (4 * Math.PI))
+
   const points = []
   for (let tAmb = -20; tAmb <= 105; tAmb += 5) {
-    // Find max current such that Tj = tjMax
-    // Tj = Tamb + (Pcond + Psw) * Rth_total
-    // Pcond = Irms^2 * Rds_hot where Rds_hot depends on Tj
-    // Simplified: Tj = Tamb + I^2 * 0.5 * Rds * 1.5 * Rth + Psw_fixed * Rth
-    // Iterate to find Imax
-    const pSwFixed = 0.5 * vPeak * (tr + tf) * fsw // per-amp switching contribution
+    // Per-amp switching factor (averaged over sinusoidal cycle)
+    const pSwPerAmp = 0.5 * vBus * (tr + tf) * fsw * (2 / Math.PI)
     const pGateFixed = qg * vDrv * fsw
-    const pRrFixed = qrr * vPeak * fsw
+    const pRrFixed = qrr * vBus * fsw
 
-    // Available thermal budget for conduction
+    // Available thermal budget
     const tBudget = tjMax - tAmb - (pGateFixed + pRrFixed) * rthTotal
     if (tBudget <= 0) {
       points.push({ ambient: tAmb, maxCurrent: 0 })
       continue
     }
 
-    // Pcond = Irms^2 * Rds_hot; Psw ~ I * factor
-    // Rds_hot at Tj = Rds * (1 + 0.004 * (Tj - 25))
-    // Simplified iterative solve
+    // Iterative solve with Tj-dependent Rds_on
+    // Rds(Tj) = Rds(25C) * (1 + 0.004 * (Tj - 25))
     let iMax = 200
-    for (let iter = 0; iter < 20; iter++) {
-      const iRms = iMax * 0.707
-      const pCond = iRms * iRms * rds * 1.5
-      const pSw = pSwFixed * iMax
+    for (let iter = 0; iter < 30; iter++) {
+      const iRms = iMax * kRms
+      // Estimate Tj to compute Rds_hot
+      const rdsEst = rds * (1 + 0.004 * (Math.min(tjMax, tAmb + 50) - 25))
+      const pCond = iRms * iRms * rdsEst
+      const pSw = pSwPerAmp * iMax
       const tj = tAmb + (pCond + pSw + pGateFixed + pRrFixed) * rthTotal
       if (tj > tjMax) {
         iMax *= 0.95
@@ -110,23 +114,30 @@ function computeEfficiencyVsLoad(mosfetParams, systemSpecs) {
   const tr = mosfetParams.tr_si || 10e-9
   const tf = mosfetParams.tf_si || 8e-9
   const qrr = mosfetParams.qrr_si || 100e-9
-  const vPeak = systemSpecs.peak_voltage || 60
   const vBus = systemSpecs.bus_voltage || 48
   const pRated = systemSpecs.power || 3000
   const vDrv = systemSpecs.gate_drive_voltage || 12
   const fsw = systemSpecs.pwm_freq_hz || 20000
-  const rdsHot = rds * 1.5
+  const rdsHot = rds * 1.5 // ~125°C thermal derating
+
+  // SPWM RMS factor per-FET
+  const kRms = Math.sqrt(1/6 + Math.sqrt(3) / (4 * Math.PI))
 
   const points = []
   for (let loadPct = 5; loadPct <= 100; loadPct += 5) {
     const pOut = pRated * loadPct / 100
-    const iPhase = pOut / (vBus * 1.732 * 0.85) // approx 3-phase
-    const iRms = iPhase * 0.707
+    // 3-phase power: P = sqrt(3) * V_LL * I_L * PF, I_peak = sqrt(2) * I_rms
+    const iPhase = pOut / (vBus * 1.732 * 0.85) // line current RMS
+    const iPeak = iPhase * Math.SQRT2
 
-    const pCond = iRms * iRms * rdsHot * 6
-    const pSw = 0.5 * vPeak * iPhase * (tr + tf) * fsw * 6
+    // Per-FET RMS from SPWM modulation
+    const iFetRms = iPeak * kRms
+    const pCond = iFetRms * iFetRms * rdsHot * 6
+    // Average switching loss (sinusoidal average = 2/pi * I_peak)
+    const iSwAvg = iPeak * 2 / Math.PI
+    const pSw = 0.5 * vBus * iSwAvg * (tr + tf) * fsw * 6
     const pGate = qg * vDrv * fsw * 6
-    const pRr = qrr * vPeak * fsw * 6
+    const pRr = qrr * vBus * fsw * 6
     const pLoss = pCond + pSw + pGate + pRr
 
     const eff = pOut / (pOut + pLoss) * 100
@@ -413,7 +424,16 @@ function GateTimingChart({ data, currentRg }) {
           <Line yAxisId="time" type="monotone" dataKey="riseTime" stroke="#1e90ff" strokeWidth={2} dot={false} name="Rise Time (ns)" />
           <Line yAxisId="time" type="monotone" dataKey="fallTime" stroke="#bb86fc" strokeWidth={2} dot={false} name="Fall Time (ns)" />
           <Line yAxisId="dvdt" type="monotone" dataKey="dvdt" stroke="#ffab00" strokeWidth={2} dot={false} name="dV/dt (V/µs)" />
-          {currentRg != null && <ReferenceLine yAxisId="time" x={Math.round(currentRg)} stroke="var(--green)" strokeDasharray="5 5" label={{ value: `Rg=${Math.round(currentRg)}Ω`, position: 'top', fill: 'var(--green)', fontSize: 10 }} />}
+          {currentRg != null && (
+            <ReferenceLine
+              x={Math.round(currentRg)}
+              yAxisId="time"
+              stroke="var(--green)"
+              strokeDasharray="5 5"
+              ifOverflow="extendDomain"
+              label={{ value: `Rg=${Math.round(currentRg)}Ω`, position: 'top', fill: 'var(--green)', fontSize: 10 }}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>

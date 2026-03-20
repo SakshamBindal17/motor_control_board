@@ -255,7 +255,7 @@ export default function DashboardPanel() {
             {/* Loss Breakdown Pie */}
             {lossData && (
               <div className="dashboard-card">
-                <div className="dashboard-card-title">Loss Breakdown (6 FETs total)</div>
+                <div className="dashboard-card-title">Inverter Loss Breakdown (3-phase bridge)</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <ResponsiveContainer width="100%" height={180}>
                     <PieChart>
@@ -274,8 +274,10 @@ export default function DashboardPanel() {
                         ))}
                       </Pie>
                       <Tooltip
-                        contentStyle={{ background: 'var(--bg-3)', border: '1px solid var(--border-2)', borderRadius: 6, fontSize: 11, color: 'var(--txt-1)' }}
-                        formatter={(val) => [`${val.toFixed(2)} W`, '']}
+                        contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6, fontSize: 11, color: '#e8eaed', padding: '6px 10px' }}
+                        itemStyle={{ color: '#e8eaed' }}
+                        labelStyle={{ color: '#e8eaed' }}
+                        formatter={(val, name) => [`${val.toFixed(2)} W`, name]}
                       />
                     </PieChart>
                   </ResponsiveContainer>
@@ -401,7 +403,8 @@ function MetricCard({ label, value, unit, sub, color, dec = 1 }) {
 }
 
 function ThermalBar({ ambient, tCase, tJunc, tMax }) {
-  const maxTemp = Math.max(tMax || 175, (tJunc || 0) + 20, 175)
+  // Use actual Tj_max (handles GaN ~150C, SiC ~200C, Si ~175C) with some visual headroom
+  const maxTemp = Math.max(tMax || 175, (tJunc || 0) + 20)
   const pct = (v) => Math.min(95, Math.max(0, (v / maxTemp) * 100))
 
   return (

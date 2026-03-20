@@ -94,6 +94,12 @@ export default function Sidebar({ blocks }) {
             status={b.mosfet?.status === 'done' ? 'done' : null}
             onClick={() => select('charts')}
           />
+          <NavItem
+            cfg={blocks.waveform}
+            isActive={active_block === 'waveform'}
+            status={b.mosfet?.status === 'done' ? 'done' : null}
+            onClick={() => select('waveform')}
+          />
         </div>
 
         {/* Feedback (special — horizontal) */}

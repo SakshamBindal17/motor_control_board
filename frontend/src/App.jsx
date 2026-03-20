@@ -12,6 +12,7 @@ import SettingsModal from './components/SettingsModal.jsx'
 import ReportPanel from './components/ReportPanel.jsx'
 import DesignConstantsModal from './components/DesignConstantsModal.jsx'
 import SmartTooltip from './components/SmartTooltip.jsx'
+import WaveformPanel from './components/WaveformPanel.jsx'
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -68,6 +69,15 @@ export const BLOCK_CONFIGS = {
     color: '#bb86fc',
     type: 'charts',
     desc: 'Parametric sweeps — loss vs frequency, derating, efficiency, gate timing',
+  },
+  waveform: {
+    key: 'waveform',
+    label: 'Waveform',
+    fullLabel: 'Waveform Simulator',
+    icon: '🔬',
+    color: '#FFD700',
+    type: 'waveform',
+    desc: 'Switching waveform simulator — Vgs, Vds, Id, Ig oscilloscope view from datasheet',
   },
   mcu: {
     key: 'mcu',
@@ -141,6 +151,7 @@ export default function App() {
       case 'motor': return <MotorForm config={cfg} />
       case 'passives': return <PassivesPanel config={cfg} />
       case 'feedback': return <FeedbackPanel config={cfg} />
+      case 'waveform': return <WaveformPanel config={cfg} />
       default: return null
     }
   }

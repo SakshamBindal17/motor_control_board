@@ -46,8 +46,15 @@ export default function ReportPanel() {
     setLoading('spice')
     toast.loading('Generating SPICE netlist…', { id: 'report' })
     try {
+      // Merge motor params into system_specs for SPICE load model
+      const motorSpecs = project.blocks.motor?.specs || {}
+      const specsWithMotor = {
+        ...project.system_specs,
+        motor_rph_mohm: parseFloat(motorSpecs.rph_mohm) || 50,
+        motor_lph_uh: parseFloat(motorSpecs.lph_uh) || 100,
+      }
       const blob = await downloadSpice(
-        project.system_specs,
+        specsWithMotor,
         project.calculations,
         buildParamsDict(project.blocks.mosfet)
       )

@@ -41,6 +41,13 @@ const DEFAULT_SYSTEM_SPECS = {
   control_mode: 'FOC',
   cooling: 'natural',
   pcb_layers: 6,
+  // Phase 2: PCB trace dimensions (mm) — used to auto-calculate parasitic inductance
+  gate_trace_length_mm: 0,    // Gate driver → MOSFET gate trace length
+  gate_trace_width_mm: 0,     // Gate trace width
+  gate_trace_height_mm: 0,    // Height above ground plane (dielectric thickness)
+  power_trace_length_mm: 0,   // Power loop total trace length (bus cap → drain → source → return)
+  power_trace_width_mm: 0,    // Power trace width
+  power_trace_height_mm: 0,   // Height above ground plane
 }
 
 const DEFAULT_MOTOR_SPECS = {
