@@ -89,6 +89,12 @@ export default function Sidebar({ blocks }) {
             onClick={() => select('dashboard')}
           />
           <NavItem
+            cfg={blocks.diagram}
+            isActive={active_block === 'diagram'}
+            status={done >= 1 ? 'done' : null}
+            onClick={() => select('diagram')}
+          />
+          <NavItem
             cfg={blocks.charts}
             isActive={active_block === 'charts'}
             status={b.mosfet?.status === 'done' ? 'done' : null}

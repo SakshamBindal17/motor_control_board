@@ -13,6 +13,7 @@ import ReportPanel from './components/ReportPanel.jsx'
 import DesignConstantsModal from './components/DesignConstantsModal.jsx'
 import SmartTooltip from './components/SmartTooltip.jsx'
 import WaveformPanel from './components/WaveformPanel.jsx'
+import DiagramPanel from './components/DiagramPanel.jsx'
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -60,6 +61,15 @@ export const BLOCK_CONFIGS = {
     color: '#1e90ff',
     type: 'dashboard',
     desc: 'Overview — health score, loss breakdown, thermal analysis, key metrics',
+  },
+  diagram: {
+    key: 'diagram',
+    label: 'Diagram',
+    fullLabel: 'Interactive Block Diagram',
+    icon: '🔌',
+    color: '#00d4e8',
+    type: 'diagram',
+    desc: 'Clickable topology — 3-phase inverter power stage, gate drive, control',
   },
   charts: {
     key: 'charts',
@@ -146,6 +156,7 @@ export default function App() {
     if (!cfg) return null
     switch (cfg.type) {
       case 'dashboard': return <DashboardPanel config={cfg} />
+      case 'diagram': return <DiagramPanel config={cfg} />
       case 'charts': return <ChartsPanel config={cfg} />
       case 'upload': return <BlockPanel key={state.active_block} blockKey={state.active_block} config={cfg} />
       case 'motor': return <MotorForm config={cfg} />
