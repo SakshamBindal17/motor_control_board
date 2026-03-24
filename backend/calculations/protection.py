@@ -28,7 +28,12 @@ class ProtectionMixin:
         r1_ovp       = 100e3   # fix R1 = 100kΩ
         self._log_hc("protection_dividers", "OVP/UVP R1", "100 kΩ", "Fixed top divider resistor for low bias current")
         r2_ovp       = r1_ovp * r_ratio_ovp
-        r2_ovp_std   = _nearest_e(r2_ovp / 1e3, E24) * 1e3
+        r2_ovp_std   = max(1e3, _nearest_e(r2_ovp / 1e3, E24) * 1e3)  # clamp min 1kΩ to avoid div-by-zero
+        if r2_ovp < 1e3:
+            self.audit_log.append(
+                f"[Protection] WARNING: OVP divider is degenerate — V_trip ({v_ovp_trip}V) is too close to "
+                f"V_ref ({v_ref}V). R2 clamped to 1kΩ minimum. Verify system voltages."
+            )
         v_trip_ovp_actual = v_ref * (r1_ovp + r2_ovp_std) / r2_ovp_std
         i_divider_ovp_ua  = (self.v_peak / (r1_ovp + r2_ovp_std)) * 1e6
 
@@ -42,7 +47,12 @@ class ProtectionMixin:
         r_ratio_uvp = 0 if v_uvp_diff <= 0 else v_ref / v_uvp_diff
         r1_uvp      = 100e3
         r2_uvp      = r1_uvp * r_ratio_uvp
-        r2_uvp_std  = _nearest_e(r2_uvp / 1e3, E24) * 1e3
+        r2_uvp_std  = max(1e3, _nearest_e(r2_uvp / 1e3, E24) * 1e3)  # clamp min 1kΩ
+        if r2_uvp < 1e3:
+            self.audit_log.append(
+                f"[Protection] WARNING: UVP divider is degenerate — V_trip ({v_uvp_trip}V) is too close to "
+                f"V_ref ({v_ref}V). R2 clamped to 1kΩ minimum."
+            )
         i_divider_uvp_ua = (self.v_bus / (r1_uvp + r2_uvp_std)) * 1e6
 
         # ── OCP threshold (shunt-based) ──

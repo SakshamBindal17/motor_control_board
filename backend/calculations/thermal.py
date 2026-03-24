@@ -5,6 +5,16 @@ import math
 class ThermalMixin:
     """Mixin providing calculations for: thermal, pcb_guidelines, emi_filter."""
 
+    # Cooling method → Rth_SA mapping (°C/W)
+    # Each tier: (typical_rth_sa, description)
+    COOLING_TIERS = {
+        "natural":       (40.0, "PCB copper only, still air — worst case"),
+        "enhanced_pcb":  (20.0, "PCB with copper pours + thermal vias, still air"),
+        "forced_air":    (10.0, "Forced air cooling (fan over PCB/heatsink)"),
+        "heatsink":      (5.0,  "Bolted heatsink with thermal interface material"),
+        "custom":        (None, "User-specified Rth_SA via design constants"),
+    }
+
     # ═══════════════════════════════════════════════════════════════════
     def calc_thermal(self) -> dict:
         if "thermal" in self._cached_results:
@@ -17,9 +27,36 @@ class ThermalMixin:
         tj_max  = self._get(self.mosfet, "MOSFET", "tj_max", 175)
 
         rth_cs  = self._dc("thermal.rth_cs")
-        rth_sa  = self._dc("thermal.rth_sa")
+
+        # ── Cooling method → Rth_SA ──────────────────────────────────
+        cooling_method = str(self.sys.get("cooling", "natural")).strip().lower()
+        tier = self.COOLING_TIERS.get(cooling_method)
+
+        if tier is None:
+            # Unknown cooling method string — treat as natural (worst case)
+            cooling_method = "natural"
+            tier = self.COOLING_TIERS["natural"]
+
+        tier_rth, tier_desc = tier
+
+        if cooling_method == "custom" or tier_rth is None:
+            # "custom" mode: use user's design constant directly
+            rth_sa = self._dc("thermal.rth_sa")
+            cooling_label = f"Custom (user-set {rth_sa} °C/W)"
+            self._log_hc("thermal", "PCB-to-ambient Rth", f"{rth_sa} °C/W",
+                          "User-specified custom value", "thermal.rth_sa")
+        else:
+            # Use tier value — ignore design constant default
+            rth_sa = tier_rth
+            cooling_label = f"{cooling_method.replace('_', ' ').title()} — {tier_desc}"
+            self.audit_log.append(
+                f"[Thermal] Cooling method: '{cooling_method}' → Rth_SA = {rth_sa} °C/W "
+                f"({tier_desc}). Change in Settings to adjust."
+            )
+            self._log_hc("thermal", "PCB-to-ambient Rth", f"{rth_sa} °C/W",
+                          f"From cooling method '{cooling_method}': {tier_desc}")
+
         self._log_hc("thermal", "Case-to-PCB Rth", f"{rth_cs} °C/W", "Thermal pad + solder interface", "thermal.rth_cs")
-        self._log_hc("thermal", "PCB-to-ambient Rth", f"{rth_sa} °C/W", "Natural convection, no heatsink", "thermal.rth_sa")
 
         # Thermal chain: Tj = T_amb + P × (Rth_jc + Rth_cs + Rth_sa)
         t_junc  = self.t_amb + p_fet * (rth_jc + rth_cs + rth_sa)
@@ -42,7 +79,7 @@ class ThermalMixin:
         else:
             p_copper_3ph = 0.0
 
-        p_system_total = p_fet * 6 + p_copper_3ph
+        p_system_total = p_fet * self.num_fets + p_copper_3ph
 
         # ── Driver IC thermal analysis (using extracted rth_ja and thermal_shutdown) ──
         rth_ja_drv = self._get(self.driver, "DRIVER", "rth_ja", None)
@@ -78,32 +115,39 @@ class ThermalMixin:
 
             self.audit_log.append(f"[Thermal] Driver IC: P={p_driver_total:.3f}W, Rth_ja={rth_ja_drv:.1f}°C/W, Tj_est={tj_driver:.0f}°C.")
 
-        # IPC-2152 trace width (external layer, 3oz Cu, 30°C rise)
+        # IPC-2152 trace width approximation for external layer, normalized to 3oz Cu with 30°C rise.
+        # Original formula for 1oz: A_mils² = (I / (0.048 × ΔT^0.44))^(1/0.725)
+        # For 3oz Cu: divide cross-sectional area by 3×1.4mil (thickness). Results are conservative;
+        # for currents >30A, use solid copper pours instead of traces.
         self._log_hc("thermal", "IPC-2152 derating", "3oz Cu, 30°C rise", "External layer trace width calculation")
         i_trace = self.i_max
-        # Simplified: A = (I / (0.048 × ΔT^0.44))^(1/0.725) for 1oz
-        # For 3oz: divide area by ~2.2
         area_mil2 = ((i_trace / (0.048 * (30**0.44))) ** (1/0.725))
         width_mm  = (area_mil2 / (3 * 1.4)) * 0.0254  # 3oz = 3×1.4mil thick, width_mil = area/thickness, ×0.0254 → mm
         trace_w   = max(3.0, round(width_mm, 1))
 
-        # Copper pour area for MOSFET pad (for 30°C rise from junction)
+        # Copper pour area for MOSFET pad: rule of thumb — 1 in² (645.16 mm²) of 1oz Cu
+        # dissipates ~1W with 30°C rise in still-air convection. Results are conservative.
         cu_area_mm2 = p_fet * 645 / 30
         vias_per_fet = int(self._dc("thermal.vias_per_fet"))
         self._log_hc("thermal", "Thermal vias", f"{vias_per_fet}x 0.3mm per FET", "Heat transfer to bottom copper", "thermal.vias_per_fet")
 
         result = {
             "p_per_fet_w":              round(p_fet,          3),
-            "p_total_6_fets_w":         round(p_fet * 6,      3),
+            "p_total_all_fets_w":       round(p_fet * self.num_fets, 3),
+            "p_total_6_fets_w":         round(p_fet * self.num_fets, 3),  # backward compat
+            "num_fets":                 self.num_fets,
             "rth_jc_c_per_w":           rth_jc,
             "rth_cs_c_per_w":           rth_cs,
             "rth_sa_pcb_c_per_w":       rth_sa,
+            "cooling_method":           cooling_method,
+            "cooling_label":            cooling_label,
             "t_case_est_c":             round(t_case,         1),
             "t_junction_est_c":         round(t_junc,         1),
             "tj_max_rated_c":           tj_max,
             "thermal_margin_c":         round(margin,         1),
             "thermal_safe":             safe,
             "power_trace_width_mm":     trace_w,
+            "trace_width_note":         f"IPC-2152 approx: 3oz Cu, 30°C rise, external layer. For >{i_trace:.0f}A use solid copper pours.",
             "copper_area_per_fet_mm2":  round(cu_area_mm2,    0),
             "thermal_vias_per_fet":     vias_per_fet,
             "via_drill_mm":             0.3,
@@ -113,8 +157,9 @@ class ThermalMixin:
                 "package":   "D2PAK (TO-263-7) — use thermal slug pad with solder mask opening",
                 "vias":      f"{vias_per_fet}× 0.3mm drilled, 0.2mm annular ring thermal vias per MOSFET",
                 "copper_oz": "3oz L1/L6, thermal slug pads open to both sides",
-                "warning":   "⚠ CRITICAL: Tj > 150°C — add heatsink or reduce fsw" if not safe
-                              else "✓ Thermal design safe for natural convection",
+                "cooling":   cooling_label,
+                "warning":   f"⚠ CRITICAL: Tj > 150°C — upgrade cooling (current: {cooling_method})" if not safe
+                              else f"✓ Thermal design safe ({cooling_method.replace('_', ' ')} cooling)",
             },
             "_meta": self._module_meta.get("thermal", {"hardcoded": [], "fallbacks": []}),
         }

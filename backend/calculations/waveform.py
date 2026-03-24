@@ -270,6 +270,9 @@ class WaveformMixin:
             "model_note":    (
                 "Analytical 4-region MOSFET switching model. Assumes linear Ciss/Cgd, "
                 "constant load current, and ideal gate driver current limiting. "
+                "Note: In reality, Ciss varies ~5× over the Vds range — actual "
+                "pre-threshold (Region 1) time may be ~2× longer than modeled, and "
+                "post-plateau (Region 4) time may be shorter. "
                 "Waveform shapes and timing are representative — for exact behavior, "
                 "validate with oscilloscope measurement."
             ),

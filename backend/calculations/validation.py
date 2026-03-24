@@ -118,6 +118,35 @@ class ValidationMixin:
             tau_ms = (lph / rph) * 1000
             results["phase_time_const_ms"] = round(tau_ms, 2)
 
+        # ── 6. Power-Torque-Speed cross-check ────────────────────
+        if rpm is not None and rpm > 0 and kt is not None and kt > 0:
+            omega = 2 * math.pi * rpm / 60.0  # rad/s
+            # Mechanical power from rated torque
+            if rated_tq is not None and rated_tq > 0:
+                p_mech_from_torque = rated_tq * omega
+                results["p_mechanical_from_motor_w"] = round(p_mech_from_torque, 0)
+                results["p_system_rated_w"] = self.power
+                mismatch_pct = abs(p_mech_from_torque - self.power) / self.power * 100 if self.power > 0 else 0
+                results["power_mismatch_pct"] = round(mismatch_pct, 1)
+
+                if mismatch_pct > 50:
+                    warnings.append(
+                        f"WARNING: Motor mechanical power ({p_mech_from_torque:.0f}W = "
+                        f"{rated_tq}Nm × {omega:.0f}rad/s) differs from system rating "
+                        f"({self.power}W) by {mismatch_pct:.0f}%. Verify motor specs match design target."
+                    )
+                    self.audit_log.append(f"[Motor] WARNING: Power mismatch — motor yields {p_mech_from_torque:.0f}W vs system {self.power}W ({mismatch_pct:.0f}% diff).")
+
+            # Max current from system power: I = P / (V_bus × efficiency × √3/2 for 3-phase)
+            i_from_power = self.power / (self.v_bus * 0.95 * 0.866) if self.v_bus > 0 else 0
+            results["i_max_from_power_a"] = round(i_from_power, 1)
+            if i_from_power > 0 and abs(i_from_power - self.i_max) / self.i_max > 0.5:
+                warnings.append(
+                    f"NOTE: System max current ({self.i_max}A) vs calculated from "
+                    f"power ({i_from_power:.1f}A = {self.power}W / ({self.v_bus}V × 0.95 × 0.866)). "
+                    f"Verify max_phase_current setting."
+                )
+
         results["warnings"] = warnings
         results["has_motor_data"] = any(v is not None for v in [rpm, pole_pairs, ke, kt, rph_mohm])
         results["_meta"] = self._module_meta.get("motor_validation", {"hardcoded": [], "fallbacks": []})
@@ -533,7 +562,7 @@ class ValidationMixin:
             rds_hot = rds_on * self._dc("thermal.rds_derating")
             i_rms = self.i_max / math.sqrt(2)
             p_cond = i_rms**2 * rds_hot
-            rth_total = rth_jc + self._dc("thermal.rth_cs") + self._dc("thermal.rth_sa")
+            rth_total = rth_jc + self._dc("thermal.rth_cs") + self._effective_rth_sa()
             tj_est = self.t_amb + p_cond * rth_total
             thermal_budget_pct = ((tj_max - tj_est) / (tj_max - self.t_amb)) * 100 if (tj_max - self.t_amb) > 0 else 0
 

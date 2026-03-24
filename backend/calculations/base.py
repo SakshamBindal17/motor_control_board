@@ -144,8 +144,17 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             self.fsw        = float(system_specs.get("pwm_freq_hz",   20000))
             self.t_amb      = float(system_specs.get("ambient_temp_c",   30))
             self.v_drv      = float(system_specs.get("gate_drive_voltage",12))
+            self.num_fets   = int(float(system_specs.get("num_fets",      6)))
         except (TypeError, ValueError) as e:
             raise ValueError(f"Invalid numeric value in system specs: {e}")
+
+        # Motor pole pairs from motor specs
+        self.pole_pairs = 4  # default
+        if motor_specs:
+            try:
+                self.pole_pairs = int(float(motor_specs.get("pole_pairs", 4)))
+            except (TypeError, ValueError):
+                pass
 
         # Validate critical system parameters
         if self.fsw <= 0:
@@ -156,15 +165,75 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             raise ValueError("Max phase current (max_phase_current) must be > 0 A")
         if self.v_drv <= 0:
             raise ValueError("Gate drive voltage (gate_drive_voltage) must be > 0 V")
+        if self.v_peak < self.v_bus:
+            raise ValueError(
+                f"Peak voltage ({self.v_peak}V) cannot be less than bus voltage ({self.v_bus}V). "
+                f"V_peak should account for regenerative braking overshoot and transient spikes."
+            )
+
+    # Engineering bounds for safety-critical design constants: {key: (min, max)}
+    _DC_BOUNDS = {
+        "thermal.rds_derating":  (1.0,  5.0),
+        "thermal.rth_cs":        (0.01, 10.0),
+        "thermal.rth_sa":        (0.5,  100.0),
+        "thermal.safe_margin":   (1,    100),
+        "thermal.vias_per_fet":  (0,    100),
+        "gate.rise_time_target": (5,    500),
+        "gate.rg_off_ratio":     (0.1,  2.0),
+        "gate.rg_bootstrap":     (0.1,  100),
+        "gate.bootstrap_vf":     (0.1,  2.0),
+        "boot.min_cap":          (10,   10000),
+        "boot.safety_margin":    (1.0,  10.0),
+        "boot.leakage_ua":       (1,    10000),
+        "dt.abs_margin":         (0,    500),
+        "dt.safety_mult":        (1.0,  5.0),
+        "snub.coss_mult":        (1,    20),
+        "snub.stray_l_default":  (1,    500),
+        "prot.adc_ref":          (1.0,  5.0),
+        "prot.ovp_margin":       (1.0,  2.0),
+        "prot.uvp_trip":         (0.3,  0.95),
+        "prot.ocp_hw":           (1.0,  5.0),
+        "prot.ocp_sw":           (1.0,  3.0),
+        "prot.otp_warn":         (40,   200),
+        "prot.otp_shutdown":     (50,   250),
+    }
 
     def _dc(self, key: str) -> float:
-        """Get a design constant — user override if set, else default."""
+        """Get a design constant — user override if set, else default.
+        Clamps to engineering bounds if defined, logging a warning if clamped."""
+        default = float(DESIGN_CONSTANTS[key][0])
+        val = default
         if key in self.design_constants:
             try:
-                return float(self.design_constants[key])
+                val = float(self.design_constants[key])
             except (TypeError, ValueError):
-                pass
-        return float(DESIGN_CONSTANTS[key][0])
+                val = default
+
+        # Enforce engineering bounds
+        bounds = self._DC_BOUNDS.get(key)
+        if bounds:
+            lo, hi = bounds
+            if val < lo:
+                self.audit_log.append(f"[Bounds] Design constant '{key}' = {val} clamped to minimum {lo}.")
+                val = lo
+            elif val > hi:
+                self.audit_log.append(f"[Bounds] Design constant '{key}' = {val} clamped to maximum {hi}.")
+                val = hi
+
+        return val
+
+    def _effective_rth_sa(self) -> float:
+        """Get effective Rth_SA based on cooling method selection.
+        Used by both mosfet_losses (Tj iteration) and thermal module."""
+        from calculations.thermal import ThermalMixin
+        cooling = str(self.sys.get("cooling", "natural")).strip().lower()
+        tier = ThermalMixin.COOLING_TIERS.get(cooling)
+        if tier is None:
+            tier = ThermalMixin.COOLING_TIERS["natural"]
+        tier_rth, _ = tier
+        if cooling == "custom" or tier_rth is None:
+            return self._dc("thermal.rth_sa")
+        return tier_rth
 
     def _log_hc(self, module: str, name: str, value: str, reason: str, dc_key: str = None):
         """Log a hardcoded constant used in a calculation module."""
@@ -176,6 +245,34 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
                 entry["overridden"] = True
                 entry["user_value"] = str(self.design_constants[dc_key])
             self._module_meta[module]["hardcoded"].append(entry)
+
+    # Engineering sanity bounds for extracted parameters (in SI units after conversion).
+    # If a value falls outside these bounds, it's almost certainly a bad extraction.
+    # Format: "param_id": (min_si, max_si, fallback_si, display_unit)
+    _PARAM_BOUNDS = {
+        # MOSFET parameters
+        "vds_max":       (10,       1200,     100,     "V"),
+        "id_cont":       (0.5,      500,      None,    "A"),
+        "rds_on":        (0.1e-3,   10,       1.5e-3,  "Ω"),
+        "vgs_th":        (0.5,      10,       3.0,     "V"),
+        "qg":            (1e-9,     5000e-9,  92e-9,   "C"),
+        "qgd":           (0.1e-9,   2000e-9,  30e-9,   "C"),
+        "qrr":           (0.1e-9,   5000e-9,  44e-9,   "C"),
+        "coss":          (1e-12,    100e-9,   200e-12, "F"),
+        "rth_jc":        (0.01,     20,       0.5,     "°C/W"),
+        "tr":            (0.1e-9,   10e-6,    30e-9,   "s"),
+        "tf":            (0.1e-9,   10e-6,    20e-9,   "s"),
+        "td_on":         (0.1e-9,   10e-6,    15e-9,   "s"),
+        "td_off":        (0.1e-9,   10e-6,    50e-9,   "s"),
+        # Driver parameters
+        "io_source":     (0.01,     30,       1.5,     "A"),
+        "io_sink":       (0.01,     30,       2.5,     "A"),
+        "prop_delay_on": (1e-9,     10e-6,    60e-9,   "s"),
+        "prop_delay_off":(1e-9,     10e-6,    60e-9,   "s"),
+        # MCU parameters
+        "adc_resolution":(6,        24,       12,      "bits"),
+        "pwm_deadtime_res":(0.1e-9, 1e-6,     8e-9,    "s"),
+    }
 
     def _get(self, params: dict, block_name: str, key: str, fallback=None, expected_unit: str = None):
         val = params.get(key)
@@ -202,9 +299,29 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
 
         from unit_utils import to_si
         unit = params.get(key + '__unit', expected_unit or '')
-        if unit:
-            return to_si(fval, unit)
-        return fval
+        si_val = to_si(fval, unit) if unit else fval
+
+        # Sanity-check extracted values against engineering bounds
+        bounds = self._PARAM_BOUNDS.get(key)
+        if bounds is not None:
+            lo, hi, bound_fallback, disp_unit = bounds
+            if si_val <= 0 and lo > 0:
+                # Zero or negative for a parameter that must be positive
+                fb = bound_fallback if bound_fallback is not None else fallback
+                self.audit_log.append(
+                    f"[{block_name}] SANITY: '{key}' extracted as {si_val} {disp_unit} "
+                    f"(≤ 0). Using fallback {fb}. Check datasheet extraction."
+                )
+                return fb if fb is not None else si_val
+            if si_val < lo or si_val > hi:
+                self.audit_log.append(
+                    f"[{block_name}] SANITY WARNING: '{key}' = {si_val} {disp_unit} "
+                    f"is outside expected range [{lo}–{hi}]. "
+                    f"Verify datasheet extraction is correct."
+                )
+                # Don't override — just warn. The value might be legitimate for exotic parts.
+
+        return si_val
 
 
     # ═══════════════════════════════════════════════════════════════════

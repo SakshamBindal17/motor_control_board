@@ -28,6 +28,17 @@ class GateDriveMixin:
         t_rise = t_rise_target_ns * 1e-9
         vdrv   = self.v_drv
 
+        # Guard against zero/negative extracted values that would cause division errors
+        if qg <= 0:
+            qg = 92e-9  # fallback to typical value
+            self.audit_log.append(f"[Gate Drive] WARNING: Qg extracted as ≤0. Using fallback 92nC.")
+        if io_src <= 0:
+            io_src = 1.5
+            self.audit_log.append(f"[Gate Drive] WARNING: Driver source current ≤0. Using fallback 1.5A.")
+        if io_snk <= 0:
+            io_snk = 2.5
+            self.audit_log.append(f"[Gate Drive] WARNING: Driver sink current ≤0. Using fallback 2.5A.")
+
         if vdrv <= vgs_th:
             self.audit_log.append(f"[Gate Drive] WARNING: V_drive ({vdrv}V) <= Vgs_th ({vgs_th}V). MOSFET may not fully turn on. Using V_drive - Vgs_th = 1V minimum for calculations.")
             vgs_th = vdrv - 1.0  # clamp to avoid negative/zero resistance
@@ -47,7 +58,7 @@ class GateDriveMixin:
         io_snk_a  = io_snk
 
         # Total Rg (internal + external) is what determines switching speed
-        # Rg_total = Qg × t_rise / (Vdrv - Vth), then Rg_ext = Rg_total - Rg_int
+        # Rg_total = t_rise × (Vdrv - Vth) / Qg, then Rg_ext = Rg_total - Rg_int
         rg_total_from_time = (vdrv - vgs_th) / (qg / t_rise)
         rg_drv_min         = (vdrv - vgs_th) / io_src
         rg_total_on        = max(rg_total_from_time, rg_drv_min)
@@ -254,9 +265,12 @@ class GateDriveMixin:
         duty_loss_pct = dt_pct
 
         # Body diode conduction loss during dead time (per phase leg, both transitions)
-        # P_body = Vf × I_max × dt_actual × fsw × 2 (two dead-time intervals per cycle)
-        p_body_diode_per_leg = body_diode_vf * self.i_max * (dt_actual * 1e-9) * self.fsw * 2
-        p_body_diode_total = p_body_diode_per_leg * 3  # 3 phase legs
+        # Sinusoidal average of |I(θ)| over electrical cycle = I_peak × 2/π
+        # P_body = Vf × I_avg × dt_actual × fsw × 2 (two dead-time intervals per cycle)
+        sin_avg = 2.0 / math.pi
+        p_body_diode_per_leg = body_diode_vf * self.i_max * sin_avg * (dt_actual * 1e-9) * self.fsw * 2
+        num_legs = self.num_fets // 2  # 2 MOSFETs per phase leg
+        p_body_diode_total = p_body_diode_per_leg * num_legs
 
         # Reverse recovery time check
         trr_warning = None

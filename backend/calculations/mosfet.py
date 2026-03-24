@@ -34,7 +34,7 @@ class MosfetMixin:
         tr_ns     = tr   * 1e9
         tf_ns     = tf   * 1e9
 
-        # RMS switch current
+        # ─── RMS switch current ───────────────────────────────────────
         # If motor Lph is available, refine with actual current ripple
         lph_uh = (self.motor or {}).get("lph_uh", "")
         try:
@@ -42,93 +42,237 @@ class MosfetMixin:
         except (TypeError, ValueError):
             lph = 0.0
 
+        # 3-phase SPWM per-switch RMS (Mohan textbook):
+        # I_sw_rms = I_peak × sqrt(1/8 + M/(3π)), M = modulation index ≈ 0.9
+        # This formula ALREADY accounts for duty-cycle weighting — do NOT divide by 2 again
+        M_spwm = 0.9  # typical SPWM modulation index
+        k_rms = math.sqrt(1/8 + M_spwm / (3 * math.pi))
+
+        # Always compute fundamental-only RMS
+        i_fund_rms = self.i_max * k_rms
+
+        ripple_warning = None
         if lph > 0:
             # With known Lph, calculate peak-to-peak current ripple
+            # ΔI = V_bus / (4 × Lph × f_sw) — worst-case at D=0.5 (low speed / stall)
             delta_i = (self.v_bus * 0.25) / (lph * self.fsw)  # ΔI at D=0.5
-            # RMS includes both fundamental + ripple: I_rms² = I_fund² + I_ripple²
-            i_fund_rms = self.i_max * math.sqrt(1/6 + (math.sqrt(3)/(4*math.pi)))
-            i_ripple_rms = delta_i / (2 * math.sqrt(3))  # ripple component
-            i_rms_sw = math.sqrt(i_fund_rms**2 + i_ripple_rms**2)
-            rms_method = f"Lph={float(lph_uh):.1f}µH (fund+ripple)"
-        else:
-            # Standard 3-ph SPWM approximation
-            i_rms_sw = self.i_max * math.sqrt(1/6 + (math.sqrt(3)/(4*math.pi)))
-            rms_method = "3-ph SPWM approximation"
+            i_ripple_rms = delta_i / (2 * math.sqrt(3))  # triangular wave RMS
+            ripple_ratio = delta_i / self.i_max if self.i_max > 0 else 0
 
-        # Conduction loss with temp derating
-        rds_derating = self._dc("thermal.rds_derating")
-        rds_hot = rds * rds_derating
-        self.audit_log.append(f"[MOSFET] Applied {rds_derating}x thermal multiplier for Rds(on) at estimated ~100°C junction.")
-        self._log_hc("mosfet_losses", "Rds(on) thermal derating", f"{rds_derating}x", "Worst-case at ~100°C junction temperature", "thermal.rds_derating")
+            # RMS includes both fundamental + ripple: I_rms² = I_fund² + I_ripple²
+            i_rms_sw = math.sqrt(i_fund_rms**2 + i_ripple_rms**2)
+            rms_method = (
+                f"Lph={float(lph_uh):.1f}µH — fund={i_fund_rms:.1f}A + ripple={i_ripple_rms:.1f}A "
+                f"(ΔI={delta_i:.1f}A, {ripple_ratio*100:.0f}% of I_load, M={M_spwm})"
+            )
+
+            # Flag high-ripple designs
+            if ripple_ratio > 0.30:
+                ripple_warning = (
+                    f"⚠ HIGH RIPPLE: ΔI_pp={delta_i:.1f}A is {ripple_ratio*100:.0f}% of I_load={self.i_max}A. "
+                    f"This is a worst-case (stall/low-speed) estimate. At rated speed, back-EMF reduces "
+                    f"effective ripple significantly. Consider: (1) verify Lph value, "
+                    f"(2) increase f_sw, (3) check if motor back-EMF reduces actual ripple."
+                )
+                self.audit_log.append(f"[MOSFET] WARNING: Ripple current ΔI={delta_i:.1f}A is {ripple_ratio*100:.0f}% of I_load — very high for motor drive.")
+        else:
+            i_ripple_rms = 0.0
+            delta_i = 0.0
+            # Standard 3-ph SPWM approximation (no ripple info)
+            i_rms_sw = i_fund_rms
+            rms_method = f"3-ph SPWM (Mohan, M={M_spwm}), no Lph for ripple"
+
+        # ─── Conduction loss with temperature-dependent Rds(on) derating ──
+        # Silicon MOSFET Rds(on) scales roughly as (Tj/Tref)^α where α ≈ 2.0-2.3
+        # We iterate: guess Tj → compute Rds(Tj) → compute loss → new Tj → converge
+        rds_derating_override = self._dc("thermal.rds_derating")
+        rth_cs_val = self._dc("thermal.rth_cs")
+        rth_sa_val = self._effective_rth_sa()
+        rth_total = rth_jc + rth_cs_val + rth_sa_val
+
+        # Check if user manually overrode the derating (non-default value)
+        user_overrode_derating = "thermal.rds_derating" in (self.design_constants or {})
+
+        if user_overrode_derating:
+            # Respect user's explicit override
+            rds_derating = rds_derating_override
+            rds_hot = rds * rds_derating
+            tj_for_rds = 25 + (rds_derating - 1) * 50  # rough estimate of what Tj this corresponds to
+            self.audit_log.append(f"[MOSFET] User-overridden Rds(on) derating: {rds_derating}x.")
+        else:
+            # Iterative Tj-dependent derating (α=2.1 typical for Si MOSFETs)
+            alpha_rds = 2.1
+            t_ref = 300.0  # 27°C in Kelvin (datasheet Rds(on) reference)
+            tj_est = 100.0  # initial guess in °C
+            for _ in range(5):  # converges in 2-3 iterations
+                rds_derating = (((tj_est + 273.15) / t_ref) ** alpha_rds)
+                rds_hot = rds * rds_derating
+                p_cond_est = i_rms_sw ** 2 * rds_hot
+                # Rough total loss estimate for Tj iteration (sw + gate + rr as fixed)
+                p_other_est = self.v_bus * self.i_max * (tr + tf) * self.fsw / math.pi + qg * self.v_drv * self.fsw + qrr * self.v_bus * self.fsw
+                p_total_est = p_cond_est + p_other_est
+                tj_est = self.t_amb + p_total_est * rth_total
+            rds_derating = round(rds_derating, 3)
+            tj_for_rds = round(tj_est, 1)
+            self.audit_log.append(
+                f"[MOSFET] Iterative Rds(on) derating: {rds_derating}x at estimated Tj={tj_for_rds}°C "
+                f"(α={alpha_rds}, Tref={t_ref-273.15:.0f}°C). Override via design constant 'thermal.rds_derating'."
+            )
+
+        self._log_hc("mosfet_losses", "Rds(on) thermal derating", f"{rds_derating}x",
+                      f"{'User override' if user_overrode_derating else f'Iterative model at Tj≈{tj_for_rds}°C (α=2.1)'}", "thermal.rds_derating")
+        # P_cond = I_rms² × Rds(on)  — NO /2, I_rms is already per-switch
         p_cond  = i_rms_sw**2 * rds_hot
 
-        # Switching loss — enhanced model using Miller plateau if available
+        # ─── Switching loss — use actual Rg from gate_resistors if available ───
         rg_int = self._get(self.mosfet, "MOSFET", "rg_int", None)  # Ω
+        io_src = self._get(self.driver, "DRIVER", "io_source", None)  # A
+        io_snk = self._get(self.driver, "DRIVER", "io_sink", None)    # A
+
+        # Sinusoidal averaging factor: over a half-cycle, avg(sin θ) = 2/π
+        sin_avg = 2.0 / math.pi
 
         if vgs_plateau is not None and qgd > 0 and rg_int is not None:
-            # ─── Qgd-based switching loss (more accurate) ───
-            # During Miller plateau, Vgs is clamped at Vplateau.
-            # Gate current during plateau: I_g = (Vdrv - Vplateau) / (Rg_int + Rg_ext)
-            # Use Rg_ext from design constants target rise time, estimate ~2Ω typical
-            rg_ext_est = max(1.0, self._dc("gate.rise_time_target") * 1e-9 * (self.v_drv - vgs_plateau) / qgd if qgd > 0 else 2.0)
-            rg_total = rg_int + rg_ext_est
+            # ─── Qgd-based switching loss (most accurate) ───
+            # Try to use actual calculated Rg from gate_resistors module
+            try:
+                gr = self.calc_gate_resistors()
+                self._current_module = "mosfet_losses"  # restore after subroutine
+                rg_on_ext = gr.get("rg_on_recommended_ohm", None)
+                rg_off_ext = gr.get("rg_off_recommended_ohm", None)
+                rg_source = "gate_resistors module"
+            except Exception:
+                rg_on_ext = None
+                rg_off_ext = None
+                rg_source = None
 
-            # Gate current during Miller plateau
-            i_gate_on = (self.v_drv - vgs_plateau) / rg_total
-            i_gate_off = vgs_plateau / rg_total  # discharge through Rg to GND
+            if rg_on_ext is not None and rg_off_ext is not None:
+                # Use actual calculated gate resistors
+                rg_total_on = rg_int + rg_on_ext
+                rg_total_off = rg_int + rg_off_ext
+                self.audit_log.append(
+                    f"[MOSFET] Using calculated Rg from gate_resistors: "
+                    f"Rg_on={rg_on_ext}Ω + Rg_int={rg_int:.1f}Ω = {rg_total_on:.2f}Ω, "
+                    f"Rg_off={rg_off_ext}Ω + Rg_int={rg_int:.1f}Ω = {rg_total_off:.2f}Ω."
+                )
+            else:
+                # Fallback: estimate from rise-time target
+                rg_ext_est = max(1.0, self._dc("gate.rise_time_target") * 1e-9 * (self.v_drv - vgs_plateau) / qgd if qgd > 0 else 2.0)
+                rg_total_on = rg_int + rg_ext_est
+                rg_total_off = rg_total_on  # symmetric fallback
+                rg_source = f"estimated (40ns rise target → Rg_ext={rg_ext_est:.1f}Ω)"
+                self.audit_log.append(
+                    f"[MOSFET] Gate resistors not available, using estimated Rg_ext={rg_ext_est:.1f}Ω "
+                    f"from {self._dc('gate.rise_time_target')}ns rise-time target."
+                )
+
+            # Gate current during Miller plateau — CLAMPED to driver capability
+            i_gate_on_ideal = (self.v_drv - vgs_plateau) / rg_total_on
+            i_gate_off_ideal = vgs_plateau / rg_total_off
+
+            # Driver current limiting: gate current cannot exceed source/sink capability
+            driver_limited = False
+            if io_src is not None and i_gate_on_ideal > io_src:
+                i_gate_on = io_src
+                driver_limited = True
+                self.audit_log.append(
+                    f"[MOSFET] Turn-on gate current clamped by driver: "
+                    f"ideal={i_gate_on_ideal:.2f}A > io_source={io_src:.2f}A."
+                )
+            else:
+                i_gate_on = i_gate_on_ideal
+
+            if io_snk is not None and i_gate_off_ideal > io_snk:
+                i_gate_off = io_snk
+                driver_limited = True
+                self.audit_log.append(
+                    f"[MOSFET] Turn-off gate current clamped by driver: "
+                    f"ideal={i_gate_off_ideal:.2f}A > io_sink={io_snk:.2f}A."
+                )
+            else:
+                i_gate_off = i_gate_off_ideal
 
             # Voltage transition time during Miller plateau
             t_miller_on = qgd / i_gate_on if i_gate_on > 0 else tr
             t_miller_off = qgd / i_gate_off if i_gate_off > 0 else tf
 
-            # Switching energy per event: E = 0.5 × V × I × t_miller
-            e_on = 0.5 * self.v_peak * self.i_max * t_miller_on
-            e_off = 0.5 * self.v_peak * self.i_max * t_miller_off
+            # Sinusoidally-averaged switching energy: E = 0.5 × V × I_avg × t
+            e_on = 0.5 * self.v_bus * self.i_max * sin_avg * t_miller_on
+            e_off = 0.5 * self.v_bus * self.i_max * sin_avg * t_miller_off
             p_sw = (e_on + e_off) * self.fsw
 
             # Also compute overlap model for comparison
-            p_sw_overlap = 0.5 * self.v_peak * self.i_max * (tr + tf) * self.fsw
+            p_sw_overlap = self.v_bus * self.i_max * (tr + tf) * self.fsw / math.pi
             sw_method = (
-                f"Qgd-based model (Vplateau={vgs_plateau:.1f}V, Rg_int={rg_int:.2f}Ω, "
-                f"t_miller_on={t_miller_on*1e9:.1f}ns, t_miller_off={t_miller_off*1e9:.1f}ns). "
-                f"Simple overlap model would give {p_sw_overlap:.3f}W"
+                f"Qgd-based ({rg_source}): Vplateau={vgs_plateau:.1f}V, "
+                f"Rg_on_total={rg_total_on:.2f}Ω, Rg_off_total={rg_total_off:.2f}Ω, "
+                f"Ig_on={i_gate_on:.2f}A{'(driver-limited)' if driver_limited else ''}, "
+                f"t_miller_on={t_miller_on*1e9:.1f}ns, t_miller_off={t_miller_off*1e9:.1f}ns. "
+                f"Overlap model: {p_sw_overlap:.3f}W"
             )
             self.audit_log.append(
-                f"[MOSFET] Using Qgd-based switching loss: Vplateau={vgs_plateau:.1f}V, "
+                f"[MOSFET] Qgd switching loss: "
                 f"Ig_on={i_gate_on:.2f}A, Ig_off={i_gate_off:.2f}A, "
                 f"t_miller_on={t_miller_on*1e9:.1f}ns, t_miller_off={t_miller_off*1e9:.1f}ns. "
                 f"P_sw={p_sw:.3f}W vs overlap={p_sw_overlap:.3f}W."
             )
         else:
-            # ─── Standard overlap model ───
-            p_sw = 0.5 * self.v_peak * self.i_max * (tr + tf) * self.fsw
-            sw_method = "overlap model (Vgs_plateau or Rg_int not available)"
+            # ─── Standard overlap model (sinusoidally averaged) ───
+            # P_sw = V_bus × I_peak × (tr + tf) × fsw / π
+            p_sw = self.v_bus * self.i_max * (tr + tf) * self.fsw / math.pi
+            sw_method = "overlap model, sin-averaged (Vgs_plateau or Rg_int not available)"
+            driver_limited = False
 
-        # Reverse recovery loss
-        p_rr = qrr * self.v_peak * self.fsw
+        # ─── Reverse recovery loss ────────────────────────────────────
+        # Body diode recovers against V_bus (not peak with transients)
+        p_rr = qrr * self.v_bus * self.fsw
 
-        # Gate drive charge loss
+        # ─── Gate drive charge loss ───────────────────────────────────
         p_gate = qg * self.v_drv * self.fsw
 
-        # Output capacitance loss (Coss/Qoss energy dissipated each cycle)
+        # ─── Output capacitance loss (Coss/Qoss) ─────────────────────
+        # Coss energy is stored at turn-off (from bus), dissipated at turn-on → 1 event/cycle
+        # E_oss ≈ 0.5 × Qoss × V_bus (charge-equivalent for nonlinear Coss)
         qoss = self._get(self.mosfet, "MOSFET", "qoss", None)  # C
         if qoss is not None:
-            # Eoss ≈ Qoss × Vds / 2 per switching event, 2 events per cycle per FET
-            p_coss_per_fet = qoss * self.v_peak * self.fsw
-            self.audit_log.append(f"[MOSFET] Using Qoss={qoss*1e9:.0f}nC from datasheet for output capacitance loss.")
+            p_coss_per_fet = 0.5 * qoss * self.v_bus * self.fsw
+            self.audit_log.append(f"[MOSFET] Coss: Qoss={qoss*1e9:.0f}nC, E_oss=0.5*Qoss*Vbus, 1 event/cycle → {p_coss_per_fet:.4f}W.")
         else:
             p_coss_per_fet = 0
 
-        p_total_1 = p_cond + p_sw + p_rr + p_gate + p_coss_per_fet
-        p_total_6 = p_total_1 * 6
+        # ─── Dead-time body diode conduction loss (per FET) ───────────
+        # During dead time, load current flows through body diode of the complementary FET.
+        # Per phase leg: P = Vf × I × dt × fsw × 2 (two dead-time intervals per cycle)
+        # Sinusoidal average of |I(θ)| over a cycle = I_peak × 2/π
+        # Per FET (half the leg): divide by 2
+        # Net: P_body_per_FET = Vf × I_peak × (2/π) × dt × fsw
+        dt_ns = float(self.ovr.get("dead_time_ns", 200))  # ns, default 200ns
+        try:
+            dt_module = self.calc_dead_time()
+            self._current_module = "mosfet_losses"  # restore
+            dt_ns = dt_module.get("dt_actual_ns", dt_ns)
+        except Exception:
+            pass
+        dt_s = dt_ns * 1e-9
+        # Two dead-time events per PWM cycle, sin-averaged current, per FET = half a leg
+        p_body_diode = body_diode_vf * self.i_max * sin_avg * dt_s * self.fsw * 2 / 2
+        self.audit_log.append(
+            f"[MOSFET] Body diode loss: Vf={body_diode_vf:.1f}V × I_avg × "
+            f"dt={dt_ns:.0f}ns × fsw × 2 events / 2 FETs = {p_body_diode:.3f}W/FET."
+        )
 
-        # Junction temp estimate
+        # ─── Total loss per FET ───────────────────────────────────────
+        p_total_1 = p_cond + p_sw + p_rr + p_gate + p_coss_per_fet + p_body_diode
+        p_total_6 = p_total_1 * self.num_fets
+
+        # Junction temp estimate — use cooling-method-aware Rth_SA (consistent with thermal module)
         rth_cs_val = self._dc("thermal.rth_cs")
-        rth_sa_val = self._dc("thermal.rth_sa")
+        rth_sa_val = self._effective_rth_sa()
         t_junc = self.t_amb + p_total_1 * (rth_jc + rth_cs_val + rth_sa_val)
         self.audit_log.append(f"[Thermal] Used TIM: {rth_cs_val}°C/W, PCB-to-ambient: {rth_sa_val}°C/W.")
         self._log_hc("mosfet_losses", "TIM resistance (Rth_CS)", f"{rth_cs_val} °C/W", "Thermal interface material between case and PCB", "thermal.rth_cs")
-        self._log_hc("mosfet_losses", "PCB thermal resistance (Rth_SA)", f"{rth_sa_val} °C/W", "Natural convection, no heatsink assumed", "thermal.rth_sa")
+        self._log_hc("mosfet_losses", "PCB thermal resistance (Rth_SA)", f"{rth_sa_val} °C/W",
+                      f"From cooling method selection (see thermal module)", "thermal.rth_sa")
 
         # Inverter switching losses only (excludes motor copper/core losses)
         eff = 0 if self.power == 0 else max(0, (1 - p_total_6 / self.power) * 100)
@@ -139,22 +283,36 @@ class MosfetMixin:
             "recovery_loss_per_fet_w":    round(p_rr,      3),
             "gate_charge_loss_per_fet_w": round(p_gate,    4),
             "coss_loss_per_fet_w":        round(p_coss_per_fet, 4),
+            "body_diode_loss_per_fet_w":  round(p_body_diode, 3),
             "total_loss_per_fet_w":       round(p_total_1, 3),
-            "total_all_6_fets_w":         round(p_total_6, 3),
+            "total_all_fets_w":           round(p_total_6, 3),
+            "total_all_6_fets_w":         round(p_total_6, 3),  # backward compat
+            "num_fets":                   self.num_fets,
             "i_rms_switch_a":             round(i_rms_sw,  2),
+            "i_rms_fundamental_a":        round(i_fund_rms, 2),
+            "i_rms_ripple_a":             round(i_ripple_rms, 2) if lph > 0 else None,
+            "ripple_delta_i_a":           round(delta_i, 1) if lph > 0 else None,
             "rds_on_derated_mohm":        round(rds_mohm*rds_derating, 3),
             "junction_temp_est_c":        round(t_junc,    1),
             "efficiency_mosfet_pct":      round(eff,       2),
+            "dead_time_used_ns":          round(dt_ns, 1),
             "notes": {
                 "rds_basis":    f"Rds(on)={rds_mohm}mΩ × {rds_derating} temp derating",
                 "irms_method":  f"I_rms={round(i_rms_sw,2)}A — {rms_method}",
-                "sw_basis":     f"tr={tr_ns}ns, tf={tf_ns}ns @ fsw={self.fsw/1e3:.0f}kHz — {sw_method}",
+                "sw_basis":     f"tr={tr_ns}ns, tf={tf_ns}ns @ fsw={self.fsw/1e3:.0f}kHz, Vbus={self.v_bus}V — {sw_method}",
                 "rr_basis":     f"Qrr={qrr_nc}nC × Vbus × fsw",
                 "coss_basis":   f"Qoss={'%.0f' % (qoss*1e9) if qoss else 'N/A'}nC — {'from datasheet' if qoss else 'not extracted'}",
+                "body_diode":   f"Vf={body_diode_vf:.1f}V, dt={dt_ns:.0f}ns, 2 events/cycle",
                 "improvement":  "Increase fsw reduces motor ripple but increases switching losses",
             },
             "_meta": self._module_meta.get("mosfet_losses", {"hardcoded": [], "fallbacks": []}),
         }
+
+        # Add warnings
+        if ripple_warning:
+            result["ripple_warning"] = ripple_warning
+        if driver_limited:
+            result["driver_current_limited"] = True
 
         # Add extracted-but-informational parameters
         if vgs_plateau is not None:
@@ -209,13 +367,13 @@ class MosfetMixin:
             results["voltage_ok"] = None
             self.audit_log.append("[MOSFET Rating] Vds_max not extracted — cannot validate voltage rating.")
 
-        # ── Current rating check ──
+        # ── Current rating check (with 25% derating, matching voltage check rigor) ──
         if id_cont is not None:
             i_margin_pct = ((id_cont - self.i_max) / id_cont) * 100 if id_cont > 0 else 0
             results["id_cont_a"] = round(id_cont, 1)
             results["i_max_a"] = self.i_max
             results["current_margin_pct"] = round(i_margin_pct, 1)
-            results["current_ok"] = id_cont >= self.i_max
+            results["current_ok"] = id_cont >= self.i_max * 1.25  # 25% derating (Tc=25°C rating vs real PCB)
 
             if id_cont < self.i_max:
                 warnings.append(
@@ -223,6 +381,13 @@ class MosfetMixin:
                     f"MOSFET will overheat at maximum load. Choose a higher-current part or parallel MOSFETs."
                 )
                 self.audit_log.append(f"[MOSFET Rating] DANGER: Id_cont ({id_cont}A) < I_max ({self.i_max}A).")
+            elif id_cont < self.i_max * 1.25:
+                warnings.append(
+                    f"WARNING: Id_cont ({id_cont}A) has < 25% margin over I_max ({self.i_max}A). "
+                    f"Datasheet Id_cont is rated at Tc=25°C — on a real PCB, effective current "
+                    f"capacity is significantly lower. Recommend ≥ 1.25× derating."
+                )
+                self.audit_log.append(f"[MOSFET Rating] WARNING: Id_cont margin is only {i_margin_pct:.0f}% (need ≥ 25%).")
             else:
                 self.audit_log.append(f"[MOSFET Rating] Id_cont={id_cont}A vs I_max={self.i_max}A — OK ({i_margin_pct:.0f}% margin).")
         else:

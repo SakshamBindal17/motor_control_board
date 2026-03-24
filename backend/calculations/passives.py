@@ -72,6 +72,7 @@ class PassivesMixin:
         esr_typ_mohm = self._dc("input.esr_per_cap")
         self._log_hc("input_capacitors", "Typical ESR per cap", f"{esr_typ_mohm} mΩ", "Electrolytic ESR estimate for thermal calc", "input.esr_per_cap")
         p_cap_total  = i_ripple_rms**2 * (esr_typ_mohm/1000) / n_caps
+        p_per_cap    = (i_ripple_rms / n_caps) ** 2 * (esr_typ_mohm / 1000)
 
         self.audit_log.append("[DC Bus] Hardcoded standard decoupling: 50mΩ ESR per electrolytic, 4.7µF film, 100nF MLCC.")
 
@@ -90,6 +91,7 @@ class PassivesMixin:
             "esr_budget_per_cap_mohm":  round(esr_per_cap,        1),
             "i_ripple_per_cap_a":       round(i_rip_per_cap,      2),
             "cap_dissipation_w":        round(p_cap_total,        3),
+            "cap_dissipation_per_cap_w":round(p_per_cap,          4),
             "c_film_uf":                c_film_uf,
             "c_film_v_rating":          100,
             "c_film_qty":               2,
@@ -240,9 +242,15 @@ class PassivesMixin:
         rs_recommend = max(1.0, min(100.0, round(rs_std, 0)))
         cs_recommend = cs_pf_std
 
+        # Dynamic snubber cap label
+        if cs_recommend >= 1000:
+            cs_label = f"{cs_recommend/1000:.0f}nF / {int(self.v_peak * 2)}V X7R MLCC"
+        else:
+            cs_label = f"{cs_recommend:.0f}pF / {int(self.v_peak * 2)}V X7R MLCC"
+
         # Snubber power dissipation (per MOSFET)
         p_snubber = 0.5 * (cs_recommend * 1e-12) * (self.v_peak**2) * self.fsw
-        p_snubber_total = p_snubber * 6
+        p_snubber_total = p_snubber * self.num_fets
 
         # Qoss energy validation — compare snubber energy with Coss stored energy
         qoss = self._get(self.mosfet, "MOSFET", "qoss", None)  # C (SI)
@@ -269,9 +277,10 @@ class PassivesMixin:
             "rs_critical_ohm":          round(rs_crit,      2),
             "rs_recommended_ohm":       rs_recommend,
             "cs_recommended_pf":        cs_recommend,
-            "cs_recommended_label":     "1nF / 100V X7R MLCC",
+            "cs_recommended_label":     cs_label,
             "p_per_snubber_w":          round(p_snubber,    4),
-            "p_total_6_snubbers_w":     round(p_snubber_total, 3),
+            "p_total_all_snubbers_w":    round(p_snubber_total, 3),
+            "p_total_6_snubbers_w":      round(p_snubber_total, 3),  # backward compat
             "rs_power_rating":          "0.1W minimum (0402)",
             "notes": {
                 "rs_placement":   "Place Cs physically closest to MOSFET D-S pins",
