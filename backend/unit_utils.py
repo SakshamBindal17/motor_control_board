@@ -11,12 +11,14 @@ Usage:
     qg_si  = to_si(92, "nC")    # → 9.2e-8  (Coulombs)
 """
 
-# Multiplier table: unit string (lowercase, stripped) → SI multiplier
+# Multiplier table: unit string (lowercase, stripped, µ-normalized) → SI multiplier
+# IMPORTANT: All micro-prefix entries use U+00B5 (µ). The to_si() function
+# normalizes U+03BC (Greek mu μ) → U+00B5 (µ) before lookup, so both work.
 _MULTIPLIERS = {
-    # Resistance
-    "mω": 1e-3, "mohm": 1e-3, "mΩ": 1e-3,
-    "kω": 1e3,  "kohm": 1e3,  "kΩ": 1e3,
-    "ω":  1.0,  "ohm":  1.0,  "Ω": 1.0,
+    # Resistance (all keys lowercase; to_si() normalizes Ω→ω via .lower() + .replace())
+    "mω": 1e-3, "mohm": 1e-3,
+    "kω": 1e3,  "kohm": 1e3,
+    "ω":  1.0,  "ohm":  1.0,
 
     # Capacitance
     "pf": 1e-12, "nf": 1e-9, "µf": 1e-6, "uf": 1e-6, "mf": 1e-3, "f": 1.0,
@@ -39,6 +41,9 @@ _MULTIPLIERS = {
 
     # Frequency
     "hz": 1.0, "khz": 1e3, "mhz": 1e6, "ghz": 1e9,
+
+    # Inductance
+    "µh": 1e-6, "uh": 1e-6, "mh": 1e-3, "h": 1.0, "nh": 1e-9, "ph": 1e-12,
 
     # Thermal resistance
     "°c/w": 1.0, "c/w": 1.0,
@@ -110,11 +115,19 @@ def to_si(value: float, unit: str) -> float:
     """Convert value in given unit to SI base unit value."""
     if value is None:
         return None
-    # Normalize Unicode: Ω (U+2126 OHM SIGN) and Ω (U+03A9 GREEK CAPITAL OMEGA) → ω
-    key = unit.strip().lower().replace("\u2126", "ω").replace("Ω", "ω").replace("ω", "ω")
+    # Normalize Unicode:
+    #   U+2126 (OHM SIGN) → ω (lowercase omega, used in multiplier keys)
+    #   U+03A9 (GREEK CAPITAL OMEGA Ω) → ω
+    #   U+03BC (GREEK SMALL MU μ) → U+00B5 (MICRO SIGN µ) — critical for µF/µs/µA/µH
+    key = (unit.strip()
+           .lower()
+           .replace("\u2126", "ω")    # OHM SIGN → ω
+           .replace("\u03a9", "ω")    # GREEK CAPITAL OMEGA → ω (after lowercase)
+           .replace("Ω", "ω")
+           .replace("\u03bc", "\u00b5"))  # GREEK MU μ → MICRO SIGN µ
     mult = _MULTIPLIERS.get(key)
     if mult is None:
-        # Try without unicode normalisation issues
+        # Fallback: try raw lowercased key
         key2 = unit.strip().lower()
         mult = _MULTIPLIERS.get(key2, 1.0)
     return float(value) * mult

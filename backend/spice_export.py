@@ -8,13 +8,15 @@ import textwrap
 from datetime import datetime
 
 
-def generate_spice_netlist(system_specs: dict, calculations: dict, mosfet_params: dict) -> str:
+def generate_spice_netlist(system_specs: dict, calculations: dict, mosfet_params: dict,
+                           motor_specs: dict = None) -> str:
     """Generate a SPICE netlist string from calculation results.
 
     Args:
         system_specs: System-level specs (bus_voltage, peak_voltage, etc.)
         calculations: Output from CalculationEngine.run_all()
         mosfet_params: Raw MOSFET parameters (flat dict with __unit keys)
+        motor_specs: Motor parameters (rph_mohm, lph_uh, etc.)
 
     Returns:
         String containing ngspice-compatible netlist (.cir format)
@@ -43,14 +45,16 @@ def generate_spice_netlist(system_specs: dict, calculations: dict, mosfet_params
     c_bulk_uf = ic.get('c_per_bulk_cap_uf', 100)
     esr_mohm = ic.get('esr_budget_per_cap_mohm', 50)
 
-    # Shunt
+    # Shunt — key is "three_shunt" in calc output (not "three_phase_shunt")
     r_shunt_mohm = 1.0  # default
     if sh.get('single_shunt'):
         r_shunt_mohm = sh['single_shunt'].get('value_mohm', 1.0)
-    elif sh.get('three_phase_shunt'):
-        r_shunt_mohm = sh['three_phase_shunt'].get('value_mohm', 1.0)
+    elif sh.get('three_shunt'):
+        r_shunt_mohm = sh['three_shunt'].get('value_mohm', 1.0)
 
     dt_ns = dt.get('dt_actual_ns', 200)
+    if fsw <= 0:
+        fsw = 20000  # safe fallback
     t_period = 1.0 / fsw
     t_period_us = t_period * 1e6
     dt_us = dt_ns / 1000
@@ -61,13 +65,15 @@ def generate_spice_netlist(system_specs: dict, calculations: dict, mosfet_params
     vds_max = _get_mosfet_val(mosfet_params, 'vds_max', 100.0)
     coss_pf = _get_mosfet_val(mosfet_params, 'coss', 500e-12) * 1e12
     qg_nc = _get_mosfet_val(mosfet_params, 'qg', 92e-9) * 1e9
-    body_diode_vf = _get_mosfet_val(mosfet_params, 'body_diode_vf', 1.0)
+    body_diode_vf = _get_mosfet_val(mosfet_params, 'body_diode_vf', 0.7)
 
-    # Motor parameters (use actual values if available)
-    motor_rph_mohm = system_specs.get('motor_rph_mohm', 50)
-    motor_lph_uh = system_specs.get('motor_lph_uh', 100)
+    # Motor parameters — from motor_specs block, fallback to system_specs then defaults
+    ms = motor_specs or {}
+    motor_rph_mohm = _try_float(ms.get('rph_mohm'), system_specs.get('motor_rph_mohm', 50))
+    motor_lph_uh = _try_float(ms.get('lph_uh'), system_specs.get('motor_lph_uh', 100))
 
     # Total bus cap (parallel caps)
+    n_bulk = max(n_bulk, 1)  # guard against zero
     c_bus_total_uf = n_bulk * c_bulk_uf
     esr_total_mohm = esr_mohm / n_bulk
 
@@ -95,7 +101,10 @@ def generate_spice_netlist(system_specs: dict, calculations: dict, mosfet_params
 * Dead Time: {dt_ns:.0f} ns
 *
 * NOTE: This is a simplified behavioral model for design verification.
-* Replace MOSFET models with vendor SPICE models for accurate results.
+* It does NOT include: Coss energy loss, body diode forward conduction,
+* temperature-dependent Rds(on), or thermal coupling between FETs.
+* For accurate loss totals, use the Calculation Engine results.
+* Replace MOSFET models with vendor SPICE models for full accuracy.
 *
 * Compatible with: ngspice, LTspice, browser-based SPICE simulators
 *
@@ -142,10 +151,21 @@ D_LS    n_shunt sw_node DBODY
 * GATE DRIVE CIRCUIT
 * =====================================================================
 * Gate resistors: Rg_on={rg_on}ohm, Rg_off={rg_off}ohm
-* Simplified as single Rg per MOSFET (parallel on/off path)
+* Separate on/off paths with diode steering
+* Turn-on path: Rg_on + D_on (anode at driver)
+* Turn-off path: Rg_off + D_off (anode at gate)
 
-R_G_HS  drv_hs  g_hs    {rg_on}
-R_G_LS  drv_ls  g_ls    {rg_on}
+R_GON_HS  drv_hs  n_gon_hs  {rg_on}
+D_GON_HS  n_gon_hs g_hs     DGATE
+R_GOFF_HS drv_hs  n_goff_hs {rg_off}
+D_GOFF_HS g_hs    n_goff_hs DGATE
+
+R_GON_LS  drv_ls  n_gon_ls  {rg_on}
+D_GON_LS  n_gon_ls g_ls     DGATE
+R_GOFF_LS drv_ls  n_goff_ls {rg_off}
+D_GOFF_LS g_ls    n_goff_ls DGATE
+
+.model DGATE D (IS=1e-14 RS=0.01 N=1.0)
 
 * -- Bootstrap Circuit -----------------------------------------------
 * C_boot={c_boot_nf:.0f}nF, Schottky diode (Vf~0.5V)
@@ -211,6 +231,16 @@ V_DRV_LS drv_ls gnd     PULSE(0 {v_drv} {t_period_us/2 + dt_us}u 10n 10n {t_peri
     return netlist
 
 
+def _try_float(val, fallback):
+    """Try to convert to float, return fallback on failure."""
+    if val is None or val == '':
+        return fallback
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _get_mosfet_val(params: dict, key: str, fallback: float) -> float:
     """Extract a MOSFET parameter value, applying basic unit conversion."""
     val = params.get(key)
@@ -234,4 +264,30 @@ def _get_mosfet_val(params: dict, key: str, fallback: float) -> float:
     }
 
     m = multipliers.get(unit, 1)
-    return val * m
+    result = val * m
+
+    # Bounds checking — mirror backend's _PARAM_BOUNDS to reject garbage extraction
+    bounds = _MOSFET_BOUNDS.get(key)
+    if bounds is not None:
+        lo, hi = bounds
+        if result <= 0 and lo > 0:
+            return fallback
+        if result < lo or result > hi:
+            # Clamp to nearest bound rather than using a potentially dangerous value
+            result = max(lo, min(hi, result))
+
+    return result
+
+
+# Engineering bounds for SPICE export params (mirrors backend _PARAM_BOUNDS)
+_MOSFET_BOUNDS = {
+    'rds_on':        (0.1e-3,  10),
+    'vgs_th':        (0.5,     10),
+    'vds_max':       (10,      1200),
+    'coss':          (1e-12,   100e-9),
+    'qg':            (1e-9,    5000e-9),
+    'body_diode_vf': (0.3,     2.0),
+    'tr':            (0.1e-9,  10e-6),
+    'tf':            (0.1e-9,  10e-6),
+    'qrr':           (0.1e-9,  5000e-9),
+}

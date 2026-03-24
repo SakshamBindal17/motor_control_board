@@ -73,7 +73,7 @@ def generate_pdf_report(project: dict, calculations: dict) -> bytes:
             ["Conduction Loss / MOSFET", str(ml.get("conduction_loss_per_fet_w", "—")), "W"],
             ["Switching Loss / MOSFET", str(ml.get("switching_loss_per_fet_w", "—")), "W"],
             ["Total Loss / MOSFET", str(ml.get("total_loss_per_fet_w", "—")), "W"],
-            ["Total Loss (6× MOSFETs)", str(ml.get("total_all_6_fets_w", "—")), "W"],
+            [f"Total Loss ({ml.get('num_fets', 6)}× MOSFETs)", str(ml.get("total_all_fets_w", ml.get("total_all_6_fets_w", "—"))), "W"],
             ["Estimated Junction Temp", str(ml.get("junction_temp_est_c", "—")), "°C"],
             ["Switch RMS Current", str(ml.get("i_rms_switch_a", "—")), "A"],
         ]
@@ -224,9 +224,17 @@ def _build_bom(calculations, project=None) -> list:
     n = 1
     project = project or {}
 
-    # Extract actual component names from project data if available
-    mosfet_name = project.get("mosfet_params", {}).get("component_name", "N-ch Power MOSFET")
-    driver_name = project.get("driver_params", {}).get("component_name", "3-phase gate driver")
+    def _get_name(block_key, fallback_param_key, fallback_name):
+        try:
+            raw_data = project.get("blocks", {}).get(block_key, {}).get("raw_data", {}) or {}
+            part = raw_data.get("device_info", {}).get("part_number")
+            comp = raw_data.get("component_name")
+            return part or comp or project.get(fallback_param_key, {}).get("component_name", fallback_name)
+        except AttributeError:
+            return project.get(fallback_param_key, {}).get("component_name", fallback_name)
+
+    mosfet_name = _get_name("mosfet", "mosfet_params", "N-ch Power MOSFET")
+    driver_name = _get_name("driver", "driver_params", "3-phase gate driver")
 
     def add(component, desc, value, qty, rating, cost):
         nonlocal n

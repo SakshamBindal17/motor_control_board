@@ -180,3 +180,159 @@ class TestDesignConstants:
 
     def test_default_used_when_no_override(self, engine):
         assert engine._dc("thermal.rds_derating") == 1.5
+
+    def test_bounds_clamp_too_low(self, default_specs):
+        """Design constants below engineering minimum should be clamped."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={}, overrides={},
+            design_constants={"thermal.rds_derating": 0.1}  # below min 1.0
+        )
+        assert e._dc("thermal.rds_derating") == 1.0
+
+    def test_bounds_clamp_too_high(self, default_specs):
+        """Design constants above engineering maximum should be clamped."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={}, overrides={},
+            design_constants={"thermal.rth_sa": 999}  # above max 100
+        )
+        assert e._dc("thermal.rth_sa") == 100.0
+
+
+# ── Unit Fuzz Tests (µ/μ/u symbol variants) ──────────────────────────────────
+
+class TestUnitFuzz:
+    """Verify all micro-symbol Unicode variants produce identical SI conversion."""
+
+    def test_micro_sign_u00b5_farads(self):
+        """U+00B5 MICRO SIGN: µF"""
+        from unit_utils import to_si
+        assert to_si(4.7, "\u00b5F") == pytest.approx(4.7e-6)
+
+    def test_greek_mu_u03bc_farads(self):
+        """U+03BC GREEK SMALL LETTER MU: μF"""
+        from unit_utils import to_si
+        assert to_si(4.7, "\u03bcF") == pytest.approx(4.7e-6)
+
+    def test_ascii_u_farads(self):
+        """ASCII fallback: uF"""
+        from unit_utils import to_si
+        assert to_si(4.7, "uF") == pytest.approx(4.7e-6)
+
+    def test_micro_sign_seconds(self):
+        """µs with U+00B5"""
+        from unit_utils import to_si
+        assert to_si(2.5, "\u00b5s") == pytest.approx(2.5e-6)
+
+    def test_greek_mu_seconds(self):
+        """μs with U+03BC"""
+        from unit_utils import to_si
+        assert to_si(2.5, "\u03bcs") == pytest.approx(2.5e-6)
+
+    def test_ascii_u_seconds(self):
+        """us with ASCII u"""
+        from unit_utils import to_si
+        assert to_si(2.5, "us") == pytest.approx(2.5e-6)
+
+    def test_micro_sign_amps(self):
+        """µA with U+00B5"""
+        from unit_utils import to_si
+        assert to_si(115, "\u00b5A") == pytest.approx(115e-6)
+
+    def test_greek_mu_amps(self):
+        """μA with U+03BC"""
+        from unit_utils import to_si
+        assert to_si(115, "\u03bcA") == pytest.approx(115e-6)
+
+    def test_ascii_u_amps(self):
+        """uA with ASCII u"""
+        from unit_utils import to_si
+        assert to_si(115, "uA") == pytest.approx(115e-6)
+
+    def test_micro_sign_henries(self):
+        """µH with U+00B5"""
+        from unit_utils import to_si
+        assert to_si(330, "\u00b5H") == pytest.approx(330e-6)
+
+    def test_greek_mu_henries(self):
+        """μH with U+03BC"""
+        from unit_utils import to_si
+        assert to_si(330, "\u03bcH") == pytest.approx(330e-6)
+
+    def test_micro_coulombs(self):
+        """µC with U+00B5"""
+        from unit_utils import to_si
+        assert to_si(1, "\u00b5C") == pytest.approx(1e-6)
+
+    def test_mixed_case_micro(self):
+        """Mixed case: µf, µS, µa should still normalize correctly."""
+        from unit_utils import to_si
+        assert to_si(100, "\u00b5f") == pytest.approx(100e-6)  # µf → µF
+
+    def test_milliohm_variants(self):
+        """mΩ with different omega symbols."""
+        from unit_utils import to_si
+        assert to_si(1.5, "m\u2126") == pytest.approx(1.5e-3)  # mΩ (OHM SIGN)
+        assert to_si(1.5, "m\u03A9") == pytest.approx(1.5e-3)  # mΩ (GREEK OMEGA)
+        assert to_si(1.5, "mohm") == pytest.approx(1.5e-3)       # mohm ASCII
+
+
+# ── Parameter Sanity Bounds Tests ─────────────────────────────────────────────
+
+class TestParamSanityBounds:
+    """Verify that zero/negative extracted values are caught by sanity bounds."""
+
+    def test_qg_zero_returns_fallback(self, default_specs):
+        """Qg=0 from bad extraction should return fallback, not crash gate calc."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={"qg": "0", "qg__unit": "nC"},
+            driver_params={}, mcu_params={},
+            motor_specs={}, overrides={}
+        )
+        result = e._get(e.mosfet, "MOSFET", "qg", 92e-9)
+        assert result == pytest.approx(92e-9)  # should get fallback, not 0
+
+    def test_rds_on_zero_returns_fallback(self, default_specs):
+        """Rds(on)=0 should return fallback."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={"rds_on": "0", "rds_on__unit": "mΩ"},
+            driver_params={}, mcu_params={},
+            motor_specs={}, overrides={}
+        )
+        result = e._get(e.mosfet, "MOSFET", "rds_on", 1.5e-3)
+        assert result == pytest.approx(1.5e-3)
+
+    def test_valid_value_passes_through(self, default_specs):
+        """A legitimate extracted value should not be blocked."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={"vds_max": "80", "vds_max__unit": "V"},
+            driver_params={}, mcu_params={},
+            motor_specs={}, overrides={}
+        )
+        result = e._get(e.mosfet, "MOSFET", "vds_max", 100)
+        assert result == pytest.approx(80.0)
+
+    def test_out_of_range_warns_but_passes(self, default_specs):
+        """A suspicious but non-zero value should warn but still return it."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={"vds_max": "5000", "vds_max__unit": "V"},
+            driver_params={}, mcu_params={},
+            motor_specs={}, overrides={}
+        )
+        result = e._get(e.mosfet, "MOSFET", "vds_max", 100)
+        # Value passes through (could be exotic SiC), but audit log warns
+        assert result == pytest.approx(5000.0)
+        assert any("SANITY WARNING" in msg for msg in e.audit_log)

@@ -17,7 +17,7 @@ app = FastAPI(title="MC Hardware Designer API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -160,11 +160,12 @@ class SpiceRequest(BaseModel):
     system_specs: dict
     calculations: dict
     mosfet_params: dict
+    motor_specs: dict = None
 
 @app.post("/api/export/spice")
 async def export_spice(req: SpiceRequest):
     try:
-        netlist = generate_spice_netlist(req.system_specs, req.calculations, req.mosfet_params)
+        netlist = generate_spice_netlist(req.system_specs, req.calculations, req.mosfet_params, req.motor_specs)
         buf = io.BytesIO(netlist.encode('utf-8'))
         return StreamingResponse(
             buf,
