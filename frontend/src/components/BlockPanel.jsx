@@ -127,10 +127,9 @@ export const CALC_CRITICAL = {
     "vbs_uvlo",       // bootstrap voltage margin validation
   ]),
   mcu: new Set([
-    "pwm_deadtime_res",  // dead time register calculation (dt_reg = dt_ns / resolution)
-    "pwm_deadtime_max",  // dead time feasibility check
     "adc_resolution",    // shunt ADC SNR / bits-used calculation
-    "adc_ref",           // ADC reference voltage → protection dividers & shunt sizing
+    "pwm_deadtime_res",  // dead-time LSB → dt_register = dt_ns / resolution
+    "pwm_deadtime_max",  // dead-time feasibility check
   ]),
 }
 

@@ -1,63 +1,77 @@
-import React, { useState } from 'react'
-import { X, SlidersHorizontal, RotateCcw, ChevronDown } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { X, SlidersHorizontal, RotateCcw, ChevronDown, LoaderCircle } from 'lucide-react'
 import { useProject } from '../context/ProjectContext.jsx'
+import { fetchDesignConstants } from '../api.js'
 
-// Mirrors backend DESIGN_CONSTANTS — kept here to avoid API call, instant modal
-const SCHEMA = [
-  { cat: 'Thermal', items: [
-    { key: 'thermal.rds_derating',  label: 'Rds(on) thermal derating',     unit: 'x',    default: 1.5,  desc: 'Worst-case multiplier at ~100°C junction', step: 0.1 },
-    { key: 'thermal.rth_cs',        label: 'TIM resistance (case-to-PCB)', unit: '°C/W', default: 0.5,  desc: 'Thermal interface material resistance', step: 0.1 },
-    { key: 'thermal.rth_sa',        label: 'PCB-to-ambient Rth',           unit: '°C/W', default: 20.0, desc: 'Natural convection, no heatsink', step: 1 },
-    { key: 'thermal.safe_margin',   label: 'Safe margin threshold',        unit: '°C',   default: 30,   desc: 'Minimum acceptable Tj headroom', step: 5 },
-    { key: 'thermal.vias_per_fet',  label: 'Thermal vias per FET',         unit: 'pcs',  default: 16,   desc: '0.3mm vias under thermal pad', step: 1 },
-  ]},
-  { cat: 'Gate Drive', items: [
-    { key: 'gate.rise_time_target', label: 'Rise time target',             unit: 'ns',   default: 40,   desc: 'Default target for Rg_on sizing', step: 5 },
-    { key: 'gate.rg_off_ratio',    label: 'Rg_off ratio',                 unit: 'x',    default: 0.47, desc: 'Rg_off as fraction of Rg_on (faster turn-off)', step: 0.05 },
-    { key: 'gate.rg_bootstrap',    label: 'Bootstrap series R',           unit: 'Ω',    default: 10.0, desc: 'Limits bootstrap diode charging current', step: 1 },
-    { key: 'gate.bootstrap_vf',    label: 'Bootstrap diode Vf',           unit: 'V',    default: 0.5,  desc: 'Assumed Schottky forward voltage drop', step: 0.1 },
-  ]},
-  { cat: 'Bootstrap', items: [
-    { key: 'boot.min_cap',         label: 'Min practical boot cap',       unit: 'nF',   default: 100,  desc: 'Floor for bootstrap capacitor value', step: 10 },
-    { key: 'boot.safety_margin',   label: 'Safety margin multiplier',     unit: 'x',    default: 2.0,  desc: 'Applied before E12 snap', step: 0.5 },
-    { key: 'boot.leakage_ua',      label: 'Leakage current budget',       unit: 'µA',   default: 3.0,  desc: 'Gate 1µA + driver quiescent 2µA', step: 0.5 },
-  ]},
-  { cat: 'Input Caps', items: [
-    { key: 'input.spwm_mod_index', label: 'SPWM modulation index',        unit: '',     default: 0.9,  desc: '3-phase SPWM approx when Lph unavailable', step: 0.05 },
-    { key: 'input.min_bulk_count', label: 'Min bulk cap count',           unit: 'pcs',  default: 4,    desc: 'Minimum parallel caps for ESR distribution', step: 1 },
-    { key: 'input.bulk_cap_uf',    label: 'Bulk cap size',                unit: 'µF',   default: 100,  desc: 'Standard electrolytic per-cap value', step: 10 },
-    { key: 'input.esr_per_cap',    label: 'Typical ESR per cap',          unit: 'mΩ',   default: 50,   desc: 'Electrolytic ESR estimate for thermal calc', step: 5 },
-  ]},
-  { cat: 'Protection', items: [
-    { key: 'prot.adc_ref',         label: 'ADC reference voltage',        unit: 'V',    default: 3.3,  desc: 'MCU ADC full-scale reference', step: 0.1 },
-    { key: 'prot.ovp_margin',      label: 'OVP trip margin',              unit: 'x',    default: 1.03, desc: 'Multiplier above peak bus voltage', step: 0.01 },
-    { key: 'prot.uvp_trip',        label: 'UVP trip threshold',           unit: 'x',    default: 0.75, desc: 'Fraction of nominal bus voltage', step: 0.05 },
-    { key: 'prot.ocp_hw',          label: 'OCP hardware threshold',       unit: 'x',    default: 1.25, desc: 'Hardware overcurrent trip multiplier', step: 0.05 },
-    { key: 'prot.ocp_sw',          label: 'OCP software threshold',       unit: 'x',    default: 1.1,  desc: 'Software overcurrent limit multiplier', step: 0.05 },
-    { key: 'prot.otp_warn',        label: 'OTP warning temp',             unit: '°C',   default: 80,   desc: 'Temperature at which to warn user', step: 5 },
-    { key: 'prot.otp_shutdown',    label: 'OTP shutdown temp',            unit: '°C',   default: 100,  desc: 'Temperature at which to shut down', step: 5 },
-  ]},
-  { cat: 'Dead Time', items: [
-    { key: 'dt.abs_margin',        label: 'Absolute margin',              unit: 'ns',   default: 20,   desc: 'Fixed safety margin added to minimum DT', step: 5 },
-    { key: 'dt.safety_mult',       label: 'Safety multiplier',            unit: 'x',    default: 1.5,  desc: 'Recommended margin over minimum DT', step: 0.1 },
-  ]},
-  { cat: 'Snubber', items: [
-    { key: 'snub.coss_mult',       label: 'Coss multiplier',              unit: 'x',    default: 3,    desc: 'Snubber cap = N × Coss for overdamped response', step: 1 },
-    { key: 'snub.stray_l_default', label: 'Default stray inductance',     unit: 'nH',   default: 10,   desc: 'Assumed PCB power loop inductance', step: 1 },
-  ]},
-  { cat: 'EMI Filter', items: [
-    { key: 'emi.cm_choke_uh',      label: 'CM choke inductance',          unit: 'µH',   default: 330,  desc: 'Common-mode choke baseline value', step: 10 },
-  ]},
-]
+// UI-only metadata (grouping, labels, step sizes) to merge with backend numeric defaults
+const UI_META = {
+  'thermal.rds_derating': { cat: 'Thermal', label: 'Rds(on) thermal derating', step: 0.1 },
+  'thermal.rth_cs':       { cat: 'Thermal', label: 'TIM resistance (case-to-PCB)', step: 0.1 },
+  'thermal.rth_sa':       { cat: 'Thermal', label: 'PCB-to-ambient Rth', step: 1 },
+  'thermal.safe_margin':  { cat: 'Thermal', label: 'Safe margin threshold', step: 5 },
+  'thermal.vias_per_fet': { cat: 'Thermal', label: 'Thermal vias per FET', step: 1 },
+  'gate.rise_time_target':{ cat: 'Gate Drive', label: 'Rise time target', step: 5 },
+  'gate.rg_off_ratio':    { cat: 'Gate Drive', label: 'Rg_off ratio', step: 0.05 },
+  'gate.rg_bootstrap':    { cat: 'Gate Drive', label: 'Bootstrap series R', step: 1 },
+  'gate.bootstrap_vf':    { cat: 'Gate Drive', label: 'Bootstrap diode Vf', step: 0.1 },
+  'boot.min_cap':         { cat: 'Bootstrap', label: 'Min practical boot cap', step: 10 },
+  'boot.safety_margin':   { cat: 'Bootstrap', label: 'Safety margin multiplier', step: 0.5 },
+  'boot.leakage_ua':      { cat: 'Bootstrap', label: 'Leakage current budget', step: 0.5 },
+  'input.spwm_mod_index': { cat: 'Input Caps', label: 'SPWM modulation index', step: 0.05 },
+  'input.min_bulk_count': { cat: 'Input Caps', label: 'Min bulk cap count', step: 1 },
+  'input.bulk_cap_uf':    { cat: 'Input Caps', label: 'Bulk cap size', step: 10 },
+  'input.esr_per_cap':    { cat: 'Input Caps', label: 'Typical ESR per cap', step: 5 },
+  'prot.adc_ref':         { cat: 'Protection', label: 'ADC reference voltage', step: 0.1 },
+  'prot.ovp_margin':      { cat: 'Protection', label: 'OVP trip margin', step: 0.01 },
+  'prot.uvp_trip':        { cat: 'Protection', label: 'UVP trip threshold', step: 0.05 },
+  'prot.ocp_hw':          { cat: 'Protection', label: 'OCP hardware threshold', step: 0.05 },
+  'prot.ocp_sw':          { cat: 'Protection', label: 'OCP software threshold', step: 0.05 },
+  'prot.otp_warn':        { cat: 'Protection', label: 'OTP warning temp', step: 5 },
+  'prot.otp_shutdown':    { cat: 'Protection', label: 'OTP shutdown temp', step: 5 },
+  'dt.abs_margin':        { cat: 'Dead Time', label: 'Absolute margin', step: 5 },
+  'dt.safety_mult':       { cat: 'Dead Time', label: 'Safety multiplier', step: 0.1 },
+  'snub.coss_mult':       { cat: 'Snubber', label: 'Coss multiplier', step: 1 },
+  'snub.stray_l_default': { cat: 'Snubber', label: 'Default stray inductance', step: 1 },
+  'emi.cm_choke_uh':      { cat: 'EMI Filter', label: 'CM choke inductance', step: 10 },
+}
 
 export default function DesignConstantsModal() {
   const { state, dispatch } = useProject()
   const dc = state.project.design_constants || {}
-  const [open, setOpen] = useState(() => {
-    const o = {}
-    SCHEMA.forEach(s => { o[s.cat] = true })
-    return o
-  })
+  
+  const [schema, setSchema] = useState(null)
+  const [open, setOpen] = useState({})
+
+  useEffect(() => {
+    fetchDesignConstants().then(data => {
+      const grouped = {}
+      const catOrder = ['Thermal', 'Gate Drive', 'Bootstrap', 'Input Caps', 'Protection', 'Dead Time', 'Snubber', 'EMI Filter']
+      catOrder.forEach(c => grouped[c] = [])
+      
+      for (const [key, bData] of Object.entries(data)) {
+        const uMeta = UI_META[key] || { cat: bData.category, label: key, step: 1 }
+        const cat = uMeta.cat || bData.category
+        if (!grouped[cat]) grouped[cat] = []
+        grouped[cat].push({
+          key,
+          label: uMeta.label,
+          unit: bData.unit,
+          default: bData.default,
+          desc: bData.description,
+          step: uMeta.step,
+        })
+      }
+      const finalSchema = Object.keys(grouped).filter(k => grouped[k].length > 0).map(cat => ({
+        cat,
+        items: grouped[cat]
+      }))
+      
+      setSchema(finalSchema)
+      const o = {}
+      finalSchema.forEach(s => { o[s.cat] = true })
+      setOpen(o)
+    }).catch(err => console.error("Failed to fetch design constants", err))
+  }, [])
 
   function close() { dispatch({ type: 'TOGGLE_CONSTANTS' }) }
 
@@ -115,7 +129,12 @@ export default function DesignConstantsModal() {
 
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px 18px' }}>
-          {SCHEMA.map(section => {
+          {!schema ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 40, color: 'var(--txt-3)' }}>
+              <LoaderCircle size={24} className="spin" style={{ marginBottom: 12, color: 'var(--amber)' }} />
+              <div>Loading backend constants...</div>
+            </div>
+          ) : schema.map(section => {
             const isOpen = open[section.cat]
             const modCount = section.items.filter(it => dc[it.key] !== undefined).length
             return (

@@ -41,6 +41,7 @@ const DEFAULT_SYSTEM_SPECS = {
   control_mode: 'FOC',
   cooling: 'natural',
   pcb_layers: 6,
+  num_fets: 6,               // Total MOSFETs in inverter (6 = 3-phase half-bridge)
   // Phase 2: PCB trace dimensions (mm) — used to auto-calculate parasitic inductance
   gate_trace_length_mm: 0,    // Gate driver → MOSFET gate trace length
   gate_trace_width_mm: 0,     // Gate trace width
@@ -48,6 +49,12 @@ const DEFAULT_SYSTEM_SPECS = {
   power_trace_length_mm: 0,   // Power loop total trace length (bus cap → drain → source → return)
   power_trace_width_mm: 0,    // Power trace width
   power_trace_height_mm: 0,   // Height above ground plane
+  // Waveform overrides — editable from both Passives and Waveform tabs
+  rg_on_override: '',         // Source resistor override (Ω) — empty = use calculated
+  rg_off_override: '',        // Sink resistor override (Ω) — empty = use calculated
+  vds_override: '',           // Drain-source voltage override (V)
+  id_override: '',            // Drain current override (A)
+  vgs_drive_override: '',     // Gate drive voltage override (V)
 }
 
 const DEFAULT_MOTOR_SPECS = {
@@ -90,6 +97,7 @@ const INITIAL_STATE = {
       feedback: { calculated: null },
     },
     calculations: null,
+    comparison_results: null,
     design_constants: {},
     last_saved: null,
   },
@@ -239,6 +247,7 @@ function reducer(state, action) {
         project: {
           ...state.project,
           system_specs: { ...state.project.system_specs, ...sanitized },
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
         },
       }
     }
@@ -249,6 +258,7 @@ function reducer(state, action) {
         ...state,
         project: {
           ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
           blocks: {
             ...state.project.blocks,
             passives: {
@@ -354,7 +364,13 @@ function reducer(state, action) {
     case 'SET_CALCULATIONS':
       return {
         ...state,
-        project: { ...state.project, calculations: action.payload },
+        project: { ...state.project, calculations: action.payload, calcs_stale: false },
+      }
+
+    case 'SET_COMPARISON_RESULTS':
+      return {
+        ...state,
+        project: { ...state.project, comparison_results: action.payload },
       }
 
     case 'SET_PROJECT_NAME':
@@ -381,6 +397,10 @@ function reducer(state, action) {
             ...restored.project,
             blocks: { ...restored.project.blocks, mosfet_b: null },
           }
+        }
+        // Backward compat: ensure comparison_results exists
+        if (restored.project.comparison_results === undefined) {
+          restored.project = { ...restored.project, comparison_results: null }
         }
         return restored
       }

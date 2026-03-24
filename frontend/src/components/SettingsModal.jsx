@@ -23,6 +23,18 @@ export default function SettingsModal() {
     setLocalSpecs(prev => ({ ...prev, [key]: isNaN(parseFloat(val)) ? val : parseFloat(val) }))
   }
 
+  function updateSpecString(key, val) {
+    setLocalSpecs(prev => ({ ...prev, [key]: val }))
+  }
+
+  const COOLING_OPTIONS = [
+    { value: 'natural',      label: 'Natural Convection',  desc: 'PCB copper only, still air — worst case (40 °C/W)' },
+    { value: 'enhanced_pcb', label: 'Enhanced PCB',         desc: 'Copper pours + thermal vias, still air (20 °C/W)' },
+    { value: 'forced_air',   label: 'Forced Air',           desc: 'Fan over PCB or heatsink (10 °C/W)' },
+    { value: 'heatsink',     label: 'Bolted Heatsink',      desc: 'Heatsink with thermal interface (5 °C/W)' },
+    { value: 'custom',       label: 'Custom',               desc: 'Set Rth_SA manually in Design Constants' },
+  ]
+
   const SYS_FIELDS = [
     { key: 'bus_voltage', label: 'Bus Voltage (Nominal)', unit: 'V' },
     { key: 'peak_voltage', label: 'Bus Voltage (Peak)', unit: 'V' },
@@ -31,6 +43,7 @@ export default function SettingsModal() {
     { key: 'pwm_freq_hz', label: 'PWM Frequency', unit: 'Hz' },
     { key: 'ambient_temp_c', label: 'Ambient Temperature', unit: '°C' },
     { key: 'gate_drive_voltage', label: 'Gate Drive Voltage', unit: 'V' },
+    { key: 'num_fets', label: 'Number of MOSFETs', unit: 'pcs' },
   ]
 
   // overlay
@@ -146,6 +159,27 @@ export default function SettingsModal() {
                 </div>
               ))}
             </div>
+          </section>
+
+          {/* ── Cooling Method ── */}
+          <section>
+            <div style={sectionTitle}>🌡️ Cooling Method</div>
+            <select
+              className="inp"
+              value={localSpecs.cooling || 'natural'}
+              onChange={e => updateSpecString('cooling', e.target.value)}
+              style={{ width: '100%', marginBottom: 6 }}
+            >
+              {COOLING_OPTIONS.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <p style={{ fontSize: 11, color: 'var(--txt-3)', lineHeight: 1.5, margin: 0 }}>
+              {COOLING_OPTIONS.find(o => o.value === (localSpecs.cooling || 'natural'))?.desc}
+            </p>
+            <p style={{ fontSize: 11, color: 'var(--txt-3)', lineHeight: 1.5, marginTop: 4 }}>
+              Sets the PCB-to-ambient thermal resistance (Rth_SA) used in thermal and MOSFET loss calculations.
+            </p>
           </section>
 
           {/* ── Theme ── */}

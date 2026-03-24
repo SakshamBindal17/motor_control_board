@@ -106,6 +106,12 @@ export default function Sidebar({ blocks }) {
             status={b.mosfet?.status === 'done' ? 'done' : null}
             onClick={() => select('waveform')}
           />
+          <NavItem
+            cfg={blocks.compare}
+            isActive={active_block === 'compare'}
+            status={b.mosfet_b?.status === 'done' && project.comparison_results ? 'done' : b.mosfet_b ? 'idle' : null}
+            onClick={() => select('compare')}
+          />
         </div>
 
         {/* Feedback (special — horizontal) */}

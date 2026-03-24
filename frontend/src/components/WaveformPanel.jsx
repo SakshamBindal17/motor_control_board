@@ -54,20 +54,28 @@ function extractMosfetSIParams(blockState) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   TRACE INDUCTANCE — microstrip over ground plane (image method)
+   Uses acosh formula: L(nH) = 0.2 × l_mm × acosh(1 + 2h/w)
+   Always positive, works for both narrow and wide traces.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function calcTraceInductance_nH(len, w, h) {
+  if (!len || !w || !h || len <= 0 || w <= 0 || h <= 0) return 0
+  // Loop partial inductance: rectangular trace over ground plane
+  // acosh(x) = ln(x + √(x²-1)) for x >= 1 — always positive
+  const x = 1 + 2 * h / w
+  return 0.2 * len * Math.log(x + Math.sqrt(x * x - 1))
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    PARASITIC RLC OVERLAY — adds ringing when inductance > 0
    Physics: damped sinusoid  V(t) = A × e^(-ζω₀t) × sin(ωd×t)
      ω₀ = 1/√(LC), ζ = R/(2√(L/C)), ωd = ω₀√(1-ζ²)
+   Ringing starts after Miller plateau (Vds transition), not after full switching.
    ═══════════════════════════════════════════════════════════════════════ */
 
-function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off, dead_time, t_turn_on, flat_on, t_turn_off) {
-  // Calculate inductance from PCB trace dimensions using microstrip formula:
-  //   L (nH) = 5.08 × length_mm × (ln(2 × height_mm / width_mm) + 0.25)
-  // This is the IPC-recommended formula for trace above ground plane
-  const calcTraceInductance_nH = (len, w, h) => {
-    if (!len || !w || !h || len <= 0 || w <= 0 || h <= 0) return 0
-    return 5.08 * len * (Math.log(2 * h / w) + 0.25)
-  }
-
+function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
+                          dead_time, t_turn_on, flat_on, t_turn_off, regionTimes) {
   const gateL_nH = calcTraceInductance_nH(
     systemSpecs.gate_trace_length_mm || 0,
     systemSpecs.gate_trace_width_mm || 0,
@@ -88,80 +96,99 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off, dead_tim
   const n = waveform.time_ns.length
   const vgs = [...waveform.vgs]
   const vds = [...waveform.vds]
+  const id  = [...waveform.id]
   const ig  = [...waveform.ig]
 
-  // Transition times (in ns)
+  // Key timing points (in ns)
   const tOnStart = dead_time * 1e9
-  const tOnEnd   = tOnStart + t_turn_on * 1e9
-  const tFlatEnd = tOnEnd + flat_on * 1e9
-  const tOffEnd  = tFlatEnd + t_turn_off * 1e9
+  // Vds transition completes at end of Miller plateau (Region 3), NOT end of full transition
+  const { t_r1, t_r2, t_r3, t_r4_off, t_r3_off } = regionTimes
+  const tMillerOnEnd_ns  = tOnStart + (t_r1 + t_r2 + t_r3) * 1e9  // Vds done falling
+  const tOnEnd_ns        = tOnStart + t_turn_on * 1e9
+  const tFlatEnd_ns      = tOnEnd_ns + flat_on * 1e9
+  // Turn-off: Vds rises during Miller off (Region 3')
+  const tMillerOffEnd_ns = tFlatEnd_ns + (t_r4_off + t_r3_off) * 1e9  // Vds done rising
+  const tOffEnd_ns       = tFlatEnd_ns + t_turn_off * 1e9
+
+  const v_bus = systemSpecs.peak_voltage || 60
+  const i_load = systemSpecs.max_phase_current || 80
 
   for (let i = 0; i < n; i++) {
     const t_ns = waveform.time_ns[i]
 
-    // Gate loop ringing — after turn-on transition completes (Region 4)
+    // ── Gate loop ringing — LgCiss oscillation on Vgs ──
+    // Superimposed during Region 4 (post-plateau) and after turn-off
     if (Lg > 0 && ciss > 0) {
-      let dt_ring = -1
-      if (t_ns > tOnEnd && t_ns < tFlatEnd) {
-        dt_ring = (t_ns - tOnEnd) * 1e-9  // seconds since turn-on ended
-      } else if (t_ns > tOffEnd) {
-        dt_ring = (t_ns - tOffEnd) * 1e-9  // seconds since turn-off ended
-      }
+      const R = (t_ns > tFlatEnd_ns) ? rg_off : rg_on
+      const w0 = 1 / Math.sqrt(Lg * ciss)
+      const zeta = R / (2 * Math.sqrt(Lg / ciss))
 
-      if (dt_ring > 0) {
-        const R = (t_ns > tFlatEnd) ? rg_off : rg_on
-        const w0 = 1 / Math.sqrt(Lg * ciss)
-        const zeta = R / (2 * Math.sqrt(Lg / ciss))
+      if (zeta < 1) {
+        const wd = w0 * Math.sqrt(1 - zeta * zeta)
+        let dt_ring = -1
 
-        if (zeta < 1) {
-          // Underdamped — ringing!
-          const wd = w0 * Math.sqrt(1 - zeta * zeta)
-          const amp = (t_ns > tFlatEnd) ? -0.8 : 0.5  // overshoot direction
-          const ring = amp * Math.exp(-zeta * w0 * dt_ring) * Math.sin(wd * dt_ring)
-          vgs[i] += ring
-          ig[i]  += ring * (ciss * wd) * 0.3  // approximate Ig perturbation
+        // After turn-on Miller plateau: Vgs overshoots toward Vdrv
+        if (t_ns > tMillerOnEnd_ns && t_ns < tFlatEnd_ns) {
+          dt_ring = (t_ns - tMillerOnEnd_ns) * 1e-9
         }
-        // overdamped: no oscillation, just slower decay (already modeled by RC)
+        // After turn-off completes: Vgs rings around 0
+        else if (t_ns > tOffEnd_ns) {
+          dt_ring = (t_ns - tOffEnd_ns) * 1e-9
+        }
+
+        if (dt_ring > 0) {
+          // Amplitude from energy stored in gate inductance: V = Ig × √(Lg/Ciss)
+          const ig_peak = (t_ns > tFlatEnd_ns)
+            ? mosfetP.vgs_plateau / rg_off   // turn-off Miller current
+            : ((systemSpecs.gate_drive_voltage || 12) - (mosfetP.vgs_plateau || 5)) / rg_on
+          const v_ring_amp = Math.min(ig_peak * Math.sqrt(Lg / ciss), 3.0) // cap at 3V
+          const dir = (t_ns > tFlatEnd_ns) ? -1 : 1
+          const ring = dir * v_ring_amp * Math.exp(-zeta * w0 * dt_ring) * Math.sin(wd * dt_ring)
+          vgs[i] += ring
+          ig[i]  += ring * ciss * wd * 0.5  // approximate Ig perturbation
+        }
       }
     }
 
-    // Power loop ringing — after Vds transitions (Miller plateau regions)
+    // ── Power loop ringing — LpCoss oscillation on Vds ──
+    // Starts after Miller plateau when Vds transition completes
     if (Lp > 0 && coss > 0) {
-      let dt_ring = -1
-      let direction = 0
+      const R_damp = 0.3 + (mosfetP.rds_on || 1.5e-3) * 1000  // trace R + Rds(on) contribution
+      const w0 = 1 / Math.sqrt(Lp * coss)
+      const zeta = R_damp / (2 * Math.sqrt(Lp / coss))
 
-      // Turn-on: Vds just finished falling (end of Miller = tOnEnd - t_r4*1e9 approximately)
-      // Simplified: ring starts when Vds reaches Vds_on
-      if (t_ns > tOnEnd && t_ns < tFlatEnd) {
-        dt_ring = (t_ns - tOnEnd) * 1e-9
-        direction = -1  // undershoot below Vds_on
-      }
-      // Turn-off: Vds just finished rising
-      if (t_ns > tOffEnd) {
-        dt_ring = (t_ns - tOffEnd) * 1e-9
-        direction = 1   // overshoot above Vbus
-      }
+      if (zeta < 1) {
+        const wd = w0 * Math.sqrt(1 - zeta * zeta)
+        let dt_ring = -1
+        let direction = 0
 
-      if (dt_ring > 0 && direction !== 0) {
-        const R_damp = 0.5  // parasitic resistance in power loop
-        const w0 = 1 / Math.sqrt(Lp * coss)
-        const zeta = R_damp / (2 * Math.sqrt(Lp / coss))
+        // Turn-on: Vds just fell to Vds_on — ring below Vds_on
+        if (t_ns > tMillerOnEnd_ns && t_ns < tFlatEnd_ns) {
+          dt_ring = (t_ns - tMillerOnEnd_ns) * 1e-9
+          direction = -1
+        }
+        // Turn-off: Vds just rose to Vbus — ring above Vbus (overshoot)
+        else if (t_ns > tMillerOffEnd_ns) {
+          dt_ring = (t_ns - tMillerOffEnd_ns) * 1e-9
+          direction = 1
+        }
 
-        if (zeta < 1) {
-          const wd = w0 * Math.sqrt(1 - zeta * zeta)
-          // Overshoot amplitude proportional to L × di/dt
-          const i_load = systemSpecs.max_phase_current || 80
-          const di_dt = i_load / (t_turn_on * 0.3)  // approximate di/dt
-          const v_spike = Math.min(Lp * di_dt, systemSpecs.peak_voltage * 0.5)  // cap at 50% Vbus
+        if (dt_ring > 0 && direction !== 0) {
+          // V_spike = I × √(L/C) — characteristic impedance of parasitic LC
+          // Real circuits see ~50% of theoretical (package parasitics, snubbing)
+          const z_char = Math.sqrt(Lp / coss)
+          const v_spike = Math.min(i_load * z_char * 0.5, v_bus * 0.5)  // realistic cap
           const ring = direction * v_spike * Math.exp(-zeta * w0 * dt_ring) * Math.sin(wd * dt_ring)
           vds[i] += ring
+          // Parasitic ringing also perturbs Id slightly via Coss dV/dt
+          id[i] += coss * ring * wd * direction * 0.2
         }
       }
     }
   }
 
   // Recalculate Pd with parasitic-modified signals
-  const pd = vds.map((v, i) => Math.round(v * waveform.id[i] * 10) / 10)
+  const pd = vds.map((v, i) => Math.round(v * id[i] * 10) / 10)
 
   const hasGate = Lg > 0
   const hasPower = Lp > 0
@@ -170,18 +197,21 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off, dead_tim
     note = `Includes parasitic effects: ${hasGate ? `gate loop ${(Lg*1e9).toFixed(1)}nH` : ''}${hasGate && hasPower ? ', ' : ''}${hasPower ? `power loop ${(Lp*1e9).toFixed(1)}nH` : ''}. ` + note
   }
 
+  const R_gate = rg_on
+  const R_power = 0.3 + (mosfetP.rds_on || 1.5e-3) * 1000
   return {
     ...waveform,
     vgs: vgs.map(v => Math.round(v * 1000) / 1000),
     vds: vds.map(v => Math.round(v * 100) / 100),
+    id: id.map(v => Math.round(v * 100) / 100),
     ig: ig.map(v => Math.round(v * 1000) / 1000),
     pd,
     model_note: note,
     parasitics: {
       gate_loop_nh: Math.round(Lg * 1e9 * 10) / 10,
       power_loop_nh: Math.round(Lp * 1e9 * 10) / 10,
-      gate_damping: Lg > 0 && ciss > 0 ? Math.round(rg_on / (2 * Math.sqrt(Lg / ciss)) * 100) / 100 : null,
-      power_damping: Lp > 0 && coss > 0 ? Math.round(0.5 / (2 * Math.sqrt(Lp / (mosfetP.coss || 500e-12))) * 100) / 100 : null,
+      gate_damping: Lg > 0 && ciss > 0 ? Math.round(R_gate / (2 * Math.sqrt(Lg / ciss)) * 100) / 100 : null,
+      power_damping: Lp > 0 && coss > 0 ? Math.round(R_power / (2 * Math.sqrt(Lp / coss)) * 100) / 100 : null,
     },
   }
 }
@@ -199,12 +229,13 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc) {
   const io_source = driverP?.io_source || 4
   const io_sink   = driverP?.io_sink   || 4
 
-  const v_drv  = systemSpecs.gate_drive_voltage || 12
-  const v_bus  = systemSpecs.peak_voltage || 60
-  const i_load = systemSpecs.max_phase_current || 80
+  // Use overrides from system_specs if provided, else use calculated values
+  const v_drv  = parseFloat(systemSpecs.vgs_drive_override) || systemSpecs.gate_drive_voltage || 12
+  const v_bus  = parseFloat(systemSpecs.vds_override) || systemSpecs.peak_voltage || 60
+  const i_load = parseFloat(systemSpecs.id_override) || systemSpecs.max_phase_current || 80
 
-  const rg_on_ext  = gateCalc?.rg_on_recommended_ohm || 4.7
-  const rg_off_ext = gateCalc?.rg_off_recommended_ohm || 2.2
+  const rg_on_ext  = parseFloat(systemSpecs.rg_on_override) || gateCalc?.rg_on_recommended_ohm || 4.7
+  const rg_off_ext = parseFloat(systemSpecs.rg_off_override) || gateCalc?.rg_off_recommended_ohm || 2.2
 
   const rg_on  = rg_int + rg_on_ext
   const rg_off = rg_int + rg_off_ext
@@ -321,7 +352,8 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc) {
   }
 
   // Apply parasitic RLC effects if inductance values are present
-  return applyParasitics(idealResult, systemSpecs, mosfetP, rg_on, rg_off, dead_time, t_turn_on, flat_on, t_turn_off)
+  const regionTimes = { t_r1, t_r2, t_r3, t_r4, t_r4_off, t_r3_off, t_r2_off, t_r1_off }
+  return applyParasitics(idealResult, systemSpecs, mosfetP, rg_on, rg_off, dead_time, t_turn_on, flat_on, t_turn_off, regionTimes)
 }
 
 function sampleWaveform(
@@ -743,7 +775,9 @@ export default function WaveformPanel() {
     [mosfetParams, driverParams, project.system_specs, gateCalc]
   )
 
-  const waveform = project.calculations?.waveform || frontendWaveform
+  // Always prefer frontend waveform (respects user overrides in real-time)
+  // Only fall back to backend waveform if frontend can't compute (no MOSFET data)
+  const waveform = frontendWaveform || project.calculations?.waveform
   const hasData = waveform && waveform.time_ns && waveform.time_ns.length > 0
 
   // View window (pan/zoom)
@@ -772,7 +806,9 @@ export default function WaveformPanel() {
       const relX = Math.max(0, Math.min(1, (clientX - rect.left - padL) / plotW))
       const span = prev.tMax - prev.tMin
       const focusT = prev.tMin + span * relX
-      const newSpan = Math.max(2, Math.min(fullRange.tMax - fullRange.tMin, span / factor))
+      const fullSpan = fullRange.tMax - fullRange.tMin
+      const minSpan = fullSpan / 10  // max 10x zoom
+      const newSpan = Math.max(minSpan, Math.min(fullSpan, span / factor))
       let tMin = focusT - newSpan * relX
       let tMax = focusT + newSpan * (1 - relX)
       if (tMin < fullRange.tMin) { tMax += fullRange.tMin - tMin; tMin = fullRange.tMin }
@@ -999,13 +1035,16 @@ export default function WaveformPanel() {
             <div style={{ flex: 1 }} />
             <div className="scope-zoom-group">
               <span className="scope-zoom-label">ZOOM</span>
-              <input type="range" min="1" max="20" step="0.1" value={zoomLevel} onChange={handleZoomSlider} className="scope-zoom-slider" />
+              <input type="range" min="1" max="10" step="0.1" value={Math.min(zoomLevel, 10)} onChange={handleZoomSlider} className="scope-zoom-slider" />
               <span className="scope-zoom-value" style={{ color: zoomLevel > 1.1 ? 'var(--accent)' : 'var(--txt-4)' }}>
                 {zoomLevel.toFixed(1)}×
               </span>
               {zoomLevel > 1.1 && <button onClick={resetZoom} className="scope-btn scope-btn-sm">Reset</button>}
             </div>
           </div>
+
+          {/* Waveform Override Inputs */}
+          <WaveformInputsBar project={project} dispatch={dispatch} gateCalc={gateCalc} />
 
           {/* PCB Parasitic Inductance Inputs */}
           <PCBParasiticsBar project={project} dispatch={dispatch} parasitics={waveform?.parasitics} />
@@ -1090,26 +1129,205 @@ export default function WaveformPanel() {
 
 
 /* ═══════════════════════════════════════════════════════════════════════
+   WAVEFORM OVERRIDE INPUTS BAR
+   Source R, Sink R, Vds, Id, Vgs — synced with system_specs
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function WaveformInputsBar({ project, dispatch, gateCalc }) {
+  const specs = project.system_specs
+
+  const PARAM_KEYS = ['rg_on_override', 'rg_off_override', 'vds_override', 'id_override', 'vgs_drive_override']
+  const initLocal = () => {
+    const o = {}
+    for (const k of PARAM_KEYS) o[k] = specs[k] != null ? String(specs[k]) : ''
+    return o
+  }
+  const [local, setLocal] = useState(initLocal)
+  const [dirty, setDirty] = useState(false)
+
+  const localUpdate = (key, val) => {
+    setLocal(prev => ({ ...prev, [key]: val }))
+    setDirty(true)
+  }
+
+  const applyAll = () => {
+    const payload = {}
+    for (const k of PARAM_KEYS) payload[k] = local[k]
+    dispatch({ type: 'SET_SYSTEM_SPECS', payload })
+    setDirty(false)
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') applyAll()
+  }
+
+  const inputStyle = {
+    width: 64, padding: '3px 6px', fontSize: 11, textAlign: 'right',
+    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.20)',
+    borderRadius: 4, color: '#ffffff', fontFamily: 'var(--font-mono)', fontWeight: 600,
+  }
+  const labelStyle = { fontSize: 11, color: '#c8cfd8', whiteSpace: 'nowrap', fontWeight: 600 }
+  const unitStyle = { fontSize: 10, color: '#90a0b0', fontWeight: 500 }
+  const placeholderFor = (v) => v != null ? String(Math.round(v * 100) / 100) : '—'
+
+  const calcRgOn = gateCalc?.rg_on_recommended_ohm
+  const calcRgOff = gateCalc?.rg_off_recommended_ohm
+
+  const hasOverrides = local.rg_on_override || local.rg_off_override ||
+    local.vds_override || local.id_override || local.vgs_drive_override
+
+  const clearAll = () => {
+    const empty = {}
+    for (const k of PARAM_KEYS) empty[k] = ''
+    setLocal(empty)
+    setDirty(false)
+    dispatch({ type: 'SET_SYSTEM_SPECS', payload: {
+      rg_on_override: '', rg_off_override: '',
+      vds_override: '', id_override: '', vgs_drive_override: '',
+    }})
+  }
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 14px',
+      background: hasOverrides ? 'rgba(100,200,255,0.06)' : 'rgba(255,255,255,0.03)',
+      borderRadius: 8, border: `1px solid ${hasOverrides ? 'rgba(100,200,255,0.20)' : 'rgba(255,255,255,0.10)'}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: hasOverrides ? '#4FC3F7' : '#c0cad4', letterSpacing: '.04em' }}>
+          🎛 WAVEFORM PARAMETERS
+        </span>
+        {hasOverrides && (
+          <button className="scope-btn scope-btn-sm" onClick={clearAll}>Reset to Calc</button>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ ...labelStyle, color: '#FFD700' }}>Rg(on):</span>
+          <input type="text" inputMode="decimal" style={inputStyle}
+            className="inp" placeholder={placeholderFor(calcRgOn)}
+            value={local.rg_on_override} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('rg_on_override', e.target.value)} />
+          <span style={unitStyle}>Ω</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ ...labelStyle, color: '#FFD700' }}>Rg(off):</span>
+          <input type="text" inputMode="decimal" style={inputStyle}
+            className="inp" placeholder={placeholderFor(calcRgOff)}
+            value={local.rg_off_override} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('rg_off_override', e.target.value)} />
+          <span style={unitStyle}>Ω</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ ...labelStyle, color: '#00CED1' }}>Vds:</span>
+          <input type="text" inputMode="decimal" style={inputStyle}
+            className="inp" placeholder={String(specs.peak_voltage || 60)}
+            value={local.vds_override} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('vds_override', e.target.value)} />
+          <span style={unitStyle}>V</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ ...labelStyle, color: '#32CD32' }}>Id:</span>
+          <input type="text" inputMode="decimal" style={inputStyle}
+            className="inp" placeholder={String(specs.max_phase_current || 80)}
+            value={local.id_override} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('id_override', e.target.value)} />
+          <span style={unitStyle}>A</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ ...labelStyle, color: '#FFD700' }}>Vgs:</span>
+          <input type="text" inputMode="decimal" style={inputStyle}
+            className="inp" placeholder={String(specs.gate_drive_voltage || 12)}
+            value={local.vgs_drive_override} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('vgs_drive_override', e.target.value)} />
+          <span style={unitStyle}>V</span>
+        </div>
+      </div>
+
+      {/* Apply button */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          className="scope-btn"
+          onClick={applyAll}
+          disabled={!dirty}
+          style={{
+            padding: '5px 14px', fontSize: 11, fontWeight: 700,
+            background: dirty ? 'rgba(76,175,80,0.25)' : 'rgba(255,255,255,0.06)',
+            border: `1px solid ${dirty ? 'rgba(76,175,80,0.5)' : 'rgba(255,255,255,0.15)'}`,
+            color: dirty ? '#81C784' : '#808890',
+            borderRadius: 5, cursor: dirty ? 'pointer' : 'default',
+          }}
+        >
+          {dirty ? '▶ Apply to Waveform' : '✓ Applied'}
+        </button>
+        {dirty && <span style={{ fontSize: 10, color: '#FFD54F' }}>Press Enter or click Apply</span>}
+        <div style={{ fontSize: 9, color: 'var(--txt-4)', marginLeft: 'auto' }}>
+          Leave empty for defaults. Syncs with Passives tab.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    PCB PARASITIC INDUCTANCE INPUT BAR
    ═══════════════════════════════════════════════════════════════════════ */
 
 function PCBParasiticsBar({ project, dispatch, parasitics }) {
   const specs = project.system_specs
 
-  const calcL = (len, w, h) => {
-    if (!len || !w || !h || len <= 0 || w <= 0 || h <= 0) return 0
-    return Math.round(5.08 * len * (Math.log(2 * h / w) + 0.25) * 10) / 10
+  // Local state for all trace inputs — allows decimal typing without losing cursor
+  const TRACE_KEYS = [
+    'gate_trace_length_mm', 'gate_trace_width_mm', 'gate_trace_height_mm',
+    'power_trace_length_mm', 'power_trace_width_mm', 'power_trace_height_mm',
+  ]
+  const initLocal = () => {
+    const o = {}
+    for (const k of TRACE_KEYS) o[k] = specs[k] ? String(specs[k]) : ''
+    return o
+  }
+  const [local, setLocal] = useState(initLocal)
+  const [dirty, setDirty] = useState(false)
+
+  const localUpdate = (key, val) => {
+    setLocal(prev => ({ ...prev, [key]: val }))
+    setDirty(true)
   }
 
-  const gateL = calcL(specs.gate_trace_length_mm, specs.gate_trace_width_mm, specs.gate_trace_height_mm)
-  const powerL = calcL(specs.power_trace_length_mm, specs.power_trace_width_mm, specs.power_trace_height_mm)
-  const hasParasitics = gateL > 0 || powerL > 0
-
-  const update = (key, val) => {
-    dispatch({ type: 'SET_SYSTEM_SPECS', payload: { [key]: parseFloat(val) || 0 } })
+  const applyAll = () => {
+    const payload = {}
+    for (const k of TRACE_KEYS) {
+      const v = parseFloat(local[k])
+      payload[k] = isNaN(v) ? 0 : v
+    }
+    dispatch({ type: 'SET_SYSTEM_SPECS', payload })
+    setDirty(false)
   }
+
+  // Apply on Enter key
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') applyAll()
+  }
+
+  const gateL = Math.round(calcTraceInductance_nH(
+    parseFloat(local.gate_trace_length_mm) || 0,
+    parseFloat(local.gate_trace_width_mm) || 0,
+    parseFloat(local.gate_trace_height_mm) || 0
+  ) * 10) / 10
+  const powerL = Math.round(calcTraceInductance_nH(
+    parseFloat(local.power_trace_length_mm) || 0,
+    parseFloat(local.power_trace_width_mm) || 0,
+    parseFloat(local.power_trace_height_mm) || 0
+  ) * 10) / 10
+  const hasParasitics = (parseFloat(local.gate_trace_length_mm) > 0 && parseFloat(local.gate_trace_width_mm) > 0 && parseFloat(local.gate_trace_height_mm) > 0) ||
+    (parseFloat(local.power_trace_length_mm) > 0 && parseFloat(local.power_trace_width_mm) > 0 && parseFloat(local.power_trace_height_mm) > 0)
 
   const clearAll = () => {
+    const empty = {}
+    for (const k of TRACE_KEYS) empty[k] = ''
+    setLocal(empty)
+    setDirty(false)
     dispatch({ type: 'SET_SYSTEM_SPECS', payload: {
       gate_trace_length_mm: 0, gate_trace_width_mm: 0, gate_trace_height_mm: 0,
       power_trace_length_mm: 0, power_trace_width_mm: 0, power_trace_height_mm: 0,
@@ -1175,20 +1393,23 @@ function PCBParasiticsBar({ project, dispatch, parasitics }) {
         <span style={{ fontSize: 11, fontWeight: 700, color: '#64B5F6', minWidth: 78 }}>Gate Loop</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={labelStyle}>L:</span>
-          <input type="number" step="0.1" min="0" placeholder="0" style={inputStyle}
-            className="inp" value={specs.gate_trace_length_mm || ''} onChange={e => update('gate_trace_length_mm', e.target.value)} />
+          <input type="text" inputMode="decimal" placeholder="0" style={inputStyle}
+            className="inp" value={local.gate_trace_length_mm} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('gate_trace_length_mm', e.target.value)} />
           <span style={unitStyle}>mm</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={labelStyle}>W:</span>
-          <input type="number" step="0.01" min="0" placeholder="0" style={inputStyle}
-            className="inp" value={specs.gate_trace_width_mm || ''} onChange={e => update('gate_trace_width_mm', e.target.value)} />
+          <input type="text" inputMode="decimal" placeholder="0" style={inputStyle}
+            className="inp" value={local.gate_trace_width_mm} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('gate_trace_width_mm', e.target.value)} />
           <span style={unitStyle}>mm</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={labelStyle}>H:</span>
-          <input type="number" step="0.01" min="0" placeholder="0" style={inputStyle}
-            className="inp" value={specs.gate_trace_height_mm || ''} onChange={e => update('gate_trace_height_mm', e.target.value)} />
+          <input type="text" inputMode="decimal" placeholder="0" style={inputStyle}
+            className="inp" value={local.gate_trace_height_mm} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('gate_trace_height_mm', e.target.value)} />
           <span style={unitStyle}>mm</span>
         </div>
         <span style={arrowStyle}>→</span>
@@ -1201,25 +1422,47 @@ function PCBParasiticsBar({ project, dispatch, parasitics }) {
         <span style={{ fontSize: 11, fontWeight: 700, color: '#EF5350', minWidth: 78 }}>Power Loop</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={labelStyle}>L:</span>
-          <input type="number" step="0.1" min="0" placeholder="0" style={inputStyle}
-            className="inp" value={specs.power_trace_length_mm || ''} onChange={e => update('power_trace_length_mm', e.target.value)} />
+          <input type="text" inputMode="decimal" placeholder="0" style={inputStyle}
+            className="inp" value={local.power_trace_length_mm} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('power_trace_length_mm', e.target.value)} />
           <span style={unitStyle}>mm</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={labelStyle}>W:</span>
-          <input type="number" step="0.01" min="0" placeholder="0" style={inputStyle}
-            className="inp" value={specs.power_trace_width_mm || ''} onChange={e => update('power_trace_width_mm', e.target.value)} />
+          <input type="text" inputMode="decimal" placeholder="0" style={inputStyle}
+            className="inp" value={local.power_trace_width_mm} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('power_trace_width_mm', e.target.value)} />
           <span style={unitStyle}>mm</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={labelStyle}>H:</span>
-          <input type="number" step="0.01" min="0" placeholder="0" style={inputStyle}
-            className="inp" value={specs.power_trace_height_mm || ''} onChange={e => update('power_trace_height_mm', e.target.value)} />
+          <input type="text" inputMode="decimal" placeholder="0" style={inputStyle}
+            className="inp" value={local.power_trace_height_mm} onKeyDown={handleKeyDown}
+            onChange={e => localUpdate('power_trace_height_mm', e.target.value)} />
           <span style={unitStyle}>mm</span>
         </div>
         <span style={arrowStyle}>→</span>
         <span style={resultStyle(powerL)}>{powerL > 0 ? `${powerL.toFixed(1)} nH` : '— nH'}</span>
         {parasitics && dampingBadge(parasitics.power_damping)}
+      </div>
+
+      {/* Apply button */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          className="scope-btn"
+          onClick={applyAll}
+          disabled={!dirty}
+          style={{
+            padding: '5px 14px', fontSize: 11, fontWeight: 700,
+            background: dirty ? 'rgba(76,175,80,0.25)' : 'rgba(255,255,255,0.06)',
+            border: `1px solid ${dirty ? 'rgba(76,175,80,0.5)' : 'rgba(255,255,255,0.15)'}`,
+            color: dirty ? '#81C784' : '#808890',
+            borderRadius: 5, cursor: dirty ? 'pointer' : 'default',
+          }}
+        >
+          {dirty ? '▶ Apply to Waveform' : '✓ Applied'}
+        </button>
+        {dirty && <span style={{ fontSize: 10, color: '#FFD54F' }}>Press Enter or click Apply</span>}
       </div>
 
       {/* Formula badge */}
@@ -1229,7 +1472,7 @@ function PCBParasiticsBar({ project, dispatch, parasitics }) {
         borderRadius: 5, width: 'fit-content',
       }}>
         <span style={{ fontSize: 10, color: '#90CAF9', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
-          L(nH) = 5.08 × len × ln(2h/w + 0.25)
+          L(nH) = 0.2 × len × acosh(1 + 2h/w)
         </span>
         <span style={{ fontSize: 9, color: '#78909C' }}>— IPC microstrip</span>
         {hasParasitics && (

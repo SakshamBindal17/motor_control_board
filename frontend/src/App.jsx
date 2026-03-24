@@ -1,19 +1,22 @@
-import React from 'react'
+import React, { Suspense, lazy } from 'react'
 import { useProject } from './context/ProjectContext.jsx'
 import Header from './components/Header.jsx'
 import Sidebar from './components/Sidebar.jsx'
-import BlockPanel from './components/BlockPanel.jsx'
-import MotorForm from './components/MotorForm.jsx'
-import PassivesPanel from './components/PassivesPanel.jsx'
-import FeedbackPanel from './components/FeedbackPanel.jsx'
-import DashboardPanel from './components/DashboardPanel.jsx'
-import ChartsPanel from './components/ChartsPanel.jsx'
+
+const BlockPanel = lazy(() => import('./components/BlockPanel.jsx'))
+const MotorForm = lazy(() => import('./components/MotorForm.jsx'))
+const PassivesPanel = lazy(() => import('./components/PassivesPanel.jsx'))
+const FeedbackPanel = lazy(() => import('./components/FeedbackPanel.jsx'))
+const DashboardPanel = lazy(() => import('./components/DashboardPanel.jsx'))
+const ChartsPanel = lazy(() => import('./components/ChartsPanel.jsx'))
+const WaveformPanel = lazy(() => import('./components/WaveformPanel.jsx'))
+const ComparisonPanel = lazy(() => import('./components/ComparisonPanel.jsx'))
+const DiagramPanel = lazy(() => import('./components/DiagramPanel.jsx'))
+
 import SettingsModal from './components/SettingsModal.jsx'
 import ReportPanel from './components/ReportPanel.jsx'
 import DesignConstantsModal from './components/DesignConstantsModal.jsx'
 import SmartTooltip from './components/SmartTooltip.jsx'
-import WaveformPanel from './components/WaveformPanel.jsx'
-import DiagramPanel from './components/DiagramPanel.jsx'
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -146,6 +149,15 @@ export const BLOCK_CONFIGS = {
     type: 'feedback',
     desc: 'Sensing chain, ADC scaling, OCP/OVP/OTP — connects MOSFETs ↔ MCU',
   },
+  compare: {
+    key: 'compare',
+    label: 'Compare',
+    fullLabel: 'MOSFET Comparison',
+    icon: '⚖️',
+    color: '#00d4e8',
+    type: 'compare',
+    desc: 'Head-to-head MOSFET comparison — loss, thermal, rating, radar, datasheet params',
+  },
 }
 
 export default function App() {
@@ -163,6 +175,7 @@ export default function App() {
       case 'passives': return <PassivesPanel config={cfg} />
       case 'feedback': return <FeedbackPanel config={cfg} />
       case 'waveform': return <WaveformPanel config={cfg} />
+      case 'compare': return <ComparisonPanel config={cfg} />
       default: return null
     }
   }
@@ -181,7 +194,9 @@ export default function App() {
             flexDirection: 'column',
             minWidth: 0,
           }}>
-            {renderPanel()}
+            <Suspense fallback={<div style={{ padding: 20, color: 'var(--txt-3)' }}>Loading panel...</div>}>
+              {renderPanel()}
+            </Suspense>
           </main>
         </div>
         {state.settings_open && <SettingsModal />}

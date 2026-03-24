@@ -96,11 +96,13 @@ export default function DashboardPanel() {
     if (!C?.mosfet_losses) return null
     const items = []
     const ml = C.mosfet_losses
-    if (ml.conduction_loss_per_fet_w > 0) items.push({ name: 'Conduction', value: +(ml.conduction_loss_per_fet_w * 6).toFixed(2), color: '#1e90ff' })
-    if (ml.switching_loss_per_fet_w > 0) items.push({ name: 'Switching', value: +(ml.switching_loss_per_fet_w * 6).toFixed(2), color: '#ff4444' })
-    if (ml.recovery_loss_per_fet_w > 0) items.push({ name: 'Recovery', value: +(ml.recovery_loss_per_fet_w * 6).toFixed(2), color: '#ffab00' })
-    if (ml.gate_charge_loss_per_fet_w > 0) items.push({ name: 'Gate', value: +(ml.gate_charge_loss_per_fet_w * 6).toFixed(2), color: '#bb86fc' })
-    if (ml.coss_loss_per_fet_w > 0) items.push({ name: 'Coss', value: +(ml.coss_loss_per_fet_w * 6).toFixed(2), color: '#00d4e8' })
+    const nf = ml.num_fets || 6
+    if (ml.conduction_loss_per_fet_w > 0) items.push({ name: 'Conduction', value: +(ml.conduction_loss_per_fet_w * nf).toFixed(2), color: '#1e90ff' })
+    if (ml.switching_loss_per_fet_w > 0) items.push({ name: 'Switching', value: +(ml.switching_loss_per_fet_w * nf).toFixed(2), color: '#ff4444' })
+    if (ml.recovery_loss_per_fet_w > 0) items.push({ name: 'Recovery', value: +(ml.recovery_loss_per_fet_w * nf).toFixed(2), color: '#ffab00' })
+    if (ml.gate_charge_loss_per_fet_w > 0) items.push({ name: 'Gate', value: +(ml.gate_charge_loss_per_fet_w * nf).toFixed(2), color: '#bb86fc' })
+    if (ml.coss_loss_per_fet_w > 0) items.push({ name: 'Coss', value: +(ml.coss_loss_per_fet_w * nf).toFixed(2), color: '#00d4e8' })
+    if (ml.body_diode_loss_per_fet_w > 0) items.push({ name: 'Body Diode', value: +(ml.body_diode_loss_per_fet_w * nf).toFixed(2), color: '#ff7043' })
     const motorCu = C.thermal?.motor_copper_loss_w
     if (motorCu > 0) items.push({ name: 'Motor Cu', value: +motorCu.toFixed(2), color: '#00e676' })
     return items.length > 0 ? items : null
@@ -202,10 +204,10 @@ export default function DashboardPanel() {
             <div className="dashboard-metrics-grid">
               <MetricCard
                 label="Total Loss"
-                value={C.mosfet_losses?.total_all_6_fets_w}
+                value={C.mosfet_losses?.total_all_fets_w ?? C.mosfet_losses?.total_all_6_fets_w}
                 unit="W"
-                sub="6 MOSFETs"
-                color={C.mosfet_losses?.total_all_6_fets_w > 60 ? 'var(--red)' : C.mosfet_losses?.total_all_6_fets_w > 40 ? 'var(--amber)' : 'var(--green)'}
+                sub={`${C.mosfet_losses?.num_fets || 6} MOSFETs`}
+                color={(() => { const n = C.mosfet_losses?.num_fets || 6; const totalW = C.mosfet_losses?.total_all_fets_w ?? C.mosfet_losses?.total_all_6_fets_w; return totalW > 10 * n ? 'var(--red)' : totalW > 6.67 * n ? 'var(--amber)' : 'var(--green)' })()}
               />
               <MetricCard
                 label="Efficiency"
@@ -370,7 +372,7 @@ export default function DashboardPanel() {
               <div className="dashboard-card-title">Cross-Datasheet Validation</div>
               <div className="dashboard-cv-grid">
                 {C.cross_validation.checks?.map((ck, i) => (
-                  <div key={i} className={`dashboard-cv-item dashboard-cv-item--${ck.status}`}>
+                  <div key={i} className={`dashboard-cv-item dashboard-cv-item--${ck.status}`} data-tip={ck.message + (ck.advice ? '\\n\\n💡 ' + ck.advice : '')}>
                     <span className="dashboard-cv-icon">
                       {ck.status === 'pass' ? '✓' : ck.status === 'warn' ? '!' : ck.status === 'fail' ? '✗' : '–'}
                     </span>
@@ -403,14 +405,16 @@ function MetricCard({ label, value, unit, sub, color, dec = 1 }) {
 }
 
 function ThermalBar({ ambient, tCase, tJunc, tMax }) {
-  // Use actual Tj_max (handles GaN ~150C, SiC ~200C, Si ~175C) with some visual headroom
-  const maxTemp = Math.max(tMax || 175, (tJunc || 0) + 20)
-  const pct = (v) => Math.min(95, Math.max(0, (v / maxTemp) * 100))
+  // Cap visual axis exactly at T_max to prevent bar from crossing the marker edge
+  const limit = tMax || 175
+  const maxTemp = limit
+  const pct = (v) => Math.min(100, Math.max(0, (v / maxTemp) * 100))
+  const isMelting = tJunc > limit
 
   return (
-    <div className="dashboard-thermal-bar-wrapper">
+    <div className="dashboard-thermal-bar-wrapper" style={{ position: 'relative' }}>
       {/* Temperature bar */}
-      <div className="dashboard-thermal-bar">
+      <div className="dashboard-thermal-bar" style={{ overflow: 'hidden' }}>
         <div className="dashboard-thermal-segment" style={{ width: `${pct(ambient)}%`, background: 'var(--accent)' }} />
         {tCase != null && (
           <div className="dashboard-thermal-segment" style={{ width: `${pct(tCase) - pct(ambient)}%`, background: 'var(--amber)' }} />
@@ -419,12 +423,31 @@ function ThermalBar({ ambient, tCase, tJunc, tMax }) {
           <div className="dashboard-thermal-segment" style={{ width: `${pct(tJunc) - pct(tCase || ambient)}%`, background: 'var(--red)' }} />
         )}
       </div>
-      {/* Labels */}
-      <div className="dashboard-thermal-labels">
-        <span style={{ color: 'var(--accent)' }}>T_amb {ambient}°C</span>
-        {tCase != null && <span style={{ color: 'var(--amber)' }}>T_case {tCase.toFixed(0)}°C</span>}
-        {tJunc != null && <span style={{ color: 'var(--red)' }}>T_j {tJunc.toFixed(0)}°C</span>}
-        {tMax != null && <span style={{ color: 'var(--txt-3)' }}>T_max {tMax}°C</span>}
+      {isMelting && (
+        <div style={{ position: 'absolute', top: -4, right: 0, fontSize: 10, fontWeight: 800, color: 'var(--red)', background: 'rgba(255,0,0,0.1)', padding: '2px 6px', borderRadius: 4, transform: 'translateY(-100%)' }}>
+           ⚠ EXCEEDS RATING BY {(tJunc - limit).toFixed(0)}°C
+        </div>
+      )}
+      {/* Labels / Legend */}
+      <div className="dashboard-thermal-labels" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--accent)', fontSize: 11, fontWeight: 600 }}>
+          <div style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent)' }} />T_amb {ambient}°C
+        </div>
+        {tCase != null && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--amber)', fontSize: 11, fontWeight: 600 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--amber)' }} />T_case {tCase.toFixed(0)}°C
+          </div>
+        )}
+        {tJunc != null && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--red)', fontSize: 11, fontWeight: 600 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--red)' }} />T_j {tJunc.toFixed(0)}°C
+          </div>
+        )}
+        {tMax != null && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--txt-3)', fontSize: 11, fontWeight: 600 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--txt-3)' }} />T_max {tMax}°C
+          </div>
+        )}
       </div>
       {/* Tj max marker */}
       {tMax != null && (

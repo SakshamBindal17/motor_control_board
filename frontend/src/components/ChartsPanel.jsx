@@ -13,86 +13,116 @@ function computeLossVsFreq(mosfetParams, systemSpecs) {
 
   const rds = mosfetParams.rds_on_si || 1.5e-3
   const qg = mosfetParams.qg_si || 92e-9
-  const tr = mosfetParams.tr_si || 10e-9
-  const tf = mosfetParams.tf_si || 8e-9
-  const qrr = mosfetParams.qrr_si || 100e-9
+  const tr = mosfetParams.tr_si || 30e-9
+  const tf = mosfetParams.tf_si || 20e-9
+  const qrr = mosfetParams.qrr_si || 44e-9
+  const qoss = mosfetParams.qoss_si || 0   // Coss charge (nC → C)
+  const bodyVf = mosfetParams.body_diode_vf_si || 0.7 // Body diode Vf
   const vBus = systemSpecs.bus_voltage || 48
   const iMax = systemSpecs.max_phase_current || 80
   const vDrv = systemSpecs.gate_drive_voltage || 12
-  const rdsHot = rds * 1.5 // thermal derating at ~125°C
+  const numFets = systemSpecs.num_fets || 6
+  const dtNs = systemSpecs.dead_time_ns || 200 // dead time for body diode conduction
+  const rdsHot = rds * Math.pow((125 + 273.15) / 300, 2.1) // power-law derating at ~125°C
 
-  // 3-phase SPWM per-FET RMS: I_peak * sqrt(1/6 + sqrt(3)/(4*pi))
-  const iRms = iMax * Math.sqrt(1/6 + Math.sqrt(3) / (4 * Math.PI))
+  // 3-phase SPWM per-switch RMS (Mohan textbook): I_peak × sqrt(1/8 + M/(3π))
+  // M = modulation index ≈ 0.9 for typical SPWM
+  const M = 0.9
+  const iRms = iMax * Math.sqrt(1/8 + M / (3 * Math.PI))
 
   const points = []
   for (let f = 5000; f <= 100000; f += 2500) {
     const pCond = iRms * iRms * rdsHot
-    // Average switching loss over sinusoidal cycle: uses 2/pi * I_peak
-    const iSwAvg = iMax * 2 / Math.PI
-    const pSw = 0.5 * vBus * iSwAvg * (tr + tf) * f
+    // Sinusoidally-averaged switching loss: P_sw = V × I_peak × (tr+tf) × f / π
+    const pSw = vBus * iMax * (tr + tf) * f / Math.PI
     const pGate = qg * vDrv * f
     const pRr = qrr * vBus * f
-    const pTotal = pCond + pSw + pGate + pRr
+    // Coss energy loss: P_coss = 0.5 × Qoss × Vbus × fsw
+    const pCoss = 0.5 * qoss * vBus * f
+    // Body diode conduction during dead time: P_body = Vf × I_peak × (2/π) × dt × fsw
+    const pBody = bodyVf * iMax * (2 / Math.PI) * (dtNs * 1e-9) * f
+    const pTotal = pCond + pSw + pGate + pRr + pCoss + pBody
     points.push({
       freq: f / 1000,
       conduction: +(pCond).toFixed(3),
       switching: +(pSw).toFixed(3),
       gate: +(pGate).toFixed(3),
       recovery: +(pRr).toFixed(3),
+      coss: +(pCoss).toFixed(3),
+      bodyDiode: +(pBody).toFixed(3),
       total: +(pTotal).toFixed(3),
-      total6: +(pTotal * 6).toFixed(1),
+      totalAll: +(pTotal * numFets).toFixed(1),
     })
   }
   return points
 }
 
-function computeThermalDerating(mosfetParams, systemSpecs) {
+function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
   if (!mosfetParams) return null
 
   const rds = mosfetParams.rds_on_si || 1.5e-3
   const tjMax = mosfetParams.tj_max_si || 175
   const rthJC = mosfetParams.rth_jc_si || 0.5
-  // JC + case-to-sink (TIM) + sink-to-ambient (forced air heatsink for 3kW)
-  const rthTotal = rthJC + 0.5 + 3.0
+
+  // Use thermal resistances from calculation results (backend design constants)
+  // or fall back to realistic PCB defaults (natural convection, NO heatsink)
+  const thermal = calcResults?.thermal || {}
+  const rthCS = thermal.rth_cs_c_per_w || 0.5       // TIM: case-to-PCB
+  const rthSA = thermal.rth_sa_pcb_c_per_w || 20.0  // PCB-to-ambient (natural convection)
+  const rthTotal = rthJC + rthCS + rthSA
+
   const vBus = systemSpecs.bus_voltage || 48
   const qg = mosfetParams.qg_si || 92e-9
-  const tr = mosfetParams.tr_si || 10e-9
-  const tf = mosfetParams.tf_si || 8e-9
-  const qrr = mosfetParams.qrr_si || 100e-9
+  const tr = mosfetParams.tr_si || 30e-9
+  const tf = mosfetParams.tf_si || 20e-9
+  const qrr = mosfetParams.qrr_si || 44e-9
   const vDrv = systemSpecs.gate_drive_voltage || 12
   const fsw = systemSpecs.pwm_freq_hz || 20000
 
-  // SPWM RMS factor
-  const kRms = Math.sqrt(1/6 + Math.sqrt(3) / (4 * Math.PI))
+  // 3-phase SPWM per-switch RMS (Mohan textbook): sqrt(1/8 + M/(3π))
+  const M = 0.9
+  const kRms = Math.sqrt(1/8 + M / (3 * Math.PI))
 
   const points = []
   for (let tAmb = -20; tAmb <= 105; tAmb += 5) {
-    // Per-amp switching factor (averaged over sinusoidal cycle)
-    const pSwPerAmp = 0.5 * vBus * (tr + tf) * fsw * (2 / Math.PI)
+    // Sinusoidally-averaged switching loss per amp: V × (tr+tf) × f / π
+    const pSwPerAmp = vBus * (tr + tf) * fsw / Math.PI
     const pGateFixed = qg * vDrv * fsw
     const pRrFixed = qrr * vBus * fsw
+    // Coss and body diode losses (fixed per cycle, not current-dependent)
+    const qoss = mosfetParams.qoss_si || 0
+    const bodyVf = mosfetParams.body_diode_vf_si || 0.7
+    const dtNs = systemSpecs.dead_time_ns || 200
+    const pCossFixed = 0.5 * qoss * vBus * fsw
+    const pBodyFixed = bodyVf * iMax * (2 / Math.PI) * (dtNs * 1e-9) * fsw
 
     // Available thermal budget
-    const tBudget = tjMax - tAmb - (pGateFixed + pRrFixed) * rthTotal
+    const tBudget = tjMax - tAmb - (pGateFixed + pRrFixed + pCossFixed + pBodyFixed) * rthTotal
     if (tBudget <= 0) {
       points.push({ ambient: tAmb, maxCurrent: 0 })
       continue
     }
 
     // Iterative solve with Tj-dependent Rds_on
-    // Rds(Tj) = Rds(25C) * (1 + 0.004 * (Tj - 25))
-    let iMax = 200
-    for (let iter = 0; iter < 30; iter++) {
+    // Rds(Tj) ≈ Rds(25°C) × (Tj/300)^2.2 (better fit for modern MOSFETs)
+    let iMax = 80 // start from design current, not 200
+    let tj = tAmb + 50 // initial Tj guess
+    for (let iter = 0; iter < 50; iter++) {
       const iRms = iMax * kRms
-      // Estimate Tj to compute Rds_hot
-      const rdsEst = rds * (1 + 0.004 * (Math.min(tjMax, tAmb + 50) - 25))
-      const pCond = iRms * iRms * rdsEst
+      // Rds(Tj) model: polynomial fit more accurate than linear 0.004/°C
+      const rdsHot = rds * Math.pow((tj + 273.15) / 300, 2.1)
+      const pCond = iRms * iRms * rdsHot
       const pSw = pSwPerAmp * iMax
-      const tj = tAmb + (pCond + pSw + pGateFixed + pRrFixed) * rthTotal
-      if (tj > tjMax) {
+      const pTotal = pCond + pSw + pGateFixed + pRrFixed + pCossFixed + pBodyFixed
+      const tjNew = tAmb + pTotal * rthTotal
+
+      // Update Tj estimate (moving average for stability)
+      tj = 0.5 * tj + 0.5 * tjNew
+
+      if (tjNew > tjMax) {
         iMax *= 0.95
-      } else if (tj < tjMax - 2) {
-        iMax *= 1.02
+      } else if (tjNew < tjMax - 1) {
+        iMax *= 1.01
       } else {
         break
       }
@@ -111,33 +141,32 @@ function computeEfficiencyVsLoad(mosfetParams, systemSpecs) {
 
   const rds = mosfetParams.rds_on_si || 1.5e-3
   const qg = mosfetParams.qg_si || 92e-9
-  const tr = mosfetParams.tr_si || 10e-9
-  const tf = mosfetParams.tf_si || 8e-9
-  const qrr = mosfetParams.qrr_si || 100e-9
+  const tr = mosfetParams.tr_si || 30e-9
+  const tf = mosfetParams.tf_si || 20e-9
+  const qrr = mosfetParams.qrr_si || 44e-9
   const vBus = systemSpecs.bus_voltage || 48
   const pRated = systemSpecs.power || 3000
   const vDrv = systemSpecs.gate_drive_voltage || 12
   const fsw = systemSpecs.pwm_freq_hz || 20000
-  const rdsHot = rds * 1.5 // ~125°C thermal derating
+  const numFets = systemSpecs.num_fets || 6
+  const rdsHot = rds * Math.pow((125 + 273.15) / 300, 2.1) // power-law derating at ~125°C
 
-  // SPWM RMS factor per-FET
-  const kRms = Math.sqrt(1/6 + Math.sqrt(3) / (4 * Math.PI))
-
+  // 3-phase SPWM per-switch RMS (Mohan textbook)
+  const M = 0.9
+  const kRms = Math.sqrt(1/8 + M / (3 * Math.PI))
   const points = []
   for (let loadPct = 5; loadPct <= 100; loadPct += 5) {
     const pOut = pRated * loadPct / 100
-    // 3-phase power: P = sqrt(3) * V_LL * I_L * PF, I_peak = sqrt(2) * I_rms
-    const iPhase = pOut / (vBus * 1.732 * 0.85) // line current RMS
-    const iPeak = iPhase * Math.SQRT2
+    // Scale peak current linearly from rated (DC-fed inverter, not AC mains)
+    const iPeak = (systemSpecs.max_phase_current || 80) * loadPct / 100
 
     // Per-FET RMS from SPWM modulation
     const iFetRms = iPeak * kRms
-    const pCond = iFetRms * iFetRms * rdsHot * 6
-    // Average switching loss (sinusoidal average = 2/pi * I_peak)
-    const iSwAvg = iPeak * 2 / Math.PI
-    const pSw = 0.5 * vBus * iSwAvg * (tr + tf) * fsw * 6
-    const pGate = qg * vDrv * fsw * 6
-    const pRr = qrr * vBus * fsw * 6
+    const pCond = iFetRms * iFetRms * rdsHot * numFets
+    // Sinusoidally-averaged switching loss: V × I_peak × (tr+tf) × f / π, per FET
+    const pSw = vBus * iPeak * (tr + tf) * fsw / Math.PI * numFets
+    const pGate = qg * vDrv * fsw * numFets
+    const pRr = qrr * vBus * fsw * numFets
     const pLoss = pCond + pSw + pGate + pRr
 
     const eff = pOut / (pOut + pLoss) * 100
@@ -197,6 +226,7 @@ function extractSIParams(blockState) {
     vds_max: { unit: dict.vds_max__unit, mult: { 'V': 1 } },
     id_cont: { unit: dict.id_cont__unit, mult: { 'A': 1 } },
     coss: { unit: dict.coss__unit, mult: { 'pF': 1e-12, 'nF': 1e-9, 'F': 1 } },
+    qoss: { unit: dict.qoss__unit, mult: { 'nC': 1e-9, 'µC': 1e-6, 'C': 1 } },
     rth_jc: { unit: dict.rth_jc__unit, mult: { '°C/W': 1, 'C/W': 1 } },
     tj_max: { unit: dict.tj_max__unit, mult: { '°C': 1, 'C': 1 } },
     vgs_th: { unit: dict.vgs_th__unit, mult: { 'V': 1 } },
@@ -229,6 +259,7 @@ const tooltipStyle = {
   background: 'var(--bg-3)',
   border: '1px solid var(--border-2)',
   borderRadius: 6,
+  padding: '8px 12px',
   fontSize: 11,
   color: 'var(--txt-1)',
 }
@@ -240,9 +271,10 @@ export default function ChartsPanel() {
 
   const mosfetParams = useMemo(() => extractSIParams(project.blocks.mosfet), [project.blocks.mosfet])
   const systemSpecs = project.system_specs
+  const calcResults = project.calculations
 
   const lossData = useMemo(() => computeLossVsFreq(mosfetParams, systemSpecs), [mosfetParams, systemSpecs])
-  const thermalData = useMemo(() => computeThermalDerating(mosfetParams, systemSpecs), [mosfetParams, systemSpecs])
+  const thermalData = useMemo(() => computeThermalDerating(mosfetParams, systemSpecs, calcResults), [mosfetParams, systemSpecs, calcResults])
   const effData = useMemo(() => computeEfficiencyVsLoad(mosfetParams, systemSpecs), [mosfetParams, systemSpecs])
   const gateData = useMemo(() => computeGateTimingVsRg(mosfetParams, systemSpecs), [mosfetParams, systemSpecs])
 
@@ -315,6 +347,7 @@ export default function ChartsPanel() {
                 <strong style={{ color: 'var(--txt-2)' }}>Loss vs Switching Frequency: </strong>
                 Shows how MOSFET losses scale with PWM frequency. Conduction loss stays constant while switching and gate losses increase linearly.
                 The orange marker shows your current operating point ({systemSpecs.pwm_freq_hz / 1000} kHz).
+                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>Note: Charts use simplified overlap switching model — see Calculations tab for Qgd-based results.</em>
               </>
             )}
             {activeChart === 'thermal_derating' && (
@@ -353,7 +386,7 @@ function LossVsFreqChart({ data, fsw }) {
     <div>
       <div className="dashboard-card-title">Per-MOSFET Loss vs Switching Frequency</div>
       <ResponsiveContainer width="100%" height={320}>
-        <AreaChart data={data} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+        <AreaChart data={data} margin={{ top: 10, right: 30, left: 55, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-1)" />
           <XAxis dataKey="freq" label={{ value: 'Frequency (kHz)', position: 'bottom', offset: -2, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
           <YAxis label={{ value: 'Loss (W)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
@@ -363,6 +396,8 @@ function LossVsFreqChart({ data, fsw }) {
           <Area type="monotone" dataKey="switching" stackId="1" fill="#ff4444" stroke="#ff4444" fillOpacity={0.6} name="Switching" />
           <Area type="monotone" dataKey="gate" stackId="1" fill="#bb86fc" stroke="#bb86fc" fillOpacity={0.6} name="Gate" />
           <Area type="monotone" dataKey="recovery" stackId="1" fill="#ffab00" stroke="#ffab00" fillOpacity={0.6} name="Recovery" />
+          <Area type="monotone" dataKey="coss" stackId="1" fill="#00bcd4" stroke="#00bcd4" fillOpacity={0.6} name="Coss" />
+          <Area type="monotone" dataKey="bodyDiode" stackId="1" fill="#e91e63" stroke="#e91e63" fillOpacity={0.6} name="Body Diode" />
           {fsw && <ReferenceLine x={fsw} stroke="var(--amber)" strokeDasharray="5 5" label={{ value: `${fsw}kHz`, position: 'top', fill: 'var(--amber)', fontSize: 10 }} />}
         </AreaChart>
       </ResponsiveContainer>
@@ -375,7 +410,7 @@ function ThermalDeratingChart({ data, tAmb, iMax }) {
     <div>
       <div className="dashboard-card-title">Max Continuous Current vs Ambient Temperature</div>
       <ResponsiveContainer width="100%" height={320}>
-        <AreaChart data={data} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+        <AreaChart data={data} margin={{ top: 10, right: 30, left: 55, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-1)" />
           <XAxis dataKey="ambient" label={{ value: 'Ambient Temp (°C)', position: 'bottom', offset: -2, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
           <YAxis label={{ value: 'Max Current (A)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
@@ -394,10 +429,10 @@ function EfficiencyVsLoadChart({ data }) {
     <div>
       <div className="dashboard-card-title">MOSFET Stage Efficiency vs Load</div>
       <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={data} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+        <LineChart data={data} margin={{ top: 10, right: 30, left: 55, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-1)" />
           <XAxis dataKey="load" label={{ value: 'Load (%)', position: 'bottom', offset: -2, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
-          <YAxis yAxisId="eff" domain={['auto', 100]} label={{ value: 'Efficiency (%)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
+          <YAxis yAxisId="eff" domain={[dataMin => Math.floor(dataMin / 5) * 5, 100]} label={{ value: 'Efficiency (%)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
           <YAxis yAxisId="loss" orientation="right" label={{ value: 'Loss (W)', angle: 90, position: 'insideRight', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
           <Tooltip contentStyle={tooltipStyle} />
           <Legend wrapperStyle={{ fontSize: 10, color: 'var(--txt-2)' }} />
@@ -414,7 +449,7 @@ function GateTimingChart({ data, currentRg }) {
     <div>
       <div className="dashboard-card-title">Switching Times & dV/dt vs Gate Resistance</div>
       <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={data} margin={{ top: 10, right: 50, left: 10, bottom: 5 }}>
+        <LineChart data={data} margin={{ top: 10, right: 50, left: 55, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-1)" />
           <XAxis dataKey="rg" label={{ value: 'Rg external (Ω)', position: 'bottom', offset: -2, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
           <YAxis yAxisId="time" label={{ value: 'Time (ns)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />

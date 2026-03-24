@@ -14,9 +14,14 @@ export default function PassivesPanel({ config }) {
   const { state, dispatch } = useProject()
   const C = state.project.calculations
   const ovr = state.project.blocks.passives.overrides || {}
+  const specs = state.project.system_specs
 
   function setOvr(k, v) {
     dispatch({ type: 'SET_PASSIVES_OVERRIDE', payload: { key: k, value: parseFloat(v) || undefined } })
+  }
+
+  function setSpec(k, v) {
+    dispatch({ type: 'SET_SYSTEM_SPECS', payload: { [k]: v } })
   }
 
   return (
@@ -67,6 +72,23 @@ export default function PassivesPanel({ config }) {
             <CompCard title="Gate Resistors" icon="⚡" color="#bb86fc">
               <Row label="Rg_on (Turn-ON)" val={`${C.gate_resistors?.rg_on_recommended_ohm} Ω`} note="E24 standard" color="#bb86fc" />
               <Row label="Rg_off (Turn-OFF)" val={`${C.gate_resistors?.rg_off_recommended_ohm} Ω`} note="+ BAT54 antiparallel" color="#bb86fc" />
+              {/* Rg override inputs — synced with Waveform tab */}
+              <div style={{ display: 'flex', gap: 8, marginTop: 6, padding: '6px 0', borderTop: '1px solid var(--border-1)' }}>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <label style={{ fontSize: 10, color: 'var(--txt-3)' }}>Source R override</label>
+                  <input type="number" step="0.1" min="0" className="inp inp-mono inp-sm"
+                    placeholder={C.gate_resistors?.rg_on_recommended_ohm ?? '4.7'}
+                    value={specs.rg_on_override}
+                    onChange={e => setSpec('rg_on_override', e.target.value)} />
+                </div>
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <label style={{ fontSize: 10, color: 'var(--txt-3)' }}>Sink R override</label>
+                  <input type="number" step="0.1" min="0" className="inp inp-mono inp-sm"
+                    placeholder={C.gate_resistors?.rg_off_recommended_ohm ?? '2.2'}
+                    value={specs.rg_off_override}
+                    onChange={e => setSpec('rg_off_override', e.target.value)} />
+                </div>
+              </div>
               <Row label="Rg_boot (Bootstrap)" val={`${C.gate_resistors?.rg_bootstrap_ohm} Ω`} note="10Ω std" color="#bb86fc" />
               <Row label="Gate rise time" val={`${C.gate_resistors?.gate_rise_time_ns} ns`} note="Achieved" color="#bb86fc" />
               <Row label="Gate fall time" val={`${C.gate_resistors?.gate_fall_time_ns} ns`} note="Achieved" color="#bb86fc" />
@@ -126,7 +148,7 @@ export default function PassivesPanel({ config }) {
               <Row label="V_sw peak" val={`${C.snubber?.v_sw_peak_v} V`} note="" color="#ff4444" />
               <Row label="Rs (recommended)" val={`${C.snubber?.rs_recommended_ohm} Ω`} note="0402, 0.1W" color="#ff4444" />
               <Row label="Cs (recommended)" val={C.snubber?.cs_recommended_label} note={`×6 (1 per FET)`} color="#ff4444" />
-              <Row label="Snubber power" val={`${C.snubber?.p_total_6_snubbers_w} W`} note="Total 6 snubbers" color="#ff4444" />
+              <Row label="Snubber power" val={`${C.snubber?.p_total_all_snubbers_w ?? C.snubber?.p_total_6_snubbers_w} W`} note={`Total ${C.snubber?.num_fets || 6} snubbers`} color="#ff4444" />
               <Note>{C.snubber?.notes?.reduce_stray}</Note>
             </CompCard>
 

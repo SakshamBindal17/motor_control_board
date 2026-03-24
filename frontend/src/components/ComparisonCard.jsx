@@ -5,7 +5,7 @@ import { fmtNum } from '../utils.js'
 
 // ── Which direction is "better" for each metric ─────────────────────────────
 // lower = smaller is better, higher = bigger is better, info = no winner (trade-off)
-const METRIC_DIRS = {
+export const METRIC_DIRS = {
   // mosfet_rating_check
   voltage_margin_pct: 'higher', current_margin_pct: 'higher',
   // mosfet_losses
@@ -25,7 +25,7 @@ const METRIC_DIRS = {
   // snubber
   voltage_overshoot_v: 'lower', v_sw_peak_v: 'lower',
   rs_recommended_ohm: 'info', cs_recommended_pf: 'info',
-  p_total_6_snubbers_w: 'lower',
+  p_total_all_snubbers_w: 'lower', p_total_6_snubbers_w: 'lower',
   // bootstrap
   c_boot_calculated_nf: 'info', c_boot_recommended_nf: 'info',
   min_hs_on_time_ns: 'lower',
@@ -38,7 +38,7 @@ export const MOSFET_DEPENDENT_SECTIONS = new Set([
 ])
 
 // Key metrics for the verdict summary (subset of most important ones)
-const VERDICT_METRICS = [
+export const VERDICT_METRICS = [
   { key: 'total_loss_per_fet_w', section: 'mosfet_losses', label: 'Total loss/FET', unit: 'W', dec: 2 },
   { key: 'efficiency_mosfet_pct', section: 'mosfet_losses', label: 'Efficiency', unit: '%', dec: 2 },
   { key: 't_junction_est_c', section: 'thermal', label: 'Tj estimated', unit: '°C', dec: 1 },
@@ -51,12 +51,12 @@ const VERDICT_METRICS = [
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function pctDiff(a, b) {
+export function pctDiff(a, b) {
   if (!a || a === 0) return 0
   return ((b - a) / Math.abs(a)) * 100
 }
 
-function getWinner(valA, valB, dir) {
+export function getWinner(valA, valB, dir) {
   if (dir === 'info' || valA === valB) return 'tie'
   if (dir === 'lower') return valA < valB ? 'a' : 'b'
   if (dir === 'higher') return valA > valB ? 'a' : 'b'
@@ -65,7 +65,7 @@ function getWinner(valA, valB, dir) {
 
 // ── Trade-off analysis ──────────────────────────────────────────────────────
 
-function generateTradeoffs(a, b) {
+export function generateTradeoffs(a, b) {
   const insights = { a: [], b: [] }
   if (!a || !b) return insights
 
@@ -148,7 +148,7 @@ function generateTradeoffs(a, b) {
 
 // ── Crossover chart data ────────────────────────────────────────────────────
 
-function computeCrossover(a, b, iMax) {
+export function computeCrossover(a, b, iMax) {
   if (!a?.mosfet_losses || !b?.mosfet_losses || !iMax) return null
 
   const la = a.mosfet_losses, lb = b.mosfet_losses
@@ -188,7 +188,7 @@ function computeCrossover(a, b, iMax) {
 
 // ── Passives impact diff ────────────────────────────────────────────────────
 
-function computePassivesDiff(a, b) {
+export function computePassivesDiff(a, b) {
   if (!a || !b) return []
 
   const pairs = [

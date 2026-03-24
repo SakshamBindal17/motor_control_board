@@ -19,7 +19,7 @@ const METRIC_DIRS = {
   dt_minimum_ns: 'lower', dt_recommended_ns: 'lower',
   dt_actual_ns: 'lower', dt_pct_of_period: 'lower',
   voltage_overshoot_v: 'lower', v_sw_peak_v: 'lower',
-  p_total_6_snubbers_w: 'lower', min_hs_on_time_ns: 'lower',
+  p_total_all_snubbers_w: 'lower', p_total_6_snubbers_w: 'lower', min_hs_on_time_ns: 'lower',
 }
 
 // Which calc sections depend on which block being uploaded
@@ -41,7 +41,7 @@ const REVERSIBLE_KEYS = new Set([
   'gate_rise_time_ns', 'gate_fall_time_ns', 'dv_dt_v_per_us',
   'c_boot_recommended_nf', 'min_hs_on_time_ns',
   'dt_pct_of_period', 'dt_actual_ns',
-  'voltage_overshoot_v', 'p_total_6_snubbers_w',
+  'voltage_overshoot_v', 'p_total_all_snubbers_w', 'p_total_6_snubbers_w',
 ])
 
 // Quick verdict score from two result sets
@@ -135,7 +135,7 @@ export default function CalculationsPanel() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <strong>Cannot Calculate! Missing Critical Inputs:</strong>
           <span style={{ fontSize: 11, color: 'var(--red)', opacity: 0.9 }}>{missingCritical.join(', ')}</span>
-          <span style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>Please fill these in the panels before running.</span>
+          <span style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>Go to the relevant tab → scroll to "Missing / Not Extracted" → enter values manually.</span>
         </div>,
         { duration: 6000 }
       )
@@ -183,12 +183,15 @@ export default function CalculationsPanel() {
             mosfet_params: buildParamsDict(mosfetB),
           })
           setCompResults(resultB)
+          dispatch({ type: 'SET_COMPARISON_RESULTS', payload: resultB })
         } catch (eB) {
           console.warn('MOSFET B calculation failed:', eB.message)
           setCompResults(null)
+          dispatch({ type: 'SET_COMPARISON_RESULTS', payload: null })
         }
       } else {
         setCompResults(null)
+        dispatch({ type: 'SET_COMPARISON_RESULTS', payload: null })
       }
 
       if (warnings.length === 0) toast.success('Done!', { id: 'c' })
@@ -243,6 +246,11 @@ export default function CalculationsPanel() {
     const d = C?.[secKey]
     let parts = []
 
+    if (r.full) {
+      parts.push(`📖 ${r.full}`)
+      parts.push(``)
+    }
+
     // Row label + computed value
     const v = d?.[r.key]
     if (v !== undefined && v !== null && !r.string) {
@@ -252,7 +260,7 @@ export default function CalculationsPanel() {
     // Formula / explanation
     if (r.explain) {
       parts.push(``)
-      parts.push(`Formula:  ${r.explain}`)
+      parts.push(`Calculation:  ${r.explain}`)
     }
 
     // Threshold warning
@@ -443,11 +451,26 @@ export default function CalculationsPanel() {
           ))}
         </div>
 
+        {/* ── Stale results warning ── */}
+        {project.calcs_stale && C && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px',
+            background: 'rgba(255,171,0,0.12)', border: '1px solid var(--amber)',
+            borderRadius: 6, fontSize: 11, color: 'var(--amber)',
+          }}>
+            <AlertTriangle size={13} />
+            <span>Parameters changed since last run — click <b>Run All Calculations</b> to update results</span>
+          </div>
+        )}
+
         {/* ── Run button ───────────────────────────────────────── */}
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-primary" onClick={calc} disabled={loading} style={{ flex: 1, justifyContent: 'center' }}>
+          <button className="btn btn-primary" onClick={calc} disabled={loading} style={{
+            flex: 1, justifyContent: 'center',
+            ...(project.calcs_stale && C ? { animation: 'pulse-border 2s ease-in-out infinite' } : {}),
+          }}>
             {loading ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={13} />}
-            {loading ? 'Calculating…' : 'Run All Calculations'}
+            {loading ? 'Calculating…' : project.calcs_stale && C ? '⟳ Re-run Calculations' : 'Run All Calculations'}
           </button>
           {C && (
             <button
@@ -722,14 +745,32 @@ export default function CalculationsPanel() {
                       </div>
                     )
                   })}
-                  {d.warnings?.length > 0 && (
+                  {(d.warnings?.length > 0 || d.ripple_warning || d.driver_current_limited || d.trr_warning) && (
                     <div className="note-box" style={{ marginTop: 6, background: 'rgba(255,68,68,.06)', border: '1px solid rgba(255,68,68,.2)' }}>
-                      {d.warnings.map((w, i) => (
+                      {d.warnings?.map((w, i) => (
                         <div key={i} style={{ fontSize: 10, color: 'var(--red)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
                           <AlertTriangle size={10} style={{ flexShrink: 0, marginTop: 2 }} />
                           <span>{w}</span>
                         </div>
                       ))}
+                      {d.ripple_warning && (
+                        <div style={{ fontSize: 10, color: 'var(--amber)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                          <AlertTriangle size={10} style={{ flexShrink: 0, marginTop: 2 }} />
+                          <span>{d.ripple_warning}</span>
+                        </div>
+                      )}
+                      {d.driver_current_limited && (
+                        <div style={{ fontSize: 10, color: 'var(--amber)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                          <AlertTriangle size={10} style={{ flexShrink: 0, marginTop: 2 }} />
+                          <span>Gate current clamped by driver source/sink limits — actual switching time longer than Rg alone would predict.</span>
+                        </div>
+                      )}
+                      {d.trr_warning && (
+                        <div style={{ fontSize: 10, color: 'var(--red)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                          <AlertTriangle size={10} style={{ flexShrink: 0, marginTop: 2 }} />
+                          <span>{d.trr_warning}</span>
+                        </div>
+                      )}
                     </div>
                   )}
                   {d.notes && (
@@ -846,14 +887,32 @@ export default function CalculationsPanel() {
                             </div>
                           )
                         })}
-                        {d.warnings?.length > 0 && (
+                        {(d.warnings?.length > 0 || d.ripple_warning || d.driver_current_limited || d.trr_warning) && (
                           <div className="note-box" style={{ marginTop: 8, background: 'rgba(255,68,68,.06)', border: '1px solid rgba(255,68,68,.2)' }}>
-                            {d.warnings.map((w, i) => (
+                            {d.warnings?.map((w, i) => (
                               <div key={i} style={{ fontSize: 11, color: 'var(--red)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
                                 <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
                                 <span>{w}</span>
                               </div>
                             ))}
+                            {d.ripple_warning && (
+                              <div style={{ fontSize: 11, color: 'var(--amber)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                                <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+                                <span>{d.ripple_warning}</span>
+                              </div>
+                            )}
+                            {d.driver_current_limited && (
+                              <div style={{ fontSize: 11, color: 'var(--amber)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                                <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+                                <span>Gate current clamped by driver source/sink limits — actual switching time longer than Rg alone would predict.</span>
+                              </div>
+                            )}
+                            {d.trr_warning && (
+                              <div style={{ fontSize: 11, color: 'var(--red)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                                <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+                                <span>{d.trr_warning}</span>
+                              </div>
+                            )}
                           </div>
                         )}
                         {d.notes && (
@@ -878,124 +937,127 @@ const SECTIONS = [
   {
     key: 'mosfet_rating_check', label: 'MOSFET Rating Check', icon: '🛡️',
     rows: [
-      { key: 'vds_max_v', label: 'Vds max (rated)', unit: 'V', dec: 1, explain: 'Maximum drain-source voltage from MOSFET datasheet' },
-      { key: 'v_peak_v', label: 'V peak (system)', unit: 'V', dec: 1, explain: 'Peak bus voltage from system specs' },
-      { key: 'voltage_margin_pct', label: 'Voltage margin', unit: '%', dec: 1, warn: 25, danger: 10, explain: '(Vds_max - V_peak) / Vds_max × 100 — need ≥ 20%' },
-      { key: 'id_cont_a', label: 'Id cont (rated)', unit: 'A', dec: 1, explain: 'Continuous drain current rating from MOSFET datasheet' },
-      { key: 'i_max_a', label: 'I max (system)', unit: 'A', dec: 1, explain: 'Maximum phase current from system specs' },
-      { key: 'current_margin_pct', label: 'Current margin', unit: '%', dec: 1, warn: 30, danger: 10, explain: '(Id_cont - I_max) / Id_cont × 100' },
+      { key: 'vds_max_v', label: 'Vds max (rated)', full: 'Maximum Drain-to-Source Voltage', unit: 'V', dec: 1, explain: 'Maximum drain-source voltage from MOSFET datasheet' },
+      { key: 'v_peak_v', label: 'V peak (system)', full: 'Peak System Bus Voltage', unit: 'V', dec: 1, explain: 'Peak bus voltage from system specs' },
+      { key: 'voltage_margin_pct', label: 'Voltage margin', full: 'MOSFET Voltage Safety Margin', unit: '%', dec: 1, warn: 25, danger: 10, explain: '(Vds_max - V_peak) / Vds_max × 100 — need ≥ 20%' },
+      { key: 'id_cont_a', label: 'Id cont (rated)', full: 'Continuous Drain Current', unit: 'A', dec: 1, explain: 'Continuous drain current rating from MOSFET datasheet' },
+      { key: 'i_max_a', label: 'I max (system)', full: 'Maximum Phase Current', unit: 'A', dec: 1, explain: 'Maximum phase current from system specs' },
+      { key: 'current_margin_pct', label: 'Current margin', full: 'MOSFET Current Safety Margin', unit: '%', dec: 1, warn: 30, danger: 10, explain: '(Id_cont - I_max) / Id_cont × 100' },
     ],
   },
   {
     key: 'driver_compatibility', label: 'Driver Compatibility', icon: '🔗',
     rows: [
-      { key: 'vcc_min_v', label: 'VCC min', unit: 'V', dec: 1, explain: 'Minimum supply voltage for gate driver IC' },
-      { key: 'vcc_max_v', label: 'VCC max', unit: 'V', dec: 1, explain: 'Maximum supply voltage for gate driver IC' },
-      { key: 'gate_drive_v', label: 'V_drive (system)', unit: 'V', dec: 1, explain: 'Gate drive voltage from system specs' },
-      { key: 'v_bootstrap_v', label: 'V bootstrap', unit: 'V', dec: 2, explain: 'V_drive - diode Vf drop (0.5V Schottky)' },
-      { key: 'vbs_uvlo_v', label: 'VBS UVLO', unit: 'V', dec: 2, explain: 'Bootstrap under-voltage lockout threshold' },
-      { key: 'bootstrap_margin_v', label: 'Boot margin', unit: 'V', dec: 2, warn: 1, danger: 0, explain: 'V_bootstrap - VBS_UVLO — must be positive' },
-      { key: 'vih_v', label: 'Driver VIH', unit: 'V', dec: 2, explain: 'High-level input voltage threshold on driver' },
-      { key: 'mcu_voh_v', label: 'MCU output high', unit: 'V', dec: 1, explain: 'MCU output voltage (from VDD range or assumed 3.3V)' },
+      { key: 'vcc_min_v', label: 'VCC min', full: 'Driver Minimum Supply Voltage', unit: 'V', dec: 1, explain: 'Minimum supply voltage for gate driver IC' },
+      { key: 'vcc_max_v', label: 'VCC max', full: 'Driver Maximum Supply Voltage', unit: 'V', dec: 1, explain: 'Maximum supply voltage for gate driver IC' },
+      { key: 'gate_drive_v', label: 'V_drive (system)', full: 'System Gate Drive Voltage', unit: 'V', dec: 1, explain: 'Gate drive voltage from system specs' },
+      { key: 'v_bootstrap_v', label: 'V bootstrap', full: 'Bootstrap Voltage', unit: 'V', dec: 2, explain: 'V_drive - diode Vf drop (0.5V Schottky)' },
+      { key: 'vbs_uvlo_v', label: 'VBS UVLO', full: 'Bootstrap UVLO Threshold', unit: 'V', dec: 2, explain: 'Bootstrap under-voltage lockout threshold' },
+      { key: 'bootstrap_margin_v', label: 'Boot margin', full: 'Bootstrap Voltage Margin', unit: 'V', dec: 2, warn: 1, danger: 0, explain: 'V_bootstrap - VBS_UVLO — must be positive' },
+      { key: 'vih_v', label: 'Driver VIH', full: 'Driver High-Level Input Threshold', unit: 'V', dec: 2, explain: 'High-level input voltage threshold on driver' },
+      { key: 'mcu_voh_v', label: 'MCU output high', full: 'MCU Output High Voltage', unit: 'V', dec: 1, explain: 'MCU output voltage (from VDD range or assumed 3.3V)' },
     ],
   },
   {
     key: 'adc_timing', label: 'ADC Timing', icon: '📊',
     rows: [
-      { key: 'pwm_period_us', label: 'PWM period', unit: 'µs', dec: 2, explain: '1 / f_sw' },
-      { key: 'sampling_window_us', label: 'Sample window', unit: 'µs', dec: 2, explain: '10% of half-period (center-aligned)' },
-      { key: 'adc_rate_msps', label: 'ADC rate', unit: 'MSPS', dec: 2, explain: 'Extracted ADC sample rate from MCU datasheet' },
-      { key: 'adc_conversion_us', label: 'Conversion time', unit: 'µs', dec: 3, explain: '1 / ADC_rate — time for one sample' },
-      { key: 't_3_channel_us', label: '3-ch total time', unit: 'µs', dec: 3, explain: '3 × conversion time (sequential sampling for 3-shunt)' },
-      { key: 'adc_channels', label: 'ADC channels', unit: 'ch', dec: 0, explain: 'Total ADC channels from MCU datasheet' },
-      { key: 'channels_needed', label: 'Channels needed', unit: 'ch', dec: 0, explain: '3 current + bus V + 2 NTC + 1 BEMF = 7 min' },
+      { key: 'pwm_period_us', label: 'PWM period', full: 'PWM Switching Period', unit: 'µs', dec: 2, explain: '1 / f_sw' },
+      { key: 'sampling_window_us', label: 'Sample window', full: 'Center-Aligned Sampling Window', unit: 'µs', dec: 2, explain: '10% of half-period (center-aligned)' },
+      { key: 'adc_rate_msps', label: 'ADC rate', full: 'ADC Sampling Rate', unit: 'MSPS', dec: 2, explain: 'Extracted ADC sample rate from MCU datasheet' },
+      { key: 'adc_conversion_us', label: 'Conversion time', full: 'Single ADC Conversion Time', unit: 'µs', dec: 3, explain: '1 / ADC_rate — time for one sample' },
+      { key: 't_3_channel_us', label: '3-ch total time', full: '3-Channel Sequential Conversion Time', unit: 'µs', dec: 3, explain: '3 × conversion time (sequential sampling for 3-shunt)' },
+      { key: 'adc_channels', label: 'ADC channels', full: 'Available MCU ADC Channels', unit: 'ch', dec: 0, explain: 'Total ADC channels from MCU datasheet' },
+      { key: 'channels_needed', label: 'Channels needed', full: 'Required ADC Channels', unit: 'ch', dec: 0, explain: '3 current + bus V + 2 NTC + 1 BEMF = 7 min' },
     ],
   },
   {
     key: 'motor_validation', label: 'Motor Checks', icon: '🌀',
     rows: [
-      { key: 'f_electrical_hz', label: 'f_electrical', unit: 'Hz', dec: 1, explain: 'RPM × pole_pairs / 60' },
-      { key: 'fsw_to_fe_ratio', label: 'f_sw / f_e ratio', unit: '×', dec: 1, warn: 15, danger: 10, explain: 'PWM freq ÷ electrical freq — must be ≥ 10× for FOC/SPWM' },
-      { key: 'v_bemf_peak_v', label: 'Back-EMF peak', unit: 'V', dec: 1, explain: 'Ke × (RPM / 1000)' },
-      { key: 'bemf_margin_pct', label: 'V_bus headroom', unit: '%', dec: 1, warn: 15, danger: 0, explain: '(V_bus - V_BEMF) / V_bus × 100 — negative means MOSFET overvoltage risk' },
-      { key: 'i_rated_from_kt_a', label: 'I rated (from Kt)', unit: 'A', dec: 1, explain: 'Rated_Torque / Kt — current needed for rated torque' },
-      { key: 'copper_loss_3ph_w', label: 'Copper loss (3ph)', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — winding heat at rated current' },
-      { key: 'copper_loss_pct', label: 'Copper loss %', unit: '%', dec: 1, warn: 3, danger: 5, explain: 'Copper loss as percentage of rated power' },
-      { key: 'phase_time_const_ms', label: 'L/R time const', unit: 'ms', dec: 2, explain: 'Lph / Rph — electrical time constant of motor winding' },
+      { key: 'f_electrical_hz', label: 'f_electrical', full: 'Electrical Frequency', unit: 'Hz', dec: 1, explain: 'RPM × pole_pairs / 60' },
+      { key: 'fsw_to_fe_ratio', label: 'f_sw / f_e ratio', full: 'PWM vs Electrical Frequency Ratio', unit: '×', dec: 1, warn: 15, danger: 10, explain: 'PWM freq ÷ electrical freq — must be ≥ 10× for FOC/SPWM' },
+      { key: 'v_bemf_peak_v', label: 'Back-EMF peak', full: 'Peak Motor Back-EMF Voltage', unit: 'V', dec: 1, explain: 'Ke × (RPM / 1000)' },
+      { key: 'bemf_margin_pct', label: 'V_bus headroom', full: 'Bus Voltage vs BEMF Headroom', unit: '%', dec: 1, warn: 15, danger: 0, explain: '(V_bus - V_BEMF) / V_bus × 100 — negative means MOSFET overvoltage risk' },
+      { key: 'i_rated_from_kt_a', label: 'I rated (from Kt)', full: 'Required Rated Current', unit: 'A', dec: 1, explain: 'Rated_Torque / Kt — current needed for rated torque' },
+      { key: 'copper_loss_3ph_w', label: 'Copper loss (3ph)', full: 'Total Stator Copper Loss', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — winding heat at rated current' },
+      { key: 'copper_loss_pct', label: 'Copper loss %', full: 'Copper Loss Percentage', unit: '%', dec: 1, warn: 3, danger: 5, explain: 'Copper loss as percentage of rated power' },
+      { key: 'phase_time_const_ms', label: 'L/R time const', full: 'Electrical Time Constant (L/R)', unit: 'ms', dec: 2, explain: 'Lph / Rph — electrical time constant of motor winding' },
     ],
   },
   {
     key: 'mosfet_losses', label: 'MOSFET Losses', icon: '🔥',
     rows: [
-      { key: 'conduction_loss_per_fet_w', label: 'Cond. Loss / FET', unit: 'W', dec: 3, explain: 'I_rms² × (R_ds_on × 1.5 temp derating)' },
-      { key: 'switching_loss_per_fet_w', label: 'SW Loss / FET', unit: 'W', dec: 3, explain: '0.5 × V_peak × I_max × (tr + tf) × fsw  +  Qg × V_drv × fsw' },
+      { key: 'i_rms_switch_a', label: 'I_rms / switch', full: 'RMS Current per Switch (total)', unit: 'A', dec: 2, explain: 'Per-switch RMS (fundamental + ripple if Lph known). SPWM formula: I_pk × √(1/8 + M/3π)' },
+      { key: 'i_rms_fundamental_a', label: 'I_rms (fund.)', full: 'Fundamental RMS per Switch', unit: 'A', dec: 2, explain: 'Fundamental-only: I_pk × √(1/8 + M/3π) — no ripple component' },
+      { key: 'conduction_loss_per_fet_w', label: 'Cond. Loss / FET', unit: 'W', dec: 3, explain: 'I_rms² × Rds(on) × 1.5 temp derating — NO /2 (I_rms already per-switch)' },
+      { key: 'switching_loss_per_fet_w', label: 'SW Loss / FET', unit: 'W', dec: 3, explain: 'Qgd-based Miller model using actual Rg from gate_resistors (driver-current-limited)' },
       { key: 'recovery_loss_per_fet_w', label: 'Recovery Loss / FET', unit: 'W', dec: 3, explain: 'Qrr × V_peak × fsw' },
-      { key: 'total_loss_per_fet_w', label: 'Total / FET', unit: 'W', dec: 3, warn: 8, danger: 15, explain: 'P_cond + P_sw + P_rr' },
-      { key: 'total_all_6_fets_w', label: 'Total (×6 FETs)', unit: 'W', dec: 1, warn: 40, danger: 60, explain: 'Total per FET × 6' },
+      { key: 'body_diode_loss_per_fet_w', label: 'Body Diode / FET', unit: 'W', dec: 3, explain: 'Vf × I_avg × dt × fsw × 2 events — dead-time conduction loss' },
+      { key: 'total_loss_per_fet_w', label: 'Total / FET', unit: 'W', dec: 3, warn: 8, danger: 15, explain: 'P_cond + P_sw + P_rr + P_gate + P_coss + P_body_diode' },
+      { key: 'total_all_6_fets_w', label: 'Total (all FETs)', unit: 'W', dec: 1, warn: 40, danger: 60, explain: 'Total per FET × num_fets', dynamic: d => d?.num_fets ? `Total (×${d.num_fets} FETs)` : 'Total (all FETs)' },
       { key: 'efficiency_mosfet_pct', label: 'Efficiency', unit: '%', dec: 2, explain: '100 × (P_out) / (P_out + Total_Loss)' },
     ],
   },
   {
     key: 'gate_resistors', label: 'Gate Drive', icon: '⚡',
     rows: [
-      { key: 'rg_on_recommended_ohm', label: 'Rg ON', unit: 'Ω', dec: 2, explain: 'MAX( (V_drv - V_th)/I_source,  (V_drv - V_th)/(Qg/t_rise_target) ) - R_g_internal' },
-      { key: 'rg_off_recommended_ohm', label: 'Rg OFF', unit: 'Ω', dec: 2, explain: 'MAX( V_drv/I_sink, Rg_on/2 ) - R_g_internal' },
-      { key: 'rg_bootstrap_ohm', label: 'Rg Bootstrap', unit: 'Ω', dec: 0, explain: 'Hardcoded standard value (10Ω) to limit peak charging current' },
-      { key: 'gate_rise_time_ns', label: 'Rise time', unit: 'ns', dec: 1, explain: 'Q_g / ( (V_drv - V_th) / Rg_on_total )' },
-      { key: 'gate_fall_time_ns', label: 'Fall time', unit: 'ns', dec: 1, explain: 'Q_g / ( V_drv / Rg_off_total )' },
-      { key: 'dv_dt_v_per_us', label: 'dV/dt', unit: 'V/µs', dec: 1, explain: 'V_peak / t_rise_actual' },
+      { key: 'rg_on_recommended_ohm', label: 'Rg ON', full: 'Recommended Turn-On Gate Resistor', unit: 'Ω', dec: 2, explain: 'MAX( (V_drv - V_th)/I_source,  (V_drv - V_th)/(Qg/t_rise_target) ) - R_g_internal' },
+      { key: 'rg_off_recommended_ohm', label: 'Rg OFF', full: 'Recommended Turn-Off Gate Resistor', unit: 'Ω', dec: 2, explain: 'MAX( V_drv/I_sink, Rg_on/2 ) - R_g_internal' },
+      { key: 'rg_bootstrap_ohm', label: 'Rg Bootstrap', full: 'Bootstrap Charging Resistor', unit: 'Ω', dec: 0, explain: 'Hardcoded standard value (10Ω) to limit peak charging current' },
+      { key: 'gate_rise_time_ns', label: 'Rise time', full: 'Actual Gate Rise Time', unit: 'ns', dec: 1, explain: 'Q_g / ( (V_drv - V_th) / Rg_on_total )' },
+      { key: 'gate_fall_time_ns', label: 'Fall time', full: 'Actual Gate Fall Time', unit: 'ns', dec: 1, explain: 'Q_g / ( V_drv / Rg_off_total )' },
+      { key: 'dv_dt_v_per_us', label: 'dV/dt', full: 'Drain-Source Voltage Slew Rate', unit: 'V/µs', dec: 1, explain: 'V_peak / t_rise_actual' },
     ],
   },
   {
     key: 'thermal', label: 'Thermal', icon: '🌡️',
     rows: [
-      { key: 't_junction_est_c', label: 'Tj estimated', unit: '°C', dec: 1, warn: 130, danger: 155, explain: 'T_ambient + (P_fet × (R_thJC + R_thCS + R_thSA))' },
-      { key: 'tj_max_rated_c', label: 'Tj max rated', unit: '°C', dec: 0, explain: 'Absolute maximum junction temp from MOSFET datasheet' },
-      { key: 'thermal_margin_c', label: 'Thermal margin', unit: '°C', dec: 1, warn: 30, danger: 0, explain: 'Tj_max_rated - Tj_estimated' },
-      { key: 'p_per_fet_w', label: 'P / FET', unit: 'W', dec: 3, explain: 'Total power dissipation per individual switch' },
-      { key: 'motor_copper_loss_w', label: 'Motor Cu loss', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — motor winding copper loss (requires Rph in Motor tab)' },
-      { key: 'system_total_loss_w', label: 'System total', unit: 'W', dec: 1, explain: 'MOSFET losses (×6) + motor copper loss — full system power budget' },
-      { key: 'copper_area_per_fet_mm2', label: 'Cu area / FET', unit: 'mm²', dec: 0, explain: 'IPC-2152 estimate for required 3oz copper area to maintain steady state' },
+      { key: 't_junction_est_c', label: 'Tj estimated', full: 'Estimated Junction Temperature', unit: '°C', dec: 1, warn: 130, danger: 155, explain: 'T_ambient + (P_fet × (R_thJC + R_thCS + R_thSA))' },
+      { key: 'tj_max_rated_c', label: 'Tj max rated', full: 'Maximum Rated Junction Temperature', unit: '°C', dec: 0, explain: 'Absolute maximum junction temp from MOSFET datasheet' },
+      { key: 'thermal_margin_c', label: 'Thermal margin', full: 'Thermal Safety Margin', unit: '°C', dec: 1, warn: 30, danger: 0, explain: 'Tj_max_rated - Tj_estimated' },
+      { key: 'p_per_fet_w', label: 'P / FET', full: 'Power Dissipation per Switch', unit: 'W', dec: 3, explain: 'Total power dissipation per individual switch' },
+      { key: 'motor_copper_loss_w', label: 'Motor Cu loss', full: 'Motor Copper Stator Loss', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — motor winding copper loss (requires Rph in Motor tab)' },
+      { key: 'system_total_loss_w', label: 'System total', full: 'Total System Power Loss', unit: 'W', dec: 1, explain: 'MOSFET losses (×6) + motor copper loss — full system power budget' },
+      { key: 'copper_area_per_fet_mm2', label: 'Cu area / FET', full: 'Required PCB Copper Area per Switch', unit: 'mm²', dec: 0, explain: 'IPC-2152 estimate for required 3oz copper area to maintain steady state' },
     ],
   },
   {
     key: 'input_capacitors', label: 'Bus Capacitors', icon: '🔋',
     rows: [
-      { key: 'ripple_method', label: 'Method', string: true, explain: 'Exact (using L_ph) vs Estimated (3-Phase SPWM factor M=0.9)' },
-      { key: 'i_ripple_rms_a', label: 'Ripple current', unit: 'A', dec: 2, explain: 'RMS bus ripple current drawn by the inverter switching' },
-      { key: 'c_bulk_required_uf', label: 'C required', unit: 'µF', dec: 1, explain: 'I_ripple_rms / (8 × f_sw × dV_target)' },
-      { key: 'n_bulk_caps', label: 'Cap count', unit: 'pcs', dec: 0, explain: 'C_bulk_required / 100uF (minimum of 4 to split ESR heating)' },
-      { key: 'c_total_uf', label: 'C total', unit: 'µF', dec: 0, explain: 'Total physical capacitance installed in the bank' },
-      { key: 'v_ripple_actual_v', label: 'Actual ripple', unit: 'V', dec: 3, explain: 'Actual voltage droop based on C_total selected' },
-      { key: 'esr_budget_per_cap_mohm', label: 'ESR/cap budget', unit: 'mΩ', dec: 1, explain: 'Maximum allowed ESR per capacitor to not exceed 105°C thermal bounds' },
+      { key: 'ripple_method', label: 'Method', full: 'Calculation Method', string: true, explain: 'Exact (using L_ph) vs Estimated (3-Phase SPWM factor M=0.9)' },
+      { key: 'i_ripple_rms_a', label: 'Ripple current', full: 'RMS Bus Ripple Current', unit: 'A', dec: 2, explain: 'RMS bus ripple current drawn by the inverter switching' },
+      { key: 'c_bulk_required_uf', label: 'C required', full: 'Required Bulk Capacitance', unit: 'µF', dec: 1, explain: 'I_ripple_rms / (8 × f_sw × dV_target)' },
+      { key: 'n_bulk_caps', label: 'Cap count', full: 'Recommended Capacitor Quantity', unit: 'pcs', dec: 0, explain: 'C_bulk_required / 100uF (minimum of 4 to split ESR heating)' },
+      { key: 'c_total_uf', label: 'C total', full: 'Total Installed Capacitance', unit: 'µF', dec: 0, explain: 'Total physical capacitance installed in the bank' },
+      { key: 'v_ripple_actual_v', label: 'Actual ripple', full: 'Actual DC Bus Voltage Ripple', unit: 'V', dec: 3, explain: 'Actual voltage droop based on C_total selected' },
+      { key: 'esr_budget_per_cap_mohm', label: 'ESR/cap budget', full: 'Thermal ESR Budget per Capacitor', unit: 'mΩ', dec: 1, explain: 'Maximum allowed ESR per capacitor to not exceed 105°C thermal bounds' },
     ],
   },
   {
     key: 'bootstrap_cap', label: 'Bootstrap', icon: '🔄',
     rows: [
-      { key: 'c_boot_calculated_nf', label: 'C_boot required', unit: 'nF', dec: 1, explain: '(Q_g + I_leakage×t_on) / dV_boot_droop' },
-      { key: 'c_boot_recommended_nf', label: 'C_boot standard', unit: 'nF', dec: 0, explain: 'Calculated requirement buffered by 2x safety margin and snapped to E12 series' },
-      { key: 'v_bootstrap_v', label: 'V_bootstrap', unit: 'V', dec: 2, explain: 'V_drive - V_diode_drop' },
-      { key: 'min_hs_on_time_ns', label: 'Min on-time', unit: 'ns', dec: 0, explain: '3 × R_boot × C_boot (time required to recharge bootstrap capacitor to ~95%)' },
+      { key: 'c_boot_calculated_nf', label: 'C_boot required', full: 'Calculated Minimum Bootstrap Capacitance', unit: 'nF', dec: 1, explain: '(Q_g + I_leakage×t_on) / dV_boot_droop' },
+      { key: 'c_boot_recommended_nf', label: 'C_boot standard', full: 'Recommended Standard Bootstrap Capacitor', unit: 'nF', dec: 0, explain: 'Calculated requirement buffered by 2x safety margin and snapped to E12 series' },
+      { key: 'v_bootstrap_v', label: 'V_bootstrap', full: 'Expected Bootstrap Bias Voltage', unit: 'V', dec: 2, explain: 'V_drive - V_diode_drop' },
+      { key: 'min_hs_on_time_ns', label: 'Min on-time', full: 'Minimum Low-Side On-Time', unit: 'ns', dec: 0, explain: '3 × R_boot × C_boot (time required to recharge bootstrap capacitor to ~95%)' },
     ],
   },
   {
     key: 'dead_time', label: 'Dead Time', icon: '⏱️',
     rows: [
-      { key: 'dt_minimum_ns', label: 'Minimum DT', unit: 'ns', dec: 0, explain: 't_off_delay + t_fall + t_prop_delay + 20ns baseline margin' },
-      { key: 'dt_recommended_ns', label: 'Recommended DT', unit: 'ns', dec: 0, explain: 'Minimum DT × 1.5x safety multiplier, snapped to MCU timer resolution' },
-      { key: 'dt_actual_ns', label: 'Actual (MCU)', unit: 'ns', dec: 0, explain: 'Final physical dead time pushed to the timer registers' },
-      { key: 'dt_pct_of_period', label: 'DT %', unit: '%', dec: 3, explain: 'Percentage of the PWM period consumed by dead-time (limits max duty cycle)' },
+      { key: 'dt_minimum_ns', label: 'Minimum DT', full: 'Absolute Minimum Required Dead Time', unit: 'ns', dec: 0, explain: 't_off_delay + t_fall + t_prop_delay + 20ns baseline margin' },
+      { key: 'dt_recommended_ns', label: 'Recommended DT', full: 'Recommended Safety Dead Time', unit: 'ns', dec: 0, explain: 'Minimum DT × 1.5x safety multiplier, snapped to MCU timer resolution' },
+      { key: 'dt_actual_ns', label: 'Actual (MCU)', full: 'MCU Programmed Dead Time', unit: 'ns', dec: 0, explain: 'Final physical dead time pushed to the timer registers' },
+      { key: 'dt_pct_of_period', label: 'DT %', full: 'Dead Time Percentage of Period', unit: '%', dec: 3, explain: 'Percentage of the PWM period consumed by dead-time (limits max duty cycle)' },
     ],
   },
   {
     key: 'snubber', label: 'RC Snubber', icon: '📡',
     rows: [
-      { key: 'voltage_overshoot_v', label: 'V overshoot', unit: 'V', dec: 1, warn: 10, danger: 20, explain: 'I_max × √(L_stray / C_oss)' },
-      { key: 'v_sw_peak_v', label: 'V_sw peak', unit: 'V', dec: 1, warn: 60, danger: 80, explain: 'V_bus_peak + Voltage Overshoot (must not exceed MOSFET V_ds_max)' },
-      { key: 'rs_recommended_ohm', label: 'Rs snubber', unit: 'Ω', dec: 0, explain: 'Critical Damping: √(L_stray / C_oss) snapped to E24 series' },
-      { key: 'cs_recommended_pf', label: 'Cs snubber', unit: 'pF', dec: 0, explain: 'Capacitance required to damp oscillation: 3 × C_oss' },
-      { key: 'p_total_6_snubbers_w', label: 'Snubber power', unit: 'W', dec: 3, explain: '6 × (0.5 × C_s × V_peak² × f_sw)' },
+      { key: 'voltage_overshoot_v', label: 'V overshoot', full: 'Parasitic Inductance Voltage Overshoot', unit: 'V', dec: 1, warn: 10, danger: 20, explain: 'I_max × √(L_stray / C_oss)' },
+      { key: 'v_sw_peak_v', label: 'V_sw peak', full: 'Peak Switch Node Voltage', unit: 'V', dec: 1, warn: 60, danger: 80, explain: 'V_bus_peak + Voltage Overshoot (must not exceed MOSFET V_ds_max)' },
+      { key: 'rs_recommended_ohm', label: 'Rs snubber', full: 'Snubber Damping Resistor', unit: 'Ω', dec: 0, explain: 'Critical Damping: √(L_stray / C_oss) snapped to E24 series' },
+      { key: 'cs_recommended_pf', label: 'Cs snubber', full: 'Snubber Damping Capacitor', unit: 'pF', dec: 0, explain: 'Capacitance required to damp oscillation: 3 × C_oss' },
+      { key: 'p_total_all_snubbers_w', altKey: 'p_total_6_snubbers_w', label: 'Snubber power', full: 'Total Snubber Network Dissipation', unit: 'W', dec: 3, explain: 'N × (0.5 × C_s × V_peak² × f_sw)' },
     ],
   },
 ]

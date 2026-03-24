@@ -64,6 +64,12 @@ export async function downloadSpice(systemSpecs, calculations, mosfetParams) {
   return res.blob()
 }
 
+/** Fetch design constants from backend schema */
+export async function fetchDesignConstants() {
+  const res = await _req('/api/design-constants')
+  return (await res.json()).data
+}
+
 /** Health check */
 export async function healthCheck() {
   const res = await _req('/api/health')
