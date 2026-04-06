@@ -10,6 +10,9 @@ class GateDriveMixin:
     def calc_gate_resistors(self) -> dict:
         self._current_module = "gate_resistors"
         qg      = self._get(self.mosfet, "MOSFET", "qg",     92e-9)   # C (SI)
+        qgd     = self._get(self.mosfet, "MOSFET", "qgd",    None)    # C (SI)
+        qgs     = self._get(self.mosfet, "MOSFET", "qgs",    None)    # C (SI)
+        vgs_pl  = self._get(self.mosfet, "MOSFET", "vgs_plateau", None)  # V
         vgs_th  = self._get(self.mosfet, "MOSFET", "vgs_th",  3.0)    # V
         rg_int  = self._get(self.mosfet, "MOSFET", "rg_int",  0)      # Ω (0 = not extracted)
 
@@ -23,7 +26,16 @@ class GateDriveMixin:
         # Vgs_max validation
         vgs_max = self._get(self.mosfet, "MOSFET", "vgs_max", None)
 
-        t_rise_target_ns = float(self.ovr.get("gate_rise_time_ns", self._dc("gate.rise_time_target")))
+        try:
+            t_rise_target_ns = float(self.ovr.get("gate_rise_time_ns", self._dc("gate.rise_time_target")))
+        except (TypeError, ValueError):
+            t_rise_target_ns = float(self._dc("gate.rise_time_target"))
+        if not math.isfinite(t_rise_target_ns) or t_rise_target_ns <= 0:
+            self.audit_log.append(
+                f"[Gate Drive] WARNING: Invalid gate_rise_time_ns override ({t_rise_target_ns}). "
+                f"Using default {self._dc('gate.rise_time_target')}ns."
+            )
+            t_rise_target_ns = float(self._dc("gate.rise_time_target"))
         self._log_hc("gate_resistors", "Rise time target", f"{t_rise_target_ns} ns", "Gate rise time target", "gate.rise_time_target")
         t_rise = t_rise_target_ns * 1e-9
         vdrv   = self.v_drv
@@ -57,10 +69,23 @@ class GateDriveMixin:
         io_src_a  = io_src
         io_snk_a  = io_snk
 
-        # Total Rg (internal + external) is what determines switching speed
-        # Rg_total = t_rise × (Vdrv - Vth) / Qg, then Rg_ext = Rg_total - Rg_int
-        rg_total_from_time = (vdrv - vgs_th) / (qg / t_rise)
-        rg_drv_min         = (vdrv - vgs_th) / io_src
+        # Total Rg (internal + external) determines switching speed.
+        # Prefer Miller-charge sizing when available:
+        #   t_miller ≈ Qgd / Ig_on, Ig_on ≈ (Vdrv - Vplateau) / Rg_total.
+        # Fallback to legacy total-Qg sizing if qgd/vplateau is unavailable.
+        use_miller_basis = bool(qgd is not None and qgd > 0)
+        vgs_pl_eff = vgs_pl if (vgs_pl is not None and vgs_th + 0.1 < vgs_pl < vdrv - 0.1) else (vgs_th + 1.0)
+        vgs_pl_eff = max(vgs_th + 0.2, min(vgs_pl_eff, vdrv - 0.5))
+
+        if use_miller_basis:
+            rg_total_from_time = (vdrv - vgs_pl_eff) / (qgd / t_rise)
+            rg_drv_min         = (vdrv - vgs_pl_eff) / io_src
+            sizing_basis = "miller_charge"
+        else:
+            rg_total_from_time = (vdrv - vgs_th) / (qg / t_rise)
+            rg_drv_min         = (vdrv - vgs_th) / io_src
+            sizing_basis = "total_qg_fallback"
+
         rg_total_on        = max(rg_total_from_time, rg_drv_min)
         rg_on_raw          = max(rg_total_on - rg_int, 0.1)  # external Rg = total - internal
         rg_on_std          = _nearest_e(rg_on_raw)
@@ -72,7 +97,7 @@ class GateDriveMixin:
         rg_off_raw  = rg_on_std * rg_off_ratio
         self._log_hc("gate_resistors", "Rg_off ratio", f"{rg_off_ratio}x Rg_on", "Faster turn-off to reduce cross-conduction", "gate.rg_off_ratio")
         rg_off_std  = _nearest_e(rg_off_raw)
-        rg_off_min  = (vdrv) / io_snk
+        rg_off_min  = (vgs_pl_eff / io_snk) if use_miller_basis else (vdrv / io_snk)
         if rg_off_std < rg_off_min:
             rg_off_std = _nearest_e(rg_off_min)
 
@@ -83,8 +108,14 @@ class GateDriveMixin:
         # Actual switching times use total Rg (external + internal)
         rg_on_total  = rg_on_std + rg_int
         rg_off_total = rg_off_std + rg_int
-        t_rise_actual_ns = (rg_on_total * qg / (vdrv - vgs_th)) * 1e9
-        t_fall_actual_ns = (rg_off_total * qg / vdrv) * 1e9
+
+        if use_miller_basis:
+            t_rise_actual_ns = (rg_on_total * qgd / max(vdrv - vgs_pl_eff, 0.2)) * 1e9
+            t_fall_actual_ns = (rg_off_total * qgd / max(vgs_pl_eff, 0.2)) * 1e9
+        else:
+            t_rise_actual_ns = (rg_on_total * qg / max(vdrv - vgs_th, 0.2)) * 1e9
+            t_fall_actual_ns = (rg_off_total * qg / max(vdrv, 0.2)) * 1e9
+
         dv_dt            = 0 if t_rise_actual_ns <= 0 else self.v_peak / (t_rise_actual_ns * 1e-9) / 1e6
 
         p_gate_total = qg * vdrv * self.fsw   # total gate drive power per MOSFET
@@ -112,14 +143,24 @@ class GateDriveMixin:
             "gate_resistor_rating":     "0.1W minimum (0402/0603)",
             "bypass_diode_turn_off":    "1N4148 or BAT54 in parallel with Rg_off",
             "notes": {
-                "rg_on_basis":  f"Qg={qg_nc:.1f}nC, Vdrv={vdrv}V, Vth={vgs_th}V, t_rise={t_rise_target_ns}ns target"
-                                + (f", Rg_int={rg_int:.1f}Ω subtracted" if rg_int > 0 else ""),
+                "rg_on_basis":  (
+                    f"Qgd={qgd*1e9:.1f}nC, Vdrv={vdrv}V, Vpl={vgs_pl_eff:.2f}V, t_rise={t_rise_target_ns}ns target"
+                    if use_miller_basis else
+                    f"Qg={qg_nc:.1f}nC, Vdrv={vdrv}V, Vth={vgs_th}V, t_rise={t_rise_target_ns}ns target"
+                ) + (f", Rg_int={rg_int:.1f}Ω subtracted" if rg_int > 0 else ""),
                 "rg_off_note":  "Place Schottky diode antiparallel with Rg_off for asymmetric drive",
                 "placement":    "Mount within 10mm of gate pin, 0402/0603, shortest possible trace",
                 "emi_note":     f"dV/dt={round(dv_dt,1)} V/µs — adjust Rg_on if EMI issues arise",
             },
             "_meta": self._module_meta.get("gate_resistors", {"hardcoded": [], "fallbacks": []}),
         }
+
+        result["rg_sizing_basis"] = sizing_basis
+        if use_miller_basis:
+            result["qgd_used_nc"] = round(qgd * 1e9, 2)
+            result["vgs_plateau_used_v"] = round(vgs_pl_eff, 2)
+            if qgs is not None and qgs > 0:
+                result["qgs_extracted_nc"] = round(qgs * 1e9, 2)
 
         # Add driver output timing info if available
         if drv_tr is not None:

@@ -55,6 +55,12 @@ const DEFAULT_SYSTEM_SPECS = {
   vds_override: '',           // Drain-source voltage override (V)
   id_override: '',            // Drain current override (A)
   vgs_drive_override: '',     // Gate drive voltage override (V)
+  // Scope-match calibration inputs for waveform fitting
+  wave_cal_enable: 0,         // 0/1 toggle
+  wave_cal_miller_on_ns: '',  // Measured Miller on duration
+  wave_cal_miller_off_ns: '', // Measured Miller off duration
+  wave_cal_ring_mhz: '',      // Measured ringing frequency
+  wave_cal_overshoot_v: '',   // Measured turn-off overshoot above bus
 }
 
 const DEFAULT_MOTOR_SPECS = {

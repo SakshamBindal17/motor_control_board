@@ -150,16 +150,26 @@ class ProtectionMixin:
         self._log_hc("power_supply_bypass", "Bypass cap", "100 nF / 25V", "Standard HF decoupling per IC")
         self._log_hc("power_supply_bypass", "MCU bypass count", "4 pcs", "One per MCU power pin")
 
-        # Use extracted MCU VDD range if available, otherwise fall back to 3.3V
-        mcu_vdd = self._get(self.mcu, "MCU", "vdd_range", None, expected_unit="V")
-        if mcu_vdd is not None:
+        # Use extracted MCU VDD range if available, otherwise fall back to 3.3V.
+        # Supports strings like "2.7-3.6" or "2.7 to 3.6" from datasheet extraction.
+        mcu_vdd_raw = self.mcu.get("vdd_range") if self.mcu else None
+        mcu_vdd_v = 3.3
+        if mcu_vdd_raw not in (None, ""):
             try:
-                mcu_vdd_v = float(mcu_vdd)
-            except (TypeError, ValueError):
-                mcu_vdd_v = 3.3
-            self.audit_log.append(f"[Power Supply] Using extracted MCU VDD = {mcu_vdd_v}V for bypass sizing.")
+                vdd_str = str(mcu_vdd_raw).strip().replace("–", "-").lower().replace("to", "-")
+                parts = [p.strip() for p in vdd_str.split("-") if p.strip()]
+                if len(parts) >= 2:
+                    # Use max of supported range as worst-case MCU rail for bypass rating context.
+                    mcu_vdd_v = float(parts[-1])
+                else:
+                    mcu_vdd_v = float(parts[0])
+                self.audit_log.append(f"[Power Supply] Using extracted MCU VDD = {mcu_vdd_v}V for bypass sizing.")
+            except (TypeError, ValueError, IndexError):
+                self.audit_log.append(
+                    f"[Power Supply] WARNING: Could not parse MCU VDD range '{mcu_vdd_raw}'. "
+                    "Defaulting to 3.3V for bypass sizing."
+                )
         else:
-            mcu_vdd_v = 3.3
             self.audit_log.append("[Power Supply] MCU VDD not extracted, defaulting to 3.3V for bypass sizing.")
 
         return {

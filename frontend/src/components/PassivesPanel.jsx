@@ -1,5 +1,7 @@
-import React from 'react'
-import { useProject } from '../context/ProjectContext.jsx'
+import React, { useState } from 'react'
+import toast from 'react-hot-toast'
+import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
+import { runCalculations, runReverseCalculation } from '../api.js'
 import CalculationsPanel from './CalculationsPanel.jsx'
 import { fmtNum } from '../utils.js'
 
@@ -15,13 +17,96 @@ export default function PassivesPanel({ config }) {
   const C = state.project.calculations
   const ovr = state.project.blocks.passives.overrides || {}
   const specs = state.project.system_specs
+  const [bootTargetNs, setBootTargetNs] = useState('')
+  const [bootSolve, setBootSolve] = useState(null)
+  const [bootSolveBusy, setBootSolveBusy] = useState(false)
+  const [bootApplyBusy, setBootApplyBusy] = useState(false)
 
   function setOvr(k, v) {
-    dispatch({ type: 'SET_PASSIVES_OVERRIDE', payload: { key: k, value: parseFloat(v) || undefined } })
+    const parsed = parseFloat(v)
+    dispatch({
+      type: 'SET_PASSIVES_OVERRIDE',
+      payload: { key: k, value: Number.isFinite(parsed) ? parsed : undefined },
+    })
   }
 
   function setSpec(k, v) {
     dispatch({ type: 'SET_SYSTEM_SPECS', payload: { [k]: v } })
+  }
+
+  async function solveBootstrapFromOnTime() {
+    const tNs = parseFloat(bootTargetNs)
+    if (!Number.isFinite(tNs) || tNs <= 0) {
+      toast.error('Enter a valid min on-time target in ns')
+      return
+    }
+    if (state.project.blocks.mosfet.status !== 'done') {
+      toast.error('Upload MOSFET datasheet first')
+      return
+    }
+
+    setBootSolveBusy(true)
+    try {
+      const result = await runReverseCalculation({
+        system_specs: state.project.system_specs,
+        mosfet_params: buildParamsDict(state.project.blocks.mosfet),
+        driver_params: buildParamsDict(state.project.blocks.driver),
+        mcu_params: buildParamsDict(state.project.blocks.mcu),
+        motor_specs: state.project.blocks.motor.specs || {},
+        passives_overrides: state.project.blocks.passives.overrides || {},
+        design_constants: state.project.design_constants || {},
+        targets: { min_hs_on_time_ns: tNs },
+      })
+      const solved = result?.min_hs_on_time_ns || null
+      setBootSolve(solved)
+      if (!solved) {
+        toast.error('No reverse result received from backend')
+      }
+    } catch (e) {
+      toast.error(`Reverse sizing failed: ${e.message}`)
+    } finally {
+      setBootSolveBusy(false)
+    }
+  }
+
+  async function applyBootstrapSolve() {
+    if (!bootSolve) return
+    const newDroop = bootSolve.apply_bootstrap_droop_v ?? bootSolve.downstream?.droop_v
+    if (!Number.isFinite(newDroop) || newDroop <= 0) {
+      toast.error('Cannot apply: invalid bootstrap droop override')
+      return
+    }
+
+    const proceed = window.confirm(
+      'Applying this bootstrap sizing will recalculate dependent outputs:\n\n'
+      + '1. Bootstrap: C_boot, min on-time, hold time, droop\n'
+      + '2. Driver compatibility: UVLO margin and status\n'
+      + '3. Any calculations using updated passives overrides\n\n'
+      + 'Do you want to continue?'
+    )
+    if (!proceed) return
+
+    const nextOverrides = { ...(state.project.blocks.passives.overrides || {}), bootstrap_droop_v: newDroop }
+    dispatch({ type: 'SET_PASSIVES_OVERRIDE', payload: { key: 'bootstrap_droop_v', value: newDroop } })
+
+    setBootApplyBusy(true)
+    try {
+      const calcResult = await runCalculations({
+        system_specs: state.project.system_specs,
+        mosfet_params: buildParamsDict(state.project.blocks.mosfet),
+        driver_params: buildParamsDict(state.project.blocks.driver),
+        mcu_params: buildParamsDict(state.project.blocks.mcu),
+        motor_specs: state.project.blocks.motor.specs || {},
+        passives_overrides: nextOverrides,
+        design_constants: state.project.design_constants || {},
+      })
+      dispatch({ type: 'SET_CALCULATIONS', payload: calcResult })
+      toast.success(`Applied bootstrap target via droop=${newDroop.toFixed(4)}V`)
+    } catch (e) {
+      toast.error(`Apply failed: ${e.message}`)
+    } finally {
+      setBootApplyBusy(false)
+    }
   }
 
   return (
@@ -121,6 +206,50 @@ export default function PassivesPanel({ config }) {
               <Row label="V_bootstrap" val={`${C.bootstrap_cap?.v_bootstrap_v} V`} note="" color="#00d4e8" />
               <Row label="Min HS on-time" val={`${C.bootstrap_cap?.min_hs_on_time_ns} ns`} note="Bootstrap refresh" color="#00d4e8" />
               <Row label="Hold time" val={`${C.bootstrap_cap?.bootstrap_hold_time_ms} ms`} note="Before droop" color="#00d4e8" />
+
+              <SectionLabel>Reverse Sizing (Sir Requirement)</SectionLabel>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '4px 0 2px 0' }}>
+                <input
+                  type="number"
+                  step="any"
+                  min="0"
+                  className="inp inp-mono inp-sm"
+                  placeholder="Target min on-time (ns)"
+                  value={bootTargetNs}
+                  onChange={(e) => setBootTargetNs(e.target.value)}
+                  style={{ flex: 1 }}
+                />
+                <button className="btn btn-ghost" onClick={solveBootstrapFromOnTime} disabled={bootSolveBusy}>
+                  {bootSolveBusy ? 'Solving...' : 'Solve C_boot'}
+                </button>
+              </div>
+
+              {bootSolve && (
+                <div style={{ marginTop: 4, padding: 8, border: '1px solid var(--border-1)', borderRadius: 6, background: 'var(--bg-4)' }}>
+                  <div style={{ fontSize: 11, color: 'var(--txt-2)', marginBottom: 4 }}>
+                    Required C_boot: <strong>{fmtNum(bootSolve.solved_value, 0)} nF</strong>
+                    {' · '}Achieved min on-time: <strong>{fmtNum(bootSolve.actual_output, 1)} ns</strong>
+                  </div>
+                  {bootSolve.constraint && (
+                    <div style={{ fontSize: 10, color: 'var(--amber)', marginBottom: 4 }}>{bootSolve.constraint}</div>
+                  )}
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={applyBootstrapSolve}
+                      disabled={bootApplyBusy || bootSolve.feasible === false}
+                    >
+                      {bootApplyBusy ? 'Applying...' : 'Apply to Design'}
+                    </button>
+                    {bootSolve.feasible === false && (
+                      <span style={{ fontSize: 10, color: 'var(--red)', alignSelf: 'center' }}>
+                        Target not feasible with current constraints
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <Note>{C.bootstrap_cap?.notes?.['100pct_duty']}</Note>
             </CompCard>
 

@@ -67,6 +67,7 @@ REVERSE_MAP = {
     "dt_pct_of_period":      ("dead_time",      "DT duty loss",  "%",    "dt_actual_ns"),
     "dt_actual_ns":          ("dead_time",      "Dead time",     "ns",   "dt_register_count"),
     "voltage_overshoot_v":   ("snubber",        "V overshoot",   "V",    "cs_recommended_pf"),
+    "p_total_all_snubbers_w":("snubber",        "Snubber power", "W",    "cs_recommended_pf"),
     "p_total_6_snubbers_w":  ("snubber",        "Snubber power", "W",    "cs_recommended_pf"),
 }
 
@@ -185,10 +186,15 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         "boot.min_cap":          (10,   10000),
         "boot.safety_margin":    (1.0,  10.0),
         "boot.leakage_ua":       (1,    10000),
+        "input.spwm_mod_index":  (0.1,  1.0),
+        "input.min_bulk_count":  (1,    64),
+        "input.bulk_cap_uf":     (1,    10000),
+        "input.esr_per_cap":     (0.1,  1000),
         "dt.abs_margin":         (0,    500),
         "dt.safety_mult":        (1.0,  5.0),
         "snub.coss_mult":        (1,    20),
         "snub.stray_l_default":  (1,    500),
+        "emi.cm_choke_uh":       (1,    10000),
         "prot.adc_ref":          (1.0,  5.0),
         "prot.ovp_margin":       (1.0,  2.0),
         "prot.uvp_trip":         (0.3,  0.95),
@@ -267,6 +273,8 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         # Driver parameters
         "io_source":     (0.01,     30,       1.5,     "A"),
         "io_sink":       (0.01,     30,       2.5,     "A"),
+        "vcc_uvlo":      (1.0,      20.0,     None,    "V"),
+        "vbs_uvlo":      (1.0,      20.0,     None,    "V"),
         "prop_delay_on": (1e-9,     10e-6,    60e-9,   "s"),
         "prop_delay_off":(1e-9,     10e-6,    60e-9,   "s"),
         # MCU parameters
@@ -323,6 +331,73 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
 
         return si_val
 
+    def _bootstrap_uvlo_info(self) -> dict:
+        """Resolve bootstrap UVLO from extracted driver params and assess data quality.
+
+        Returns:
+          {
+            "value_v": float|None,
+            "source_key": str|None,
+            "status": "verified"|"missing"|"suspicious",
+            "trusted": bool,
+            "note": str
+          }
+        """
+        alias_keys = ("vbs_uvlo", "vboot_uvlo", "vb_uvlo", "vbst_uvlo")
+
+        source_key = None
+        vbs_uvlo = None
+        for key in alias_keys:
+            val = self._get(self.driver, "DRIVER", key, None, expected_unit="V")
+            if val is not None:
+                source_key = key
+                vbs_uvlo = float(val)
+                break
+
+        def _log_once(msg: str):
+            if msg not in self.audit_log:
+                self.audit_log.append(msg)
+
+        if vbs_uvlo is None:
+            msg = "[Driver] Bootstrap UVLO parameter missing (expected vbs_uvlo). Bootstrap UVLO margin remains unverified."
+            _log_once(msg)
+            return {
+                "value_v": None,
+                "source_key": None,
+                "status": "missing",
+                "trusted": False,
+                "note": "VBS UVLO not extracted",
+            }
+
+        if source_key != "vbs_uvlo":
+            _log_once(
+                f"[Driver] Bootstrap UVLO resolved via alias '{source_key}'. "
+                "Verify extraction mapping to canonical id 'vbs_uvlo'."
+            )
+
+        # Practical high-side UVLO windows are typically in a few-volts range.
+        # Values far outside this usually indicate extraction/unit mistakes.
+        if vbs_uvlo < 2.0 or vbs_uvlo > 15.0:
+            _log_once(
+                f"[Driver] SANITY WARNING: Bootstrap UVLO={vbs_uvlo:.3g}V looks suspicious "
+                "(expected ~2V to 15V). Confirm datasheet extraction/units."
+            )
+            return {
+                "value_v": vbs_uvlo,
+                "source_key": source_key,
+                "status": "suspicious",
+                "trusted": False,
+                "note": "VBS UVLO outside practical range (2V..15V)",
+            }
+
+        return {
+            "value_v": vbs_uvlo,
+            "source_key": source_key,
+            "status": "verified",
+            "trusted": True,
+            "note": "VBS UVLO extracted and plausible",
+        }
+
 
     # ═══════════════════════════════════════════════════════════════════
     # 1. MOSFET Losses
@@ -359,29 +434,87 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
                 results[target_key] = self._rev_dt_actual(target_value)
             elif target_key == 'voltage_overshoot_v':
                 results[target_key] = self._rev_snub_overshoot(target_value)
-            elif target_key == 'p_total_6_snubbers_w':
-                results[target_key] = self._rev_snub_power(target_value)
+            elif target_key in ('p_total_6_snubbers_w', 'p_total_all_snubbers_w'):
+                solved = self._rev_snub_power(target_value)
+                solved["target_key"] = target_key
+                results[target_key] = solved
         return results
+
+    def _gate_reverse_context(self) -> dict:
+        """Shared reverse-solver context matching calc_gate_resistors physics."""
+        qg      = self._get(self.mosfet, "MOSFET", "qg", 92e-9)
+        qgd     = self._get(self.mosfet, "MOSFET", "qgd", None)
+        vgs_pl  = self._get(self.mosfet, "MOSFET", "vgs_plateau", None)
+        vgs_th  = self._get(self.mosfet, "MOSFET", "vgs_th", 3.0)
+        rg_int  = self._get(self.mosfet, "MOSFET", "rg_int", 0) or 0.0
+        io_src  = self._get(self.driver, "DRIVER", "io_source", 1.5)
+        io_snk  = self._get(self.driver, "DRIVER", "io_sink", 2.5)
+        vdrv    = self.v_drv
+
+        if qg <= 0:
+            qg = 92e-9
+        if io_src <= 0:
+            io_src = 1.5
+        if io_snk <= 0:
+            io_snk = 2.5
+
+        if vdrv <= vgs_th:
+            vgs_th = vdrv - 1.0
+
+        rg_int = max(float(rg_int), 0.0)
+        use_miller_basis = bool(qgd is not None and qgd > 0)
+        vgs_pl_eff = vgs_pl if (vgs_pl is not None and vgs_th + 0.1 < vgs_pl < vdrv - 0.1) else (vgs_th + 1.0)
+        vgs_pl_eff = max(vgs_th + 0.2, min(vgs_pl_eff, vdrv - 0.5))
+
+        if use_miller_basis:
+            rise_charge = qgd
+            fall_charge = qgd
+            rise_v = max(vdrv - vgs_pl_eff, 0.2)
+            fall_v = max(vgs_pl_eff, 0.2)
+            rg_on_min_total = max((vdrv - vgs_pl_eff) / io_src, 0.0)
+            rg_off_min_total = max(vgs_pl_eff / io_snk, 0.0)
+            sizing_basis = "miller_charge"
+        else:
+            rise_charge = qg
+            fall_charge = qg
+            rise_v = max(vdrv - vgs_th, 0.2)
+            fall_v = max(vdrv, 0.2)
+            rg_on_min_total = max((vdrv - vgs_th) / io_src, 0.0)
+            rg_off_min_total = max(vdrv / io_snk, 0.0)
+            sizing_basis = "total_qg_fallback"
+
+        return {
+            "rise_charge": rise_charge,
+            "fall_charge": fall_charge,
+            "rise_v": rise_v,
+            "fall_v": fall_v,
+            "rg_int": rg_int,
+            "rg_on_min_total": rg_on_min_total,
+            "rg_off_min_total": rg_off_min_total,
+            "sizing_basis": sizing_basis,
+        }
 
     # ── Gate Rise Time → Rg_on ─────────────────────────────────────
     def _rev_gate_rise(self, target_ns: float) -> dict:
-        qg     = self._get(self.mosfet, "MOSFET", "qg",     92e-9)
-        vgs_th = self._get(self.mosfet, "MOSFET", "vgs_th",  3.0)
-        io_src = self._get(self.driver, "DRIVER", "io_source", 1.5)
-        vdrv   = self.v_drv
-        vdiff  = max(vdrv - vgs_th, 0.5)
+        if target_ns <= 0:
+            return {
+                "target_key": "gate_rise_time_ns",
+                "target_value": target_ns,
+                "feasible": False,
+                "constraint": "Rise time target must be > 0 ns",
+            }
 
-        # Inverse: Rg_on = t_rise × (Vdrv - Vth) / Qg
+        ctx = self._gate_reverse_context()
         t_rise_s = target_ns * 1e-9
-        rg_ideal = t_rise_s * vdiff / qg
-        rg_min   = vdiff / io_src  # driver current constraint
 
-        feasible    = rg_ideal >= rg_min
-        rg_clamped  = max(rg_ideal, rg_min)
-        rg_std      = _nearest_e(rg_clamped)
+        rg_total_ideal = t_rise_s * ctx["rise_v"] / ctx["rise_charge"]
+        feasible = rg_total_ideal >= ctx["rg_on_min_total"]
+        rg_total_clamped = max(rg_total_ideal, ctx["rg_on_min_total"])
+        rg_ext_raw = max(rg_total_clamped - ctx["rg_int"], 0.1)
+        rg_std = _nearest_e(rg_ext_raw)
 
-        # Forward verify: t_rise_actual = (Rg × Qg) / (Vdrv - Vth)
-        t_actual_ns = (rg_std * qg / vdiff) * 1e9
+        rg_total_actual = rg_std + ctx["rg_int"]
+        t_actual_ns = (rg_total_actual * ctx["rise_charge"] / ctx["rise_v"]) * 1e9
 
         return {
             "target_key": "gate_rise_time_ns",
@@ -389,29 +522,42 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             "solved_key": "rg_on_recommended_ohm",
             "solved_value": rg_std,
             "solved_unit": "\u03a9",
-            "ideal_value": round(rg_ideal, 3),
+            "ideal_value": round(rg_ext_raw, 3),
             "actual_output": round(t_actual_ns, 1),
             "actual_output_unit": "ns",
             "feasible": feasible,
-            "constraint": f"Driver source current limits Rg_on \u2265 {round(rg_min, 2)}\u03a9" if not feasible else None,
-            "note": f"E24: {round(rg_ideal, 2)}\u03a9 \u2192 {rg_std}\u03a9 gives {round(t_actual_ns, 1)}ns actual",
+            "constraint": (
+                f"Driver source current limits total Rg_on \u2265 {round(ctx['rg_on_min_total'], 2)}\u03a9"
+                if not feasible else None
+            ),
+            "note": (
+                f"E24 Rg_ext={round(rg_ext_raw, 2)}\u03a9 \u2192 {rg_std}\u03a9 "
+                f"(Rg_int={round(ctx['rg_int'], 2)}\u03a9) gives {round(t_actual_ns, 1)}ns actual"
+            ),
+            "rg_sizing_basis": ctx["sizing_basis"],
         }
 
     # ── Gate Fall Time → Rg_off ────────────────────────────────────
     def _rev_gate_fall(self, target_ns: float) -> dict:
-        qg     = self._get(self.mosfet, "MOSFET", "qg",    92e-9)
-        io_snk = self._get(self.driver, "DRIVER", "io_sink", 2.5)
-        vdrv   = self.v_drv
+        if target_ns <= 0:
+            return {
+                "target_key": "gate_fall_time_ns",
+                "target_value": target_ns,
+                "feasible": False,
+                "constraint": "Fall time target must be > 0 ns",
+            }
 
+        ctx = self._gate_reverse_context()
         t_fall_s = target_ns * 1e-9
-        rg_ideal = t_fall_s * vdrv / qg
-        rg_min   = vdrv / io_snk
 
-        feasible    = rg_ideal >= rg_min
-        rg_clamped  = max(rg_ideal, rg_min)
-        rg_std      = _nearest_e(rg_clamped)
+        rg_total_ideal = t_fall_s * ctx["fall_v"] / ctx["fall_charge"]
+        feasible = rg_total_ideal >= ctx["rg_off_min_total"]
+        rg_total_clamped = max(rg_total_ideal, ctx["rg_off_min_total"])
+        rg_ext_raw = max(rg_total_clamped - ctx["rg_int"], 0.1)
+        rg_std = _nearest_e(rg_ext_raw)
 
-        t_actual_ns = (rg_std * qg / vdrv) * 1e9
+        rg_total_actual = rg_std + ctx["rg_int"]
+        t_actual_ns = (rg_total_actual * ctx["fall_charge"] / ctx["fall_v"]) * 1e9
 
         return {
             "target_key": "gate_fall_time_ns",
@@ -419,12 +565,19 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             "solved_key": "rg_off_recommended_ohm",
             "solved_value": rg_std,
             "solved_unit": "\u03a9",
-            "ideal_value": round(rg_ideal, 3),
+            "ideal_value": round(rg_ext_raw, 3),
             "actual_output": round(t_actual_ns, 1),
             "actual_output_unit": "ns",
             "feasible": feasible,
-            "constraint": f"Driver sink current limits Rg_off \u2265 {round(rg_min, 2)}\u03a9" if not feasible else None,
-            "note": f"E24: {round(rg_ideal, 2)}\u03a9 \u2192 {rg_std}\u03a9 gives {round(t_actual_ns, 1)}ns actual",
+            "constraint": (
+                f"Driver sink current limits total Rg_off \u2265 {round(ctx['rg_off_min_total'], 2)}\u03a9"
+                if not feasible else None
+            ),
+            "note": (
+                f"E24 Rg_ext={round(rg_ext_raw, 2)}\u03a9 \u2192 {rg_std}\u03a9 "
+                f"(Rg_int={round(ctx['rg_int'], 2)}\u03a9) gives {round(t_actual_ns, 1)}ns actual"
+            ),
+            "rg_sizing_basis": ctx["sizing_basis"],
         }
 
     # ── dV/dt → Rg_on (via rise time) ─────────────────────────────
@@ -446,6 +599,63 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             result["actual_output_unit"] = "V/\u00b5s"
         result["note"] = f"Target dV/dt={target_v_per_us} V/\u00b5s \u2192 t_rise={round(t_rise_ns, 1)}ns \u2192 Rg_on={result.get('solved_value', '?')}\u03a9"
         return result
+
+    # ── Bootstrap: shared downstream analysis ─────────────────────
+    def _boot_downstream(self, c_std_nf: float) -> dict:
+        """Compute all downstream bootstrap parameters for a given C_boot value.
+        Used by both _rev_boot_cap and _rev_boot_on_time to provide
+        comprehensive what-if analysis."""
+        qg       = self._get(self.mosfet, "MOSFET", "qg", 92e-9)
+        vdrv     = self.v_drv
+        r_boot   = self._dc("gate.rg_bootstrap")
+        vf_diode = self._dc("gate.bootstrap_vf")
+        i_leak   = self._dc("boot.leakage_ua")
+
+        c_boot_f = c_std_nf * 1e-9
+
+        # ── Downstream values ──
+        droop_v      = qg / c_boot_f if c_boot_f > 0 else 999
+        v_boot       = vdrv - vf_diode
+        tau_boot     = r_boot * c_boot_f
+        t_min_on_ns  = 3.0 * tau_boot * 1e9            # 3τ → ~95% charge
+        hold_time_ms = (c_boot_f * droop_v / (i_leak * 1e-6)) * 1000 if i_leak > 0 else 999
+
+        # ── UVLO margin check ──
+        uvlo_info = self._bootstrap_uvlo_info()
+        vbs_uvlo = uvlo_info["value_v"]
+        uvlo_margin  = None
+        uvlo_ok      = None
+        uvlo_status  = "unknown"
+        if vbs_uvlo is not None:
+            # Effective gate voltage after droop
+            v_gate_after_droop = v_boot - droop_v
+            uvlo_margin = round(v_gate_after_droop - vbs_uvlo, 2)
+            uvlo_ok = uvlo_margin > 0.5
+            if uvlo_margin <= 0:
+                uvlo_status = "danger"
+            elif uvlo_margin <= 0.5:
+                uvlo_status = "warning"
+            else:
+                uvlo_status = "ok"
+
+        return {
+            "c_boot_nf":        c_std_nf,
+            "droop_v":          round(droop_v, 3),
+            "v_bootstrap_v":    round(v_boot, 2),
+            "min_on_time_ns":   round(t_min_on_ns, 1),
+            "hold_time_ms":     round(hold_time_ms, 1),
+            "r_boot_ohm":       r_boot,
+            "tau_ns":           round(tau_boot * 1e9, 1),
+            "uvlo_margin_v":    uvlo_margin,
+            "uvlo_ok":          uvlo_ok,
+            "uvlo_status":      uvlo_status,
+            "uvlo_data_status": uvlo_info["status"],
+            "uvlo_data_trusted": uvlo_info["trusted"],
+            "uvlo_data_source_key": uvlo_info["source_key"],
+            "uvlo_data_note":   uvlo_info["note"],
+            "vbs_uvlo_v":       round(vbs_uvlo, 2) if vbs_uvlo is not None else None,
+            "v_gate_min_v":     round(v_boot - droop_v, 2),
+        }
 
     # ── Bootstrap Cap (target nF → implied droop) ──────────────────
     def _rev_boot_cap(self, target_nf: float) -> dict:
@@ -471,22 +681,57 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         # Actual droop with snapped value
         actual_droop = qg / (c_std_nf * 1e-9)
 
+        # Droop override that reproduces this snapped value in forward calc.
+        # Forward flow applies boot.safety_margin before E12 snap, so we invert that here.
+        boot_margin_mult = max(self._dc("boot.safety_margin"), 1.0)
+        c_pre_margin_nf = max(c_std_nf / boot_margin_mult, 0.1)
+        apply_droop_v = qg / (c_pre_margin_nf * 1e-9)
+        # Small upward bias prevents floating/JSON rounding from snapping to the next E12 value.
+        apply_droop_v *= 1.0 + 1e-6
+
+        # Comprehensive downstream analysis
+        downstream = self._boot_downstream(c_std_nf)
+
+        # Also get current forward-calc values for comparison
+        try:
+            current_fwd = self.calc_bootstrap_cap()
+            current_vals = {
+                "c_boot_nf":      current_fwd.get("c_boot_recommended_nf"),
+                "droop_v":        round(qg / (current_fwd.get("c_boot_recommended_nf", 220) * 1e-9), 3),
+                "min_on_time_ns": current_fwd.get("min_hs_on_time_ns"),
+                "hold_time_ms":   current_fwd.get("bootstrap_hold_time_ms"),
+            }
+        except Exception:
+            current_vals = None
+
         return {
             "target_key": "c_boot_recommended_nf",
             "target_value": target_nf,
             "solved_key": "bootstrap_droop_v",
             "solved_value": round(actual_droop, 3),
             "solved_unit": "V",
+            "apply_bootstrap_droop_v": round(apply_droop_v, 9),
             "ideal_value": round(droop_implied, 3),
             "actual_output": c_std_nf,
             "actual_output_unit": "nF",
             "feasible": feasible,
             "constraint": f"Droop {round(droop_implied, 2)}V is {'too high (>2V)' if droop_implied > 2 else 'too low (<0.05V)'}" if not feasible else None,
             "note": f"C_boot={c_std_nf}nF (E12) implies {round(actual_droop, 2)}V droop",
+            "downstream": downstream,
+            "current_vals": current_vals,
         }
 
     # ── Min HS On-Time → C_boot ────────────────────────────────────
     def _rev_boot_on_time(self, target_ns: float) -> dict:
+        if target_ns <= 0:
+            return {
+                "target_key": "min_hs_on_time_ns",
+                "target_value": target_ns,
+                "feasible": False,
+                "constraint": "Minimum on-time target must be > 0 ns",
+            }
+
+        qg     = self._get(self.mosfet, "MOSFET", "qg", 92e-9)
         r_boot = self._dc("gate.rg_bootstrap")
 
         # Forward: t_min = 3 × R_boot × C_boot → C = t / (3 × R)
@@ -498,11 +743,57 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
                   10,12,15,18,22,27,33,39,47,56,68,82,
                   100,120,150,180,220,270,330,470,680,1000]
         boot_min_cap = self._dc("boot.min_cap")
-        c_std_nf = float(next((v for v in E12_nF if v >= c_ideal_nf), E12_nF[-1]))
-        c_std_nf = max(boot_min_cap, c_std_nf)
+
+        # For a max-allowed min-on-time target, choose the largest practical C_boot
+        # that does not exceed the target (snap DOWN to E12).
+        if c_ideal_nf < boot_min_cap:
+            c_std_nf = float(boot_min_cap)
+            timing_feasible = False
+        else:
+            floor_candidates = [v for v in E12_nF if v <= c_ideal_nf]
+            c_std_nf = float(floor_candidates[-1] if floor_candidates else E12_nF[0])
+            timing_feasible = True
 
         # Forward verify
         t_actual_ns = 3.0 * r_boot * c_std_nf * 1e-9 * 1e9
+
+        # Droop override that reproduces this snapped value in forward calc.
+        boot_margin_mult = max(self._dc("boot.safety_margin"), 1.0)
+        c_pre_margin_nf = max(c_std_nf / boot_margin_mult, 0.1)
+        apply_droop_v = qg / (c_pre_margin_nf * 1e-9)
+        # Small upward bias prevents floating/JSON rounding from snapping to the next E12 value.
+        apply_droop_v *= 1.0 + 1e-6
+
+        # Comprehensive downstream analysis — the full what-if picture
+        downstream = self._boot_downstream(c_std_nf)
+
+        # Get current forward-calc values for before/after comparison
+        try:
+            current_fwd = self.calc_bootstrap_cap()
+            current_vals = {
+                "c_boot_nf":      current_fwd.get("c_boot_recommended_nf"),
+                "droop_v":        round(qg / (current_fwd.get("c_boot_recommended_nf", 220) * 1e-9), 3),
+                "min_on_time_ns": current_fwd.get("min_hs_on_time_ns"),
+                "hold_time_ms":   current_fwd.get("bootstrap_hold_time_ms"),
+            }
+        except Exception:
+            current_vals = None
+
+        # Feasibility: C_boot must be positive, timing target met, and UVLO must be OK
+        boot_feasible = c_ideal_nf > 0
+        uvlo_feasible = downstream.get("uvlo_ok") is not False  # True or None (unknown) is OK
+
+        constraint = None
+        if not timing_feasible:
+            constraint = (
+                f"Target {round(target_ns, 1)}ns is below minimum achievable "
+                f"{round(t_actual_ns, 1)}ns with practical C_boot={c_std_nf}nF."
+            )
+        if not uvlo_feasible:
+            constraint = (
+                f"Bootstrap voltage after droop ({downstream['v_gate_min_v']}V) "
+                f"is below UVLO ({downstream['vbs_uvlo_v']}V) - gate driver will shut down!"
+            )
 
         return {
             "target_key": "min_hs_on_time_ns",
@@ -510,12 +801,15 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             "solved_key": "c_boot_recommended_nf",
             "solved_value": c_std_nf,
             "solved_unit": "nF",
+            "apply_bootstrap_droop_v": round(apply_droop_v, 9),
             "ideal_value": round(c_ideal_nf, 1),
             "actual_output": round(t_actual_ns, 1),
             "actual_output_unit": "ns",
-            "feasible": c_ideal_nf > 0,
-            "constraint": None,
+            "feasible": boot_feasible and uvlo_feasible and timing_feasible,
+            "constraint": constraint,
             "note": f"C_boot={c_std_nf}nF (E12) gives t_min={round(t_actual_ns, 0):.0f}ns @ R_boot={r_boot}\u03a9",
+            "downstream": downstream,
+            "current_vals": current_vals,
         }
 
     # ── Shunt: Target ADC Voltage → R_shunt ────────────────────────
@@ -568,18 +862,30 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         td_off_s  = self._get(self.mosfet, "MOSFET", "td_off",       50e-9) or 50e-9
         tf_s      = self._get(self.mosfet, "MOSFET", "tf",            20e-9) or 20e-9
         t_prop_s  = self._get(self.driver, "DRIVER", "prop_delay_off", 60e-9) or 60e-9
+        drv_fall_s = self._get(self.driver, "DRIVER", "fall_time_out", None) or 0.0
         dt_abs_margin = self._dc("dt.abs_margin")
-        dt_min_ns = (td_off_s + tf_s + t_prop_s) * 1e9 + dt_abs_margin
+        dt_min_ns = (td_off_s + tf_s + t_prop_s + drv_fall_s) * 1e9 + dt_abs_margin
 
-        feasible = dt_target_ns >= dt_min_ns
+        dt_max_s  = self._get(self.mcu, "MCU", "pwm_deadtime_max", 1000e-9) or 1000e-9
+        dt_max_ns = dt_max_s * 1e9
+        feasible_min = dt_target_ns >= dt_min_ns
+        feasible_max = dt_target_ns <= dt_max_ns
 
         # Snap to MCU resolution
         dt_res_s  = self._get(self.mcu, "MCU", "pwm_deadtime_res", 8e-9) or 8e-9
         dt_res_ns = dt_res_s * 1e9
-        dt_effective = max(dt_target_ns, dt_min_ns)
-        dt_reg    = math.ceil(dt_effective / dt_res_ns)
+        dt_effective = min(max(dt_target_ns, dt_min_ns), dt_max_ns)
+        dt_reg = math.ceil(dt_effective / dt_res_ns)
+        max_dt_reg = max(1, math.floor(dt_max_ns / dt_res_ns))
+        dt_reg = min(max(dt_reg, 1), max_dt_reg)
         dt_actual = dt_reg * dt_res_ns
         dt_actual_pct = (dt_actual / period_ns) * 100
+
+        constraint = None
+        if not feasible_min:
+            constraint = f"Minimum dead time is {round(dt_min_ns, 0):.0f}ns ({round(dt_min_ns/period_ns*100, 3):.3f}%)"
+        elif not feasible_max:
+            constraint = f"Exceeds MCU max dead time {round(dt_max_ns, 0):.0f}ns"
 
         return {
             "target_key": "dt_pct_of_period",
@@ -590,8 +896,8 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             "ideal_value": round(dt_target_ns, 1),
             "actual_output": round(dt_actual_pct, 3),
             "actual_output_unit": "%",
-            "feasible": feasible,
-            "constraint": f"Minimum dead time is {round(dt_min_ns, 0):.0f}ns ({round(dt_min_ns/period_ns*100, 3):.3f}%)" if not feasible else None,
+            "feasible": feasible_min and feasible_max,
+            "constraint": constraint,
             "note": f"DT={round(dt_actual, 0):.0f}ns (reg={dt_reg} \u00d7 {dt_res_ns:.1f}ns) = {round(dt_actual_pct, 3)}% of period",
         }
 
@@ -600,8 +906,9 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         td_off_s  = self._get(self.mosfet, "MOSFET", "td_off",       50e-9) or 50e-9
         tf_s      = self._get(self.mosfet, "MOSFET", "tf",            20e-9) or 20e-9
         t_prop_s  = self._get(self.driver, "DRIVER", "prop_delay_off", 60e-9) or 60e-9
+        drv_fall_s = self._get(self.driver, "DRIVER", "fall_time_out", None) or 0.0
         dt_abs_margin = self._dc("dt.abs_margin")
-        dt_min_ns = (td_off_s + tf_s + t_prop_s) * 1e9 + dt_abs_margin
+        dt_min_ns = (td_off_s + tf_s + t_prop_s + drv_fall_s) * 1e9 + dt_abs_margin
 
         dt_res_s  = self._get(self.mcu, "MCU", "pwm_deadtime_res", 8e-9) or 8e-9
         dt_res_ns = dt_res_s * 1e9
@@ -611,7 +918,10 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         feasible_min = target_ns >= dt_min_ns
         feasible_max = target_ns <= dt_max_ns
 
+        target_ns = max(target_ns, 0.0)
         dt_reg    = math.ceil(target_ns / dt_res_ns)
+        max_dt_reg = max(1, math.floor(dt_max_ns / dt_res_ns))
+        dt_reg = min(max(dt_reg, 1), max_dt_reg)
         dt_actual = dt_reg * dt_res_ns
 
         period_ns = 1e9 / self.fsw

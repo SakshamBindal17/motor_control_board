@@ -138,10 +138,57 @@ class TestCalculationEngine:
         assert "gate_rise_time_ns" in rev
         assert rev["gate_rise_time_ns"]["solved_value"] > 0
 
+    def test_reverse_gate_rise_uses_miller_basis_when_available(self, default_specs):
+        """Reverse rise-time solver should follow Miller-charge basis when Qgd is present."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={"qg": 92, "qg__unit": "nC", "qgd": 28, "qgd__unit": "nC", "vgs_plateau": 5.5, "rg_int": 1.2},
+            driver_params={"io_source": 2.0},
+            mcu_params={},
+            motor_specs={},
+            overrides={},
+        )
+        r = e.reverse_calculate({"gate_rise_time_ns": 45})["gate_rise_time_ns"]
+        assert r["rg_sizing_basis"] == "miller_charge"
+        assert abs(r["actual_output"] - 45) <= 12  # E24 quantization tolerance
+
     def test_snubber(self, engine):
         sn = engine.calc_snubber()
         assert sn["rs_recommended_ohm"] >= 1
         assert sn["cs_recommended_pf"] >= 100
+
+    def test_gate_resistors_handles_nonpositive_rise_target_override(self, default_specs):
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={}, overrides={"gate_rise_time_ns": 0}
+        )
+        gr = e.calc_gate_resistors()
+        assert gr["rg_on_recommended_ohm"] > 0
+        assert gr["gate_rise_time_ns"] > 0
+
+    def test_input_caps_handles_nonpositive_ripple_override(self, default_specs):
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={}, overrides={"delta_v_ripple": 0}
+        )
+        ic = e.calc_input_capacitors()
+        assert ic["delta_v_target_v"] == pytest.approx(2.0)
+        assert ic["c_bulk_required_uf"] > 0
+
+    def test_snubber_forward_supports_large_e12_cap_range(self, default_specs):
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={"coss": 50000, "coss__unit": "pF"},
+            driver_params={}, mcu_params={}, motor_specs={}, overrides={}
+        )
+        sn = e.calc_snubber()
+        assert sn["cs_recommended_pf"] > 47000
 
     def test_audit_log_populated(self, engine):
         results = engine.run_all()
@@ -202,6 +249,18 @@ class TestDesignConstants:
             design_constants={"thermal.rth_sa": 999}  # above max 100
         )
         assert e._dc("thermal.rth_sa") == 100.0
+
+    def test_input_spwm_mod_index_bounds_prevent_invalid_sqrt(self, default_specs):
+        """SPWM modulation index above physical range should be clamped and not crash ripple math."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={}, motor_specs={}, overrides={},
+            design_constants={"input.spwm_mod_index": 1.5}
+        )
+        ic = e.calc_input_capacitors()
+        assert ic["i_ripple_rms_a"] >= 0
+        assert any("input.spwm_mod_index" in msg for msg in e.audit_log)
 
 
 # ── Unit Fuzz Tests (µ/μ/u symbol variants) ──────────────────────────────────
@@ -336,3 +395,153 @@ class TestParamSanityBounds:
         # Value passes through (could be exotic SiC), but audit log warns
         assert result == pytest.approx(5000.0)
         assert any("SANITY WARNING" in msg for msg in e.audit_log)
+
+
+# -- Bootstrap Reverse-Calculation Tests --------------------------------------
+
+class TestBootstrapReverse:
+    def test_reverse_min_on_time_returns_c_boot(self, engine):
+        """Reverse solver should map min on-time target to a practical C_boot."""
+        rev = engine.reverse_calculate({"min_hs_on_time_ns": 4000})
+        r = rev["min_hs_on_time_ns"]
+        assert r["solved_key"] == "c_boot_recommended_nf"
+        assert r["solved_value"] >= 100
+        assert r["apply_bootstrap_droop_v"] > 0
+
+    def test_reverse_min_on_time_snaps_down_to_meet_target(self, engine):
+        """For feasible targets, reverse bootstrap solver should not choose a cap that exceeds the target min on-time."""
+        rev = engine.reverse_calculate({"min_hs_on_time_ns": 4000})
+        r = rev["min_hs_on_time_ns"]
+        assert r["feasible"] is True
+        assert r["actual_output"] <= 4000
+        # With default R_boot=10Ω, 4us ideal is 133nF; E12 floor should be 120nF.
+        assert r["solved_value"] == pytest.approx(120.0)
+
+    def test_reverse_min_on_time_detects_unachievable_target(self, engine):
+        """Very small target must be marked infeasible if min practical C_boot cannot meet it."""
+        rev = engine.reverse_calculate({"min_hs_on_time_ns": 100})
+        r = rev["min_hs_on_time_ns"]
+        assert r["feasible"] is False
+        assert "minimum achievable" in (r.get("constraint") or "").lower()
+
+    def test_apply_bootstrap_droop_reproduces_solved_cap(self, default_specs):
+        """Apply override from reverse result should reproduce solved C_boot in forward calculation."""
+        from calc_engine import CalculationEngine
+
+        base_engine = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={}, overrides={}
+        )
+        rev = base_engine.reverse_calculate({"min_hs_on_time_ns": 4000})
+        solved = rev["min_hs_on_time_ns"]
+
+        apply_engine = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={},
+            overrides={"bootstrap_droop_v": solved["apply_bootstrap_droop_v"]},
+        )
+        fwd = apply_engine.calc_bootstrap_cap()
+        assert fwd["c_boot_recommended_nf"] == pytest.approx(solved["solved_value"])
+
+
+class TestReverseAliasesAndConstraints:
+    def test_reverse_snubber_power_accepts_total_alias(self, engine):
+        """Frontend key p_total_all_snubbers_w should be accepted by reverse endpoint."""
+        rev = engine.reverse_calculate({"p_total_all_snubbers_w": 2.0})
+        assert "p_total_all_snubbers_w" in rev
+        assert rev["p_total_all_snubbers_w"]["solved_key"] == "cs_recommended_pf"
+
+    def test_reverse_dt_pct_marks_above_mcu_limit_infeasible(self, default_specs):
+        """Dead-time percentage reverse solver should enforce MCU max dead-time limit."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={},
+            driver_params={},
+            mcu_params={"pwm_deadtime_max": 500, "pwm_deadtime_max__unit": "ns"},
+            motor_specs={},
+            overrides={},
+        )
+        r = e.reverse_calculate({"dt_pct_of_period": 5.0})["dt_pct_of_period"]
+        assert r["feasible"] is False
+        assert "Exceeds MCU max dead time" in (r.get("constraint") or "")
+
+
+class TestCrossValidationConsistency:
+    def test_cross_validation_deadtime_includes_driver_fall_time(self, default_specs):
+        """Cross-validation dead-time check should include driver fall-time like dead_time module."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={"td_off": 50, "td_off__unit": "ns", "tf": 20, "tf__unit": "ns"},
+            driver_params={"prop_delay_off": 60, "prop_delay_off__unit": "ns", "fall_time_out": 600, "fall_time_out__unit": "ns"},
+            mcu_params={"pwm_deadtime_res": 10, "pwm_deadtime_res__unit": "ns", "pwm_deadtime_max": 500, "pwm_deadtime_max__unit": "ns"},
+            motor_specs={}, overrides={}
+        )
+        cv = e.calc_cross_validation()
+        dt_check = next(c for c in cv["checks"] if c["id"] == "mcu_dt_resolution")
+        assert dt_check["status"] == "fail"
+
+    def test_cross_validation_warns_when_bootstrap_uvlo_missing(self, default_specs):
+        """Bootstrap UVLO quality gate should warn when vbs_uvlo is not extracted."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={},
+            driver_params={},
+            mcu_params={},
+            motor_specs={},
+            overrides={}
+        )
+        cv = e.calc_cross_validation()
+        uvlo_q = next(c for c in cv["checks"] if c["id"] == "vbs_uvlo_data_quality")
+        assert uvlo_q["status"] == "warn"
+
+    def test_cross_validation_fails_on_suspicious_bootstrap_uvlo(self, default_specs):
+        """Clearly implausible bootstrap UVLO extraction should fail data-quality check."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={},
+            driver_params={"vbs_uvlo": 40, "vbs_uvlo__unit": "V"},
+            mcu_params={},
+            motor_specs={},
+            overrides={}
+        )
+        cv = e.calc_cross_validation()
+        uvlo_q = next(c for c in cv["checks"] if c["id"] == "vbs_uvlo_data_quality")
+        assert uvlo_q["status"] == "fail"
+
+
+class TestBootstrapUvloQuality:
+    def test_bootstrap_downstream_includes_uvlo_data_quality_fields(self, default_specs):
+        """Reverse bootstrap analysis should surface UVLO data trust metadata."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={},
+            driver_params={"vbs_uvlo": 6.7, "vbs_uvlo__unit": "V"},
+            mcu_params={},
+            motor_specs={},
+            overrides={}
+        )
+        rev = e.reverse_calculate({"min_hs_on_time_ns": 4000})["min_hs_on_time_ns"]
+        ds = rev["downstream"]
+        assert ds["uvlo_data_status"] == "verified"
+        assert ds["uvlo_data_trusted"] is True
+        assert ds["uvlo_data_source_key"] == "vbs_uvlo"
+
+
+class TestPowerBypassParsing:
+    def test_power_supply_bypass_parses_vdd_range_string(self, default_specs):
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={},
+            mcu_params={"vdd_range": "2.7-3.6"},
+            motor_specs={}, overrides={}
+        )
+        ps = e.calc_power_supply_bypass()
+        assert ps["vdd_mcu"]["voltage_v"] == pytest.approx(3.6)

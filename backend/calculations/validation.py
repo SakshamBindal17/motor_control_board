@@ -352,13 +352,32 @@ class ValidationMixin:
             _add("vcc_uvlo_margin", "VCC vs UVLO threshold", "skip",
                  "VCC UVLO not extracted -- cannot validate supply margin.")
 
+        # ── 3b. Bootstrap UVLO extraction quality (data trust gate) ──
+        uvlo_info = self._bootstrap_uvlo_info()
+        vbs_uvlo = uvlo_info["value_v"]
+        if uvlo_info["status"] == "verified":
+            _add("vbs_uvlo_data_quality", "Bootstrap UVLO data quality",
+                 "pass",
+                 f"Bootstrap UVLO extracted as {vbs_uvlo:.2f}V via '{uvlo_info['source_key']}' and is within practical range.")
+        elif uvlo_info["status"] == "missing":
+            _add("vbs_uvlo_data_quality", "Bootstrap UVLO data quality",
+                 "warn",
+                 "Bootstrap UVLO is missing. Bootstrap UVLO margin checks are unverified.",
+                 "Re-extract the driver datasheet or provide vbs_uvlo manually before hardware sign-off.")
+        else:
+            _add("vbs_uvlo_data_quality", "Bootstrap UVLO data quality",
+                 "fail",
+                 f"Bootstrap UVLO extracted as {vbs_uvlo:.2f}V looks suspicious; margin checks are not trustworthy.",
+                 "Confirm UVLO units/condition in the datasheet and correct vbs_uvlo extraction.")
+
         # ── 4. MCU dead-time resolution vs calculated minimum dead time ──
         dt_res_s = self._get(self.mcu, "MCU", "pwm_deadtime_res", None)
         td_off_s = self._get(self.mosfet, "MOSFET", "td_off", None)
         tf_s = self._get(self.mosfet, "MOSFET", "tf", None)
         t_prop_s = self._get(self.driver, "DRIVER", "prop_delay_off", None)
+        drv_fall_s = self._get(self.driver, "DRIVER", "fall_time_out", None)
         if dt_res_s is not None and td_off_s is not None and tf_s is not None and t_prop_s is not None:
-            dt_min_ns = (td_off_s + tf_s + t_prop_s) * 1e9 + self._dc("dt.abs_margin")
+            dt_min_ns = (td_off_s + tf_s + t_prop_s + (drv_fall_s or 0.0)) * 1e9 + self._dc("dt.abs_margin")
             dt_res_ns = dt_res_s * 1e9
             dt_reg = math.ceil(dt_min_ns / dt_res_ns) if dt_res_ns > 0 else 0
             dt_actual_ns = dt_reg * dt_res_ns

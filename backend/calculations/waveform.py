@@ -7,14 +7,26 @@ References:
   - TI SLUA618: "Understanding MOSFET Parameters"
   - Infineon AN-1001: "MOSFET Basics"
   - Erickson & Maksimovic, "Fundamentals of Power Electronics", Ch. 4
+  - Ren, Y. et al., "Analytical Loss Model of Power MOSFET", IEEE Trans. PE 2006
 
-Physics model:
+Physics model (turn-on):
   Region 1 (Pre-threshold):  Vgs charges 0→Vth via RC(Ciss), Id=0, Vds=Vbus
-  Region 2 (Linear/Active):  Vgs charges Vth→Vplateau, Id rises 0→Iload
-  Region 3 (Miller plateau): Vgs=Vplateau, Qgd charges, Vds falls Vbus→Vds_on
-  Region 4 (Post-plateau):   Vgs charges Vplateau→Vdrv, Id=Iload, Vds=Vds_on
+  Region 2 (Active/Trans.):  Vgs charges Vth→Vplateau, Id rises via gm×(Vgs−Vth), Vds=Vbus
+  Region 3 (Miller plateau): Vgs=Vplateau, Qgd_eff charges, Vds falls Vbus→Vds_on
+  Region 4 (Post-plateau):   Vgs charges Vplateau→Vdrv, Vds rings around Vds_on
 
-Turn-off is the exact reverse: Region 4'→3'→2'→1'
+Turn-off is the exact reverse: Region 4'→3'→2'→1', followed by Vds overshoot spike.
+
+Corrections vs. naive model:
+    - Qgd_eff uses Vds-swing scaling as primary model:
+        Qgd_eff ≈ Qgd_spec × ((Vbus − Vds_on) / Vds_test), bounded for nonlinearity.
+        If Vds_max is unavailable, a Crss-based fallback is used.
+  - Vgs_plateau updated for actual operating current: Vpl = Vth + Id / gm
+    (higher load current → higher plateau → more time in Region 3)
+  - Vds ringing after switching events modelled as damped LC oscillation:
+    f = 1/(2π√(L×C)), V_peak = I×√(L/C), decay Q≈8 (typical PCB)
+  - Region 2 Vds correctly held at Vbus (complementary body-diode clamps node)
+  - Region 2 Id follows Vgs via transconductance: Id = gm × (Vgs − Vth)
 """
 
 import math
@@ -31,167 +43,254 @@ class WaveformMixin:
         """
         self._current_module = "waveform"
 
-        # ── Extract parameters (all in SI units) ──────────────────────
-        ciss   = self._get(self.mosfet, "MOSFET", "ciss",        3000e-12)  # F
-        qg     = self._get(self.mosfet, "MOSFET", "qg",          92e-9)     # C
-        qgd    = self._get(self.mosfet, "MOSFET", "qgd",         30e-9)     # C
-        rds_on = self._get(self.mosfet, "MOSFET", "rds_on",      1.5e-3)    # Ω
-        vgs_th = self._get(self.mosfet, "MOSFET", "vgs_th",      3.0)       # V
-        vgs_pl = self._get(self.mosfet, "MOSFET", "vgs_plateau", None)      # V
-        rg_int = self._get(self.mosfet, "MOSFET", "rg_int",      1.0)       # Ω
-        crss   = self._get(self.mosfet, "MOSFET", "crss",        None)      # F
-        td_on  = self._get(self.mosfet, "MOSFET", "td_on",       None)      # s
-        td_off = self._get(self.mosfet, "MOSFET", "td_off",      None)      # s
+        # ── Extract MOSFET parameters (all in SI units) ───────────────
+        ciss    = self._get(self.mosfet, "MOSFET", "ciss",        3000e-12)  # F
+        qg      = self._get(self.mosfet, "MOSFET", "qg",          92e-9)     # C
+        qgd     = self._get(self.mosfet, "MOSFET", "qgd",         30e-9)     # C
+        rds_on  = self._get(self.mosfet, "MOSFET", "rds_on",      1.5e-3)    # Ω
+        vgs_th  = self._get(self.mosfet, "MOSFET", "vgs_th",      3.0)       # V
+        vgs_pl  = self._get(self.mosfet, "MOSFET", "vgs_plateau", None)      # V
+        rg_int  = self._get(self.mosfet, "MOSFET", "rg_int",      1.0)       # Ω
+        crss    = self._get(self.mosfet, "MOSFET", "crss",        None)      # F
+        coss    = self._get(self.mosfet, "MOSFET", "coss",        200e-12)   # F
+        id_cont = self._get(self.mosfet, "MOSFET", "id_cont",     None)      # A
 
-        # Driver propagation delays
+        # ── Extract driver parameters ─────────────────────────────────
         t_prop_on  = self._get(self.driver, "DRIVER", "prop_delay_on",  15e-9)  # s
         t_prop_off = self._get(self.driver, "DRIVER", "prop_delay_off", 15e-9)  # s
-        io_source  = self._get(self.driver, "DRIVER", "io_source", 4.0)        # A
-        io_sink    = self._get(self.driver, "DRIVER", "io_sink",   4.0)        # A
+        io_source  = self._get(self.driver, "DRIVER", "io_source", 4.0)         # A
+        io_sink    = self._get(self.driver, "DRIVER", "io_sink",   4.0)         # A
 
-        # Gate resistors from existing calculation (or fallback)
+        # ── Gate resistors from gate_resistors module ─────────────────
         try:
-            gate_calc = self.calc_gate_resistors()
-            rg_on_ext  = gate_calc.get("rg_on_recommended_ohm", 4.7)
+            gate_calc  = self.calc_gate_resistors()
+            rg_on_ext  = gate_calc.get("rg_on_recommended_ohm",  4.7)
             rg_off_ext = gate_calc.get("rg_off_recommended_ohm", 2.2)
         except Exception:
             rg_on_ext  = 4.7
             rg_off_ext = 2.2
 
-        # System parameters
-        v_drv  = self.v_drv       # Gate drive voltage (V)
-        v_bus  = self.v_peak      # DC bus peak voltage (V)
-        i_load = self.i_max       # Load current (A)
-        fsw    = self.fsw         # Switching frequency (Hz)
+        # ── System operating conditions ───────────────────────────────
+        v_drv  = self.v_drv    # gate drive voltage (V)
+        v_bus  = self.v_peak   # DC bus peak voltage (V) — highest Vds seen during switching
+        i_load = self.i_max    # peak load current (A)
+        fsw    = self.fsw      # switching frequency (Hz)
 
-        # ── Derived values ────────────────────────────────────────────
-        rg_on  = rg_int + rg_on_ext
-        rg_off = rg_int + rg_off_ext
+        rg_on  = rg_int + rg_on_ext    # total on-path gate resistance (Ω)
+        rg_off = rg_int + rg_off_ext   # total off-path gate resistance (Ω)
 
-        # Miller plateau voltage estimate (if not extracted)
+        # ── Stray PCB inductance (for ringing calculation) ────────────
+        l_stray_nh = float(self.ovr.get("stray_inductance_nh", self._dc("snub.stray_l_default")))
+        l_stray    = l_stray_nh * 1e-9  # H
+
+        # ── FIX 1: Vgs_plateau corrected for actual operating current ─
+        # Physically: Vgs_plateau = Vgs_th + Id / gm
+        # Datasheet gives Vgs_pl at some test current (usually close to id_cont).
+        # If id_cont is available, estimate gm and scale plateau to actual i_load.
+        # Higher i_load → higher plateau → lower gate driving force → longer Miller time.
         if vgs_pl is None:
-            # Estimate: Vplateau ≈ Vth + Iload/gfs
-            # Typical gfs for power MOSFETs: 20-200 S
-            # Rough estimate: Vplateau ≈ Vth + 1.0V
             vgs_pl = vgs_th + 1.0
             self.audit_log.append(
-                f"[Waveform] Vgs_plateau not extracted, estimated as Vth+1.0 = {vgs_pl:.1f}V."
+                f"[Waveform] Vgs_plateau not extracted — estimated as "
+                f"Vth + 1.0 = {vgs_pl:.1f} V."
             )
 
-        # Clamp plateau to be between Vth and Vdrv
+        vgs_pl_datasheet = vgs_pl   # keep original for reference
+        gm_est = None
+
+        if id_cont is not None and id_cont > 0:
+            denom = vgs_pl_datasheet - vgs_th
+            if denom > 0.1:
+                # gm from datasheet: gm = Id_test / (Vpl_test − Vth)
+                # Assumes Vgs_plateau was measured near id_cont operating point.
+                gm_est = id_cont / denom
+                vgs_pl = vgs_th + (i_load / gm_est)
+                self.audit_log.append(
+                    f"[Waveform] Vgs_plateau scaled for operating current: "
+                    f"gm={gm_est:.1f} S (Id_cont={id_cont:.0f} A, "
+                    f"Vpl_spec={vgs_pl_datasheet:.2f} V) → "
+                    f"Vpl_actual={vgs_pl:.2f} V at I_load={i_load:.0f} A."
+                )
+            else:
+                self.audit_log.append(
+                    f"[Waveform] Cannot compute gm — Vpl−Vth={denom:.2f} V too small. "
+                    f"Using datasheet Vgs_plateau={vgs_pl:.2f} V."
+                )
+        else:
+            self.audit_log.append(
+                f"[Waveform] id_cont not extracted — Vgs_plateau kept at "
+                f"{vgs_pl:.2f} V (not scaled for operating current)."
+            )
+
+        # Clamp plateau to physically valid range
         vgs_pl = max(vgs_th + 0.2, min(vgs_pl, v_drv - 0.5))
 
-        # Vds when fully on
-        vds_on = i_load * rds_on * self._dc("thermal.rds_derating")
+        # ── Vds_on (fully-on drain voltage) ───────────────────────────
+        rds_derated = rds_on * self._dc("thermal.rds_derating")
+        vds_on = i_load * rds_derated
+        vds_on = max(vds_on, 0.01)  # physical floor
 
-        # Transconductance (used for Region 2 Id ramp)
+        # ── FIX 2: Effective Qgd scaled to actual bus voltage ─────────
+        # Datasheet Qgd is integral of Cgd over 0 → Vds_test.
+        # Cgd is highly nonlinear — large at low Vds, small at high Vds.
+        # Crss (= Cgd at high Vds) severely underestimates average Cgd.
+        # Best available approach: scale proportionally to actual Vds swing
+        # relative to the datasheet test voltage.
+        # Datasheets typically measure Qg/Qgd at Vds = Vds_max × 0.5.
+        # So: Qgd_eff = Qgd_spec × (Vbus − Vds_on) / Vds_test
+        # This is a linear approximation (Cgd treated as roughly flat on average),
+        # valid to ±30% for most silicon MOSFETs.
+        v_ds_swing  = max(v_bus - vds_on, 1.0)
+        vds_max_val = self._get(self.mosfet, "MOSFET", "vds_max", None)
+
+        if vds_max_val is not None and vds_max_val > 0:
+            # Typical datasheet test: Vds = 50% of Vds_max
+            vds_test  = vds_max_val * 0.5
+            qgd_eff   = qgd * (v_ds_swing / vds_test)
+            # Keep within ±2× of datasheet spec (nonlinearity safety margin)
+            qgd_eff   = max(qgd * 0.5, min(qgd_eff, qgd * 2.0))
+            self.audit_log.append(
+                f"[Waveform] Qgd_eff: Qgd_spec × (Vds_swing / Vds_test) = "
+                f"{qgd*1e9:.1f} nC × ({v_ds_swing:.1f} V / {vds_test:.0f} V) = "
+                f"{qgd_eff*1e9:.2f} nC  [Vds_max={vds_max_val:.0f} V, "
+                f"test={vds_test:.0f} V assumed]."
+            )
+        elif crss is not None and crss > 1e-14 and v_ds_swing > 5:
+            # Secondary: Crss-based, but only trust it if Vds swing is large
+            # (Crss is Cgd at high Vds — underestimates but proportional to swing)
+            # Empirically, average Cgd ≈ 3–5× Crss due to low-Vds peak.
+            cgd_avg_est = crss * 4.0   # rough average over full swing
+            qgd_eff = cgd_avg_est * v_ds_swing
+            qgd_eff = max(qgd * 0.5, min(qgd_eff, qgd * 2.0))
+            self.audit_log.append(
+                f"[Waveform] Vds_max not extracted — Qgd_eff estimated from "
+                f"Crss={crss*1e12:.0f} pF × 4 (avg Cgd factor) × {v_ds_swing:.1f} V "
+                f"= {qgd_eff*1e9:.2f} nC (datasheet Qgd={qgd*1e9:.1f} nC)."
+            )
+        else:
+            # Fallback: use datasheet Qgd as-is
+            qgd_eff = qgd
+            self.audit_log.append(
+                f"[Waveform] Vds_max and Crss not extracted — using datasheet "
+                f"Qgd = {qgd*1e9:.1f} nC directly. Extract Vds_max for accurate "
+                f"Miller time scaling."
+            )
+
+        # ── Transconductance (for Region 2 Id shape) ─────────────────
         gfs = i_load / (vgs_pl - vgs_th) if (vgs_pl - vgs_th) > 0.1 else i_load / 0.5
 
-        # Cgd from Qgd and voltage swing
-        v_ds_swing = v_bus - vds_on
-        cgd = qgd / v_ds_swing if v_ds_swing > 0 else crss or 100e-12
-
-        # RC time constants
-        tau_on  = rg_on * ciss      # Turn-on charging
-        tau_off = rg_off * ciss     # Turn-off discharging
-
-        # ── Generate turn-on waveform ─────────────────────────────────
-        dt = 0.1e-9  # 0.1ns resolution
-        max_points = 5000
-
-        # Region 1: Pre-threshold (0 → Vth)
-        # Vgs(t) = Vdrv × (1 - e^(-t/τ)), solve for t when Vgs = Vth
-        if v_drv > vgs_th and tau_on > 0:
-            t_r1 = -tau_on * math.log(1 - vgs_th / v_drv)
+        # ── FIX 3: Ring parameters (Lstray–Coss LC resonance) ─────────
+        # After turn-on Miller: small ring around Vds_on (body-diode recovery)
+        # After turn-off Id snap: large spike + ring above Vbus (Lstray × dI/dt)
+        if l_stray > 0 and coss > 0:
+            f_ring     = 1.0 / (2 * math.pi * math.sqrt(l_stray * coss))
+            Q_ring     = 8.0   # typical PCB power stage (no external snubber)
+            tau_ring   = Q_ring / (math.pi * f_ring)
+            omega_ring = 2 * math.pi * f_ring
+            # V_overshoot = I × sqrt(L/C) — peak spike above Vbus at turn-off
+            # Cap at Vds_max (MOSFET breakdown) if extracted, else 3× Vbus
+            v_overshoot_off = i_load * math.sqrt(l_stray / max(coss, 1e-15))
+            _vds_cap = (vds_max_val * 0.9) if (vds_max_val is not None and vds_max_val > 0) else (v_bus * 3.0)
+            v_overshoot_off = min(v_overshoot_off, _vds_cap)
+            # Turn-on ring is smaller — mainly from complementary body-diode recovery
+            v_ring_on  = v_overshoot_off * 0.15
+            self.audit_log.append(
+                f"[Waveform] Switching ring: f = {f_ring/1e6:.0f} MHz, "
+                f"V_ov(off) = {v_overshoot_off:.1f} V, τ = {tau_ring*1e9:.0f} ns "
+                f"(Q = {Q_ring}, L_stray = {l_stray_nh:.0f} nH, "
+                f"Coss = {coss*1e12:.0f} pF)."
+            )
         else:
-            t_r1 = 10e-9  # fallback 10ns
+            f_ring = 0.0;  tau_ring = 1e-9;  omega_ring = 0.0
+            v_overshoot_off = 0.0;  v_ring_on = 0.0
 
-        # Region 2: Active (Vth → Vplateau)
-        # Vgs continues charging, Id ramps linearly with Vgs
+        # ── RC time constants ─────────────────────────────────────────
+        tau_on  = rg_on  * ciss   # turn-on RC time constant
+        tau_off = rg_off * ciss   # turn-off RC time constant
+
+        # ── Turn-on region durations ──────────────────────────────────
+        # Region 1: Vgs charges from 0 to Vth (gate capacitance only, Id=0)
+        if v_drv > vgs_th and tau_on > 0:
+            t_r1 = -tau_on * math.log(1.0 - vgs_th / v_drv)
+        else:
+            t_r1 = 10e-9
+
+        # Region 2: Vgs continues charging Vth → Vplateau (Id ramps via gm)
         if v_drv > vgs_pl and tau_on > 0:
-            t_r1_r2 = -tau_on * math.log(1 - vgs_pl / v_drv)
-            t_r2 = t_r1_r2 - t_r1
+            t_total_r1r2 = -tau_on * math.log(1.0 - vgs_pl / v_drv)
+            t_r2 = max(0.0, t_total_r1r2 - t_r1)
         else:
             t_r2 = 5e-9
 
-        # Region 3: Miller plateau
-        # Gate current charges Cgd, Vgs stays at Vplateau
-        ig_miller_on = (v_drv - vgs_pl) / rg_on if rg_on > 0 else io_source
-        ig_miller_on = min(ig_miller_on, io_source)  # limited by driver
-        t_r3 = qgd / ig_miller_on if ig_miller_on > 0 else 20e-9
+        # Region 3: Miller plateau — uses corrected Qgd_eff and corrected Vgs_pl
+        ig_miller_on  = (v_drv - vgs_pl) / rg_on if rg_on > 0 else io_source
+        ig_miller_on  = min(max(ig_miller_on, 1e-6), io_source)
+        t_r3 = qgd_eff / ig_miller_on   # ← uses Qgd_eff (voltage-scaled)
 
-        # Region 4: Post-plateau (Vplateau → Vdrv)
-        # Remaining Ciss charging from Vplateau to Vdrv
-        # t = -τ × ln((Vdrv - Vdrv) / (Vdrv - Vplateau))  →  we stop at 99%
-        t_r4 = -tau_on * math.log(0.02) if tau_on > 0 else 20e-9  # ~4τ to 98%
-        t_r4 = min(t_r4, 200e-9)  # cap at 200ns
+        # Region 4: Post-plateau Vgs charges Vplateau → Vdrv (~4τ)
+        t_r4 = min(-tau_on * math.log(0.02) if tau_on > 0 else 20e-9, 200e-9)
 
-        # Total turn-on time
         t_turn_on = t_r1 + t_r2 + t_r3 + t_r4
 
-        # ── Generate turn-off waveform (reverse) ─────────────────────
-        # Region 4': Post-plateau discharge (Vdrv → Vplateau)
-        t_r4_off = -tau_off * math.log(vgs_pl / v_drv) if (v_drv > 0 and tau_off > 0) else 20e-9
-        t_r4_off = min(t_r4_off, 200e-9)
+        # ── Turn-off region durations ─────────────────────────────────
+        # Region 4': Vgs discharges Vdrv → Vplateau
+        t_r4_off = min(
+            -tau_off * math.log(vgs_pl / v_drv) if (v_drv > 0 and tau_off > 0 and vgs_pl > 0) else 20e-9,
+            200e-9
+        )
 
-        # Region 3': Miller plateau (Vgs = Vplateau, Vds rises)
+        # Region 3': Miller plateau (reverse) — same Qgd_eff
         ig_miller_off = vgs_pl / rg_off if rg_off > 0 else io_sink
-        ig_miller_off = min(ig_miller_off, io_sink)
-        t_r3_off = qgd / ig_miller_off if ig_miller_off > 0 else 20e-9
+        ig_miller_off = min(max(ig_miller_off, 1e-6), io_sink)
+        t_r3_off = qgd_eff / ig_miller_off   # ← uses Qgd_eff
 
-        # Region 2': Active (Vplateau → Vth, Id falls)
-        if vgs_pl > 0 and tau_off > 0:
-            t_r2_off_total = -tau_off * math.log(vgs_th / vgs_pl) if vgs_th < vgs_pl else 5e-9
-            t_r2_off = min(t_r2_off_total, 50e-9)
-        else:
-            t_r2_off = 5e-9
+        # Region 2': Vgs discharges Vplateau → Vth, Id falls to 0
+        t_r2_off = min(
+            -tau_off * math.log(vgs_th / vgs_pl) if (vgs_th < vgs_pl and tau_off > 0) else 5e-9,
+            50e-9
+        )
 
-        # Region 1': Sub-threshold discharge (Vth → 0)
-        if vgs_th > 0 and tau_off > 0:
-            t_r1_off = -tau_off * math.log(0.02 / vgs_th) if vgs_th > 0.02 else 20e-9
-            t_r1_off = min(t_r1_off, 200e-9)
-        else:
-            t_r1_off = 20e-9
+        # Region 1': Sub-threshold discharge Vth → 0
+        t_r1_off = min(
+            -tau_off * math.log(0.02 / max(vgs_th, 0.1)) if (vgs_th > 0.02 and tau_off > 0) else 20e-9,
+            200e-9
+        )
 
         t_turn_off = t_r4_off + t_r3_off + t_r2_off + t_r1_off
 
         # ── Dead time ─────────────────────────────────────────────────
-        dt_prop = float(t_prop_on) if t_prop_on else 15e-9
-        dt_calc = self._dc("dt.abs_margin") * 1e-9       # margin in ns → s
-        dt_safety = self._dc("dt.safety_mult")
-        dead_time = max(50e-9, (t_turn_off + dt_prop) * dt_safety + dt_calc)
-        dead_time = min(dead_time, 2e-6)  # cap at 2µs
+        dt_prop    = float(t_prop_on) if t_prop_on else 15e-9
+        dt_abs     = self._dc("dt.abs_margin") * 1e-9
+        dt_safety  = self._dc("dt.safety_mult")
+        dead_time  = max(50e-9, (t_turn_off + dt_prop) * dt_safety + dt_abs)
+        dead_time  = min(dead_time, 2e-6)
 
-        # ── Build the full cycle time array ───────────────────────────
-        # Layout: [dead_time | turn_on | on_time | turn_off | dead_time]
-        period = 1.0 / fsw
-        on_time_total = period * 0.5  # 50% duty cycle for visualization
-        # Flat on-time after turn-on completes
-        flat_on = max(0, on_time_total - t_turn_on - dead_time)
-        # Flat off-time
-        flat_off = max(0, period - on_time_total - t_turn_off - dead_time)
+        # ── Build display window ──────────────────────────────────────
+        period       = 1.0 / fsw
+        on_time_half = period * 0.5
+        flat_on  = max(0.0, on_time_half - t_turn_on  - dead_time)
+        flat_off = max(0.0, period - on_time_half - t_turn_off - dead_time)
 
-        # For display, only show ~2× the transition region (not the full period)
-        # This gives a clear view of the switching events
-        margin = max(t_turn_on, t_turn_off) * 0.3
-        view_on_flat = min(flat_on, max(t_turn_on * 2, 200e-9))
-        view_off_flat = min(flat_off, max(t_turn_off * 2, 200e-9))
-        total_view = dead_time + t_turn_on + view_on_flat + t_turn_off + dead_time + margin
+        # Show enough time for the ring to visibly decay (~5 × tau)
+        ring_tail   = min(5 * tau_ring, 300e-9) if f_ring > 0 else 200e-9
+        view_on_flat  = min(flat_on,  max(t_turn_on  * 1.5, ring_tail))
+        view_off_flat = min(flat_off, max(t_turn_off * 1.5, ring_tail))
+        total_view  = dead_time + t_turn_on + view_on_flat + t_turn_off + dead_time + ring_tail
 
-        # Determine time step for ~800 points
-        n_points = 800
-        dt_step = total_view / n_points if total_view > 0 else 1e-9
+        # ── Sample waveform ───────────────────────────────────────────
+        n_points  = 800
+        max_pts   = 5000
+        dt_step   = total_view / n_points if total_view > 0 else 1e-9
 
-        # ── Sample the waveform ───────────────────────────────────────
-        times = []
+        times   = []
         vgs_arr = []
         vds_arr = []
-        id_arr = []
-        ig_arr = []
-        pd_arr = []
+        id_arr  = []
+        ig_arr  = []
+        pd_arr  = []
 
-        t = 0
-        while t <= total_view and len(times) < max_points:
+        t = 0.0
+        while t <= total_view and len(times) < max_pts:
             vgs, vds, i_d, i_g = self._sample_waveform(
                 t, v_drv, v_bus, i_load, vgs_th, vgs_pl, vds_on,
                 gfs, rg_on, rg_off, tau_on, tau_off,
@@ -199,15 +298,14 @@ class WaveformMixin:
                 t_r1, t_r2, t_r3, t_r4,
                 t_r4_off, t_r3_off, t_r2_off, t_r1_off,
                 dead_time, t_turn_on, view_on_flat, t_turn_off,
+                l_stray, coss,   # ← new: for ringing
             )
-
-            times.append(round(t * 1e9, 2))       # ns
-            vgs_arr.append(round(vgs, 3))          # V
-            vds_arr.append(round(vds, 2))          # V
-            id_arr.append(round(i_d, 2))           # A
-            ig_arr.append(round(i_g, 3))           # A
-            pd_arr.append(round(vds * i_d, 1))     # W
-
+            times.append(round(t * 1e9, 2))
+            vgs_arr.append(round(vgs, 3))
+            vds_arr.append(round(max(0.0, vds), 2))   # Vds ≥ 0
+            id_arr.append(round(max(0.0, i_d), 2))    # Id ≥ 0
+            ig_arr.append(round(i_g, 3))
+            pd_arr.append(round(max(0.0, vds) * max(0.0, i_d), 1))
             t += dt_step
 
         # ── Timing annotations ────────────────────────────────────────
@@ -230,160 +328,226 @@ class WaveformMixin:
                 "total_off_ns":     round(t_turn_off * 1e9, 1),
                 "ig_miller_off_a":  round(ig_miller_off, 2),
             },
-            "dead_time_ns":     round(dead_time * 1e9, 1),
-            "vgs_plateau_v":    round(vgs_pl, 2),
-            "vgs_threshold_v":  round(vgs_th, 2),
+            "dead_time_ns":         round(dead_time * 1e9, 1),
+            "vgs_plateau_v":        round(vgs_pl, 2),
+            "vgs_threshold_v":      round(vgs_th, 2),
+            "ring_freq_mhz":        round(f_ring / 1e6, 0) if f_ring > 0 else None,
+            "v_overshoot_v":        round(v_overshoot_off, 1) if f_ring > 0 else None,
         }
 
-        # ── Key parameters used (for display) ─────────────────────────
+        # ── Parameters used (shown in UI transparency panel) ──────────
         params_used = {
-            "ciss_pf":      round(ciss * 1e12, 0),
-            "qg_nc":        round(qg * 1e9, 1),
-            "qgd_nc":       round(qgd * 1e9, 1),
-            "rds_on_mohm":  round(rds_on * 1e3, 2),
-            "vgs_th_v":     round(vgs_th, 2),
-            "vgs_pl_v":     round(vgs_pl, 2),
-            "rg_int_ohm":   round(rg_int, 2),
-            "rg_on_ext_ohm": round(rg_on_ext, 1),
-            "rg_off_ext_ohm": round(rg_off_ext, 1),
-            "v_drv_v":      round(v_drv, 1),
-            "v_bus_v":      round(v_bus, 1),
-            "i_load_a":     round(i_load, 1),
-            "fsw_khz":      round(fsw / 1e3, 1),
+            "ciss_pf":          round(ciss * 1e12, 0),
+            "qg_nc":            round(qg * 1e9, 1),
+            "qgd_spec_nc":      round(qgd * 1e9, 1),
+            "qgd_eff_nc":       round(qgd_eff * 1e9, 2),
+            "crss_pf":          round(crss * 1e12, 1) if crss is not None else None,
+            "rds_on_mohm":      round(rds_on * 1e3, 2),
+            "vgs_th_v":         round(vgs_th, 2),
+            "vgs_pl_spec_v":    round(vgs_pl_datasheet, 2),
+            "vgs_pl_actual_v":  round(vgs_pl, 2),
+            "id_cont_a":        round(id_cont, 1) if id_cont is not None else None,
+            "gm_s":             round(gm_est, 1) if gm_est is not None else None,
+            "rg_int_ohm":       round(rg_int, 2),
+            "rg_on_ext_ohm":    round(rg_on_ext, 1),
+            "rg_off_ext_ohm":   round(rg_off_ext, 1),
+            "v_drv_v":          round(v_drv, 1),
+            "v_bus_v":          round(v_bus, 1),
+            "i_load_a":         round(i_load, 1),
+            "fsw_khz":          round(fsw / 1e3, 1),
+            "l_stray_nh":       round(l_stray_nh, 1),
+            "coss_pf":          round(coss * 1e12, 0),
+            "f_ring_mhz":       round(f_ring / 1e6, 0) if f_ring > 0 else None,
+            "v_overshoot_v":    round(v_overshoot_off, 1) if f_ring > 0 else None,
         }
 
         self.audit_log.append(
-            f"[Waveform] Generated switching waveform: "
-            f"turn-on={t_turn_on*1e9:.0f}ns, Miller={t_r3*1e9:.0f}ns, "
-            f"turn-off={t_turn_off*1e9:.0f}ns, dead-time={dead_time*1e9:.0f}ns."
+            f"[Waveform] Generated: turn-on = {t_turn_on*1e9:.0f} ns "
+            f"(t_R3_Miller = {t_r3*1e9:.0f} ns with Qgd_eff = {qgd_eff*1e9:.1f} nC, "
+            f"Vpl = {vgs_pl:.2f} V), "
+            f"turn-off = {t_turn_off*1e9:.0f} ns, dead-time = {dead_time*1e9:.0f} ns, "
+            f"ring = {f_ring/1e6:.0f} MHz, V_ov = {v_overshoot_off:.1f} V."
         )
 
         return {
-            "time_ns":       times,
-            "vgs":           vgs_arr,
-            "vds":           vds_arr,
-            "id":            id_arr,
-            "ig":            ig_arr,
-            "pd":            pd_arr,
-            "annotations":   annotations,
-            "params_used":   params_used,
-            "model_note":    (
-                "Analytical 4-region MOSFET switching model. Assumes linear Ciss/Cgd, "
-                "constant load current, and ideal gate driver current limiting. "
-                "Note: In reality, Ciss varies ~5× over the Vds range — actual "
-                "pre-threshold (Region 1) time may be ~2× longer than modeled, and "
-                "post-plateau (Region 4) time may be shorter. "
-                "Waveform shapes and timing are representative — for exact behavior, "
-                "validate with oscilloscope measurement."
+            "time_ns":     times,
+            "vgs":         vgs_arr,
+            "vds":         vds_arr,
+            "id":          id_arr,
+            "ig":          ig_arr,
+            "pd":          pd_arr,
+            "annotations": annotations,
+            "params_used": params_used,
+            "model_note": (
+                "Physics-accurate 4-region MOSFET switching model.\n"
+                "• Qgd_eff uses Vds-swing scaling: "
+                "Qgd_eff ≈ Qgd_spec × ((Vbus−Vds_on)/Vds_test), with Crss fallback if needed. "
+                "Higher Vbus generally increases Miller time.\n"
+                "• Vgs_plateau adjusted for actual operating current (Id/gm). "
+                "Higher load current → higher Vpl → longer Miller plateau.\n"
+                "• Post-switch Vds ringing: damped LC oscillation at "
+                "f = 1/(2π√(L_stray×Coss)), V_peak = I×√(L/C), Q ≈ 8.\n"
+                "• Region 2 Vds held at Vbus (complementary body-diode clamps node).\n"
+                "• Region 2 Id follows Vgs via gm: Id = gm × (Vgs − Vth).\n"
+                "Validate against oscilloscope — real Ciss is nonlinear (~5× "
+                "over Vds range), actual region durations may differ."
             ),
             "_meta": self._module_meta.get("waveform", {"hardcoded": [], "fallbacks": []}),
         }
 
+    # ──────────────────────────────────────────────────────────────────────────
     def _sample_waveform(
-        self, t, v_drv, v_bus, i_load, vgs_th, vgs_pl, vds_on,
+        self,
+        t, v_drv, v_bus, i_load, vgs_th, vgs_pl, vds_on,
         gfs, rg_on, rg_off, tau_on, tau_off,
         ig_miller_on, ig_miller_off,
         t_r1, t_r2, t_r3, t_r4,
         t_r4_off, t_r3_off, t_r2_off, t_r1_off,
         dead_time, t_turn_on, flat_on, t_turn_off,
+        l_stray, coss,
     ):
-        """Sample Vgs, Vds, Id, Ig at time t within one switching cycle.
+        """Sample Vgs, Vds, Id, Ig at absolute time t within one switching cycle.
 
-        Timeline:
-          [0, dead_time)                              → Dead time (FET off)
-          [dead_time, dead_time+t_turn_on)            → Turn-on transition
-          [dead_time+t_turn_on, ... +flat_on)         → Fully on (flat)
-          [... +flat_on, ... +t_turn_off)             → Turn-off transition
-          [... +t_turn_off, ...)                      → Dead time (FET off)
+        Timeline (absolute times):
+          [0,          dead_time)             → Dead time 1 (FET off)
+          [dead_time,  t_on_end)              → Turn-on transition (R1→R2→R3→R4)
+          [t_on_end,   t_flat_end)            → Fully on (Vds rings and settles)
+          [t_flat_end, t_off_end)             → Turn-off transition (R4'→R3'→R2'→R1')
+          [t_off_end,  ...)                   → Dead time 2 (Vds overshoot decays)
         """
-        t_on_start = dead_time
-        t_on_end = dead_time + t_turn_on
-        t_flat_end = t_on_end + flat_on
-        t_off_end = t_flat_end + t_turn_off
+        # ── Pre-compute ringing parameters ────────────────────────────
+        if l_stray > 0 and coss > 0:
+            _f_ring     = 1.0 / (2 * math.pi * math.sqrt(l_stray * coss))
+            _Q          = 8.0
+            _tau        = _Q / (math.pi * _f_ring)
+            _omega      = 2 * math.pi * _f_ring
+            _v_ov_off   = i_load * math.sqrt(l_stray / max(coss, 1e-15))
+            _v_ov_off   = min(_v_ov_off, v_bus * 1.5)
+            _v_ring_on  = _v_ov_off * 0.15
+        else:
+            _f_ring = 0.0;  _tau = 1e-9;  _omega = 0.0
+            _v_ov_off = 0.0;  _v_ring_on = 0.0
 
-        # ── Dead time 1 (before turn-on) ──
+        def _ring_sin(t_abs, t_start, amplitude):
+            """Damped sinusoidal ring (sine start → zero crossing, natural impulse shape).
+            Starts at 0, peaks near t = π/(2ω), then decays exponentially."""
+            dt = t_abs - t_start
+            if dt < 0 or _tau <= 0 or _omega <= 0:
+                return 0.0
+            return amplitude * math.exp(-dt / _tau) * math.sin(_omega * dt)
+
+        # ── Absolute timeline boundaries ───────────────────────────────
+        t_on_start   = dead_time
+        t_on_end     = dead_time + t_turn_on
+        t_flat_end   = t_on_end + flat_on
+        t_off_end    = t_flat_end + t_turn_off
+
+        # Ringing start times (absolute)
+        # Turn-on ring: starts when Miller plateau ends (end of Region 3)
+        t_ring_on    = t_on_start + t_r1 + t_r2 + t_r3
+        # Turn-off ring: starts when Id snaps to 0 (end of Region 2')
+        t_ring_off   = t_flat_end + t_r4_off + t_r3_off + t_r2_off
+
+        # ── Dead time 1 (FET fully off) ───────────────────────────────
         if t < t_on_start:
             return (0.0, v_bus, 0.0, 0.0)
 
-        # ── Turn-on transition ──
+        # ── Turn-on transition ─────────────────────────────────────────
         elif t < t_on_end:
             t_local = t - t_on_start
 
-            # Region 1: Pre-threshold
+            # ── Region 1: Pre-threshold ──────────────────────────────
+            # Gate charges 0 → Vth via RC(Ciss). Id = 0, Vds = Vbus.
+            # (Complementary body-diode holds switching node at Vbus.)
             if t_local < t_r1:
-                vgs = v_drv * (1 - math.exp(-t_local / tau_on)) if tau_on > 0 else 0
-                ig = (v_drv - vgs) / rg_on if rg_on > 0 else 0
+                vgs = v_drv * (1.0 - math.exp(-t_local / tau_on)) if tau_on > 0 else 0.0
+                ig  = (v_drv - vgs) / rg_on if rg_on > 0 else 0.0
                 return (vgs, v_bus, 0.0, ig)
 
-            # Region 2: Active (Vth → Vplateau, Id ramps up)
+            # ── Region 2: Active (Vth → Vplateau) ───────────────────
+            # Vgs continues charging on RC curve.
+            # Id follows transconductance: Id = gm × (Vgs − Vth)
+            # Vds stays at Vbus — complementary body-diode still conducting.
             elif t_local < t_r1 + t_r2:
-                t_abs = t_local  # from start of RC charging
-                vgs = v_drv * (1 - math.exp(-t_abs / tau_on)) if tau_on > 0 else vgs_pl
+                vgs = v_drv * (1.0 - math.exp(-t_local / tau_on)) if tau_on > 0 else vgs_pl
                 vgs = min(vgs, vgs_pl)
-                frac = (t_local - t_r1) / t_r2 if t_r2 > 0 else 1.0
-                frac = max(0, min(1, frac))
-                i_d = i_load * frac
-                ig = (v_drv - vgs) / rg_on if rg_on > 0 else 0
-                # Vds starts dropping slightly as current flows through Rds
-                vds = v_bus - (v_bus - vds_on) * frac * 0.05  # slight Vds drop
-                return (vgs, vds, i_d, ig)
+                i_d = gfs * max(0.0, vgs - vgs_th)
+                i_d = min(i_d, i_load)   # clamp to load current
+                ig  = (v_drv - vgs) / rg_on if rg_on > 0 else 0.0
+                # Vds: clamped at Vbus (body-diode of complementary FET)
+                return (vgs, v_bus, i_d, ig)
 
-            # Region 3: Miller plateau (Vgs flat, Vds drops)
+            # ── Region 3: Miller plateau ─────────────────────────────
+            # Vgs stuck at Vplateau (gate current consumed charging Cgd).
+            # Vds falls linearly from Vbus to Vds_on.
             elif t_local < t_r1 + t_r2 + t_r3:
                 frac = (t_local - t_r1 - t_r2) / t_r3 if t_r3 > 0 else 1.0
-                frac = max(0, min(1, frac))
-                vgs = vgs_pl
-                vds = v_bus - (v_bus - vds_on) * frac
+                frac = max(0.0, min(1.0, frac))
+                vgs  = vgs_pl
+                vds  = v_bus - (v_bus - vds_on) * frac
                 return (vgs, vds, i_load, ig_miller_on)
 
-            # Region 4: Post-plateau (Vplateau → Vdrv)
+            # ── Region 4: Post-plateau ───────────────────────────────
+            # Vgs charges Vplateau → Vdrv. Vds settles at Vds_on + small ring.
+            # The ring is from body-diode reverse recovery of complementary FET.
             else:
                 t_local_r4 = t_local - t_r1 - t_r2 - t_r3
-                # RC charge from Vplateau towards Vdrv
                 vgs = v_drv - (v_drv - vgs_pl) * math.exp(-t_local_r4 / tau_on) if tau_on > 0 else v_drv
-                ig = (v_drv - vgs) / rg_on if rg_on > 0 else 0
-                return (vgs, vds_on, i_load, ig)
+                ig  = (v_drv - vgs) / rg_on if rg_on > 0 else 0.0
+                vds = vds_on + _ring_sin(t, t_ring_on, _v_ring_on)
+                return (vgs, max(0.0, vds), i_load, ig)
 
-        # ── Fully on (flat) ──
+        # ── Fully on (flat conduction) ─────────────────────────────────
+        # Vds ring from turn-on continues to decay.
         elif t < t_flat_end:
-            return (v_drv, vds_on, i_load, 0.0)
+            vds = vds_on + _ring_sin(t, t_ring_on, _v_ring_on)
+            return (v_drv, max(0.0, vds), i_load, 0.0)
 
-        # ── Turn-off transition ──
+        # ── Turn-off transition ────────────────────────────────────────
         elif t < t_off_end:
             t_local = t - t_flat_end
 
-            # Region 4': Vdrv → Vplateau (discharge)
+            # ── Region 4': Discharge Vdrv → Vplateau ─────────────────
+            # Vgs falls exponentially. Id and Vds unchanged.
             if t_local < t_r4_off:
                 vgs = v_drv * math.exp(-t_local / tau_off) if tau_off > 0 else vgs_pl
                 vgs = max(vgs, vgs_pl)
-                ig = -vgs / rg_off if rg_off > 0 else 0
+                ig  = -vgs / rg_off if rg_off > 0 else 0.0
                 return (vgs, vds_on, i_load, ig)
 
-            # Region 3': Miller plateau (Vgs flat, Vds rises)
+            # ── Region 3': Miller plateau (reverse) ──────────────────
+            # Vgs held at Vplateau. Vds rises linearly from Vds_on to Vbus.
             elif t_local < t_r4_off + t_r3_off:
                 frac = (t_local - t_r4_off) / t_r3_off if t_r3_off > 0 else 1.0
-                frac = max(0, min(1, frac))
-                vgs = vgs_pl
-                vds = vds_on + (v_bus - vds_on) * frac
+                frac = max(0.0, min(1.0, frac))
+                vgs  = vgs_pl
+                vds  = vds_on + (v_bus - vds_on) * frac
                 return (vgs, vds, i_load, -ig_miller_off)
 
-            # Region 2': Active (Vplateau → Vth, Id falls)
+            # ── Region 2': Active (Vplateau → Vth), Id falls to 0 ────
+            # Vds stays at Vbus — load inductor forces current through
+            # complementary body-diode, clamping the switching node.
             elif t_local < t_r4_off + t_r3_off + t_r2_off:
                 t_from_r2 = t_local - t_r4_off - t_r3_off
                 frac = t_from_r2 / t_r2_off if t_r2_off > 0 else 1.0
-                frac = max(0, min(1, frac))
-                vgs = vgs_pl - (vgs_pl - vgs_th) * frac
-                i_d = i_load * (1 - frac)
-                ig = -vgs / rg_off if rg_off > 0 else 0
+                frac = max(0.0, min(1.0, frac))
+                vgs  = vgs_pl - (vgs_pl - vgs_th) * frac
+                i_d  = i_load * (1.0 - frac)
+                ig   = -vgs / rg_off if rg_off > 0 else 0.0
                 return (vgs, v_bus, i_d, ig)
 
-            # Region 1': Sub-threshold (Vth → 0)
+            # ── Region 1': Sub-threshold Vth → 0, Vds spike + ring ───
+            # Id = 0. Stray inductance (L × dI/dt) drives a voltage spike
+            # ABOVE Vbus that decays as a damped sinusoid: the turn-off
+            # "heartbeat" visible on every oscilloscope measurement.
             else:
                 t_from_r1 = t_local - t_r4_off - t_r3_off - t_r2_off
-                vgs = vgs_th * math.exp(-t_from_r1 / tau_off) if tau_off > 0 else 0
-                ig = -vgs / rg_off if rg_off > 0 else 0
-                return (vgs, v_bus, 0.0, ig)
+                vgs = vgs_th * math.exp(-t_from_r1 / tau_off) if tau_off > 0 else 0.0
+                ig  = -vgs / rg_off if rg_off > 0 else 0.0
+                vds = v_bus + _ring_sin(t, t_ring_off, _v_ov_off)
+                return (vgs, max(0.0, vds), 0.0, ig)
 
-        # ── Dead time 2 (after turn-off) ──
+        # ── Dead time 2 (FET off, Vds spike decaying) ─────────────────
         else:
-            return (0.0, v_bus, 0.0, 0.0)
+            vds = v_bus + _ring_sin(t, t_ring_off, _v_ov_off)
+            return (0.0, max(0.0, vds), 0.0, 0.0)

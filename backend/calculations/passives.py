@@ -10,7 +10,13 @@ class PassivesMixin:
     def calc_input_capacitors(self) -> dict:
         self._current_module = "input_capacitors"
         i_dc    = 0 if self.v_bus == 0 else self.power / self.v_bus
-        delta_v = float(self.ovr.get("delta_v_ripple", 2.0))
+        try:
+            delta_v = float(self.ovr.get("delta_v_ripple", 2.0))
+        except (TypeError, ValueError):
+            delta_v = 2.0
+        if delta_v <= 0:
+            self.audit_log.append(f"[DC Bus] WARNING: Invalid ripple target ΔV={delta_v}V. Using 2.0V default.")
+            delta_v = 2.0
         if "delta_v_ripple" not in self.ovr:
             self._log_hc("input_capacitors", "Ripple voltage target", f"{delta_v} V", "User-configurable override (default 2.0V)")
         fsw     = self.fsw
@@ -35,9 +41,15 @@ class PassivesMixin:
             self.audit_log.append(f"[Motor] Phase Ripple Calculation: Used estimated SPWM modulation index M={M}.")
             self._log_hc("input_capacitors", "SPWM modulation index", f"M = {M}", "Standard 3-phase SPWM approximation", "input.spwm_mod_index")
             sq3 = math.sqrt(3)
-            i_ripple_rms = (M * self.i_max / 2) * math.sqrt(
-                sq3 / math.pi - 3 * sq3 / (4 * math.pi) * M
-            )
+            spwm_term = sq3 / math.pi - 3 * sq3 / (4 * math.pi) * M
+            if spwm_term <= 0:
+                # Should not happen with bounded M, but keep robust against malformed inputs.
+                self.audit_log.append(
+                    f"[DC Bus] WARNING: Invalid SPWM term ({spwm_term:.4f}) at M={M}. "
+                    "Clamping to 0 for ripple estimate."
+                )
+                spwm_term = 0.0
+            i_ripple_rms = (M * self.i_max / 2) * math.sqrt(spwm_term)
             ripple_method = f"3-phase SPWM estimate M={M} — enter motor Lph for accurate calc"
 
         # Required bulk capacitance for 3-phase inverter DC bus
@@ -234,8 +246,10 @@ class PassivesMixin:
         # Snubber capacitor: Cs ≈ N× Coss, snapped to nearest E12 cap decade
         cs_pf_raw = coss_pf * coss_mult if coss_pf > 0 else 1000.0
         E12_pF = [100,120,150,180,220,270,330,390,470,560,680,820,
-                  1000,1200,1500,1800,2200,2700,3300,4700,
-                  5600,6800,8200,10000,12000,15000,18000,22000,27000,33000,47000]
+              1000,1200,1500,1800,2200,2700,3300,4700,
+              5600,6800,8200,10000,12000,15000,18000,22000,27000,33000,47000,
+              56000,68000,82000,100000,120000,150000,180000,220000,270000,330000,470000,
+              560000,680000,820000,1000000]
         cs_pf_std = float(next((v for v in E12_pF if v >= cs_pf_raw), E12_pF[-1]))
         cs_pf_std = max(100.0, cs_pf_std)
 

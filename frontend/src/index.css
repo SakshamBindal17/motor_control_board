@@ -531,6 +531,18 @@ select.inp {
 .calc-row .label {
   color: var(--txt-2);
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.calc-row .editable-pen {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cyan);
+  opacity: 0.9;
+  flex-shrink: 0;
 }
 
 .calc-row .value {
@@ -1648,29 +1660,56 @@ select.inp {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  gap: 3px;
+  min-height: 18px;
   border-radius: 3px;
-  background: transparent;
-  border: 1px solid transparent;
+  background: rgba(0, 200, 255, 0.1);
+  border: 1px solid rgba(0, 200, 255, 0.3);
   color: var(--cyan);
   cursor: pointer;
-  padding: 0;
+  padding: 1px 5px;
   flex-shrink: 0;
-  opacity: 0.4;
+  opacity: 1;
   transition: all .15s;
 }
 
 .calc-row-reversible:hover .reverse-trigger {
-  opacity: 1;
-  background: rgba(0, 200, 255, 0.1);
-  border-color: rgba(0, 200, 255, 0.25);
+  background: rgba(0, 200, 255, 0.15);
+  border-color: rgba(0, 200, 255, 0.45);
 }
 
 .reverse-trigger:hover {
-  opacity: 1;
   background: rgba(0, 200, 255, 0.2);
   border-color: var(--cyan);
+}
+
+.reverse-trigger-text {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+
+.calc-edit-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--txt-2);
+  background: rgba(0, 200, 255, 0.06);
+  border: 1px solid rgba(0, 200, 255, 0.2);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.calc-edit-hint strong {
+  color: var(--cyan);
+}
+
+.calc-edit-hint-icon {
+  color: var(--cyan);
+  margin-top: 1px;
+  flex-shrink: 0;
 }
 
 .reverse-input-row {
@@ -1804,6 +1843,24 @@ select.inp {
   color: var(--txt-3);
   font-size: 9px;
   font-style: italic;
+}
+
+.boot-whatif-uvlo-badge.ok {
+  background: rgba(0, 230, 118, 0.14);
+  border: 1px solid rgba(0, 230, 118, 0.35);
+  color: var(--green);
+}
+
+.boot-whatif-uvlo-badge.warn {
+  background: rgba(255, 193, 7, 0.14);
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  color: var(--amber);
+}
+
+.boot-whatif-uvlo-badge.bad {
+  background: rgba(255, 68, 68, 0.14);
+  border: 1px solid rgba(255, 68, 68, 0.35);
+  color: var(--red);
 }
 
 /* Light theme adjustments */

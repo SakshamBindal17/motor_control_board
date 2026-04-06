@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo } from 'react'
-import { Zap, RefreshCw, ChevronDown, AlertTriangle, Maximize2, X, Eye, ArrowUpRight, ArrowDownRight, Scale, Pencil, CornerDownLeft } from 'lucide-react'
+import { Zap, RefreshCw, ChevronDown, AlertTriangle, Maximize2, X, Eye, ArrowUpRight, ArrowDownRight, Scale, Pencil, CornerDownLeft, ArrowRight, Check, Shield, Clock, Activity } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
 import { CALC_CRITICAL } from './BlockPanel.jsx'
@@ -43,6 +43,81 @@ const REVERSIBLE_KEYS = new Set([
   'dt_pct_of_period', 'dt_actual_ns',
   'voltage_overshoot_v', 'p_total_all_snubbers_w', 'p_total_6_snubbers_w',
 ])
+
+const REVERSE_IMPACT_MAP = {
+  gate_rise_time_ns: [
+    'Gate Drive: Rg ON, gate rise time, dV/dt',
+    'MOSFET Losses: switching loss, total loss, efficiency',
+    'Thermal: Tj estimate and thermal margin',
+  ],
+  gate_fall_time_ns: [
+    'Gate Drive: Rg OFF, gate fall time',
+    'MOSFET Losses: switching/overlap behavior and total loss',
+    'Thermal: Tj estimate and thermal margin',
+  ],
+  dv_dt_v_per_us: [
+    'Gate Drive: Rg ON and rise-time-derived behavior',
+    'Switching profile: EMI tendency and switching losses',
+    'Thermal: total loss and junction temperature',
+  ],
+  c_boot_recommended_nf: [
+    'Bootstrap: C_boot, min on-time, hold time, droop',
+    'Driver Compatibility: UVLO margin against gate minimum voltage',
+  ],
+  min_hs_on_time_ns: [
+    'Bootstrap: required C_boot and applied droop target',
+    'Bootstrap refresh/hold behavior across PWM operation',
+    'Driver Compatibility: UVLO safety margin',
+  ],
+  dt_pct_of_period: [
+    'Dead Time: dt_actual_ns, register count, duty loss',
+    'MOSFET Losses: dead-time body-diode loss component',
+    'Cross Validation: dead-time compatibility checks',
+  ],
+  dt_actual_ns: [
+    'Dead Time: dt_pct_of_period and register quantization',
+    'MOSFET Losses: dead-time body-diode loss component',
+    'Cross Validation: MCU dead-time feasibility checks',
+  ],
+  voltage_overshoot_v: [
+    'Snubber: Cs and Rs recommendations',
+    'Snubber: switch-node peak voltage and dissipation',
+    'Cross Validation: Vds headroom with ringing',
+  ],
+  p_total_all_snubbers_w: [
+    'Snubber: Cs sizing and snubber thermal dissipation',
+    'Snubber: overshoot/peak-voltage behavior',
+  ],
+  p_total_6_snubbers_w: [
+    'Snubber: Cs sizing and snubber thermal dissipation',
+    'Snubber: overshoot/peak-voltage behavior',
+  ],
+}
+
+// ── Bootstrap what-if: keys that get the enhanced downstream card ─────────
+const BOOTSTRAP_WHATIF_KEYS = new Set(['min_hs_on_time_ns', 'c_boot_recommended_nf'])
+
+function uvloDataBadgeInfo(status) {
+  if (status === 'verified') {
+    return {
+      label: 'UVLO DATA: VERIFIED',
+      cls: 'ok',
+      note: 'Driver bootstrap UVLO extraction is present and plausible.',
+    }
+  }
+  if (status === 'suspicious') {
+    return {
+      label: 'UVLO DATA: SUSPICIOUS',
+      cls: 'bad',
+      note: 'Extracted UVLO value looks implausible. Re-check datasheet mapping/units.',
+    }
+  }
+  return {
+    label: 'UVLO DATA: UNVERIFIED',
+    cls: 'warn',
+    note: 'Bootstrap UVLO was not extracted. Margin decision is not trusted yet.',
+  }
+}
 
 // Quick verdict score from two result sets
 function quickVerdictScore(resA, resB) {
@@ -91,6 +166,19 @@ export default function CalculationsPanel() {
 
   function toggle(k) { setOpen(p => ({ ...p, [k]: !p[k] })) }
   function toggleTransMod(k) { setExpandedTransMods(p => ({ ...p, [k]: !p[k] })) }
+
+  function startReverseEdit(key) {
+    const impacts = REVERSE_IMPACT_MAP[key] || [
+      'This target is linked to multiple calculation outputs.',
+      'Running solve/apply can update section values and warnings.',
+    ]
+    const impactLines = impacts.map((line, i) => `${i + 1}. ${line}`).join('\n')
+    const ok = window.confirm(
+      `Editing this target can change multiple results.\n\nAffected outputs:\n${impactLines}\n\nDo you want to continue?`
+    )
+    if (!ok) return
+    setReverseEditing(p => ({ ...p, [key]: '' }))
+  }
 
   // Determine which blocks are missing
   const missing = ['driver', 'mcu', 'motor'].filter(b => {
@@ -229,6 +317,33 @@ export default function CalculationsPanel() {
     } finally {
       setReverseLoading(p => ({ ...p, [key]: false }))
     }
+  }
+
+  // Apply bootstrap what-if result: set override and re-run calculations
+  async function applyBootstrapWhatIf(revResult) {
+    if (!revResult?.downstream) return
+    const targetKey = revResult.target_key
+    const proceed = window.confirm(
+      'Applying this bootstrap solve will recalculate dependent outputs:\n\n'
+      + '1. Bootstrap: C_boot, min on-time, hold time, droop\n'
+      + '2. Driver compatibility: UVLO margin and safety state\n'
+      + '3. Any section using updated passives overrides\n\n'
+      + 'Do you want to apply and re-run calculations?'
+    )
+    if (!proceed) return
+
+    // Use backend-provided apply override when available so forward calc reproduces the solved C_boot.
+    const newDroop = revResult.apply_bootstrap_droop_v ?? revResult.downstream.droop_v
+    if (newDroop && newDroop > 0) {
+      dispatch({ type: 'SET_PASSIVES_OVERRIDE', payload: { key: 'bootstrap_droop_v', value: newDroop } })
+    }
+    // Clear the reverse editing state
+    setReverseEditing(p => { const n = { ...p }; delete n[targetKey]; return n })
+    setReverseResults(p => { const n = { ...p }; delete n[targetKey]; return n })
+    // Toast feedback
+    toast.success(`Bootstrap override applied (droop=${newDroop}V). Re-running calculations…`, { duration: 3000 })
+    // Trigger re-run
+    setTimeout(() => calc(), 150)
   }
 
   const C = project.calculations
@@ -484,6 +599,15 @@ export default function CalculationsPanel() {
           )}
         </div>
 
+        {C && (
+          <div className="calc-edit-hint">
+            <span className="calc-edit-hint-icon"><Pencil size={10} /></span>
+            <span>
+              Editable targets are marked with a pencil. Click <strong>Edit target</strong> on a row to set your desired value and solve required design parameters.
+            </span>
+          </div>
+        )}
+
         {/* ── MOSFET Comparison Button (when comparing) ──────────── */}
         {C && compResults && quickScore && (
           <button className="btn comp-results-btn" onClick={() => setShowComparison(true)}>
@@ -659,6 +783,11 @@ export default function CalculationsPanel() {
                         <div className={`calc-row ${isReversible ? 'calc-row-reversible' : ''}`} data-tip={tip}>
                           <span className="label">
                             {rowIndicator && <span className={`row-indicator row-indicator-${rowIndicator}`} />}
+                            {isReversible && (
+                              <span className="editable-pen" title="Editable parameter - changing this target can affect multiple calculations">
+                                <Pencil size={9} />
+                              </span>
+                            )}
                             {r.label}
                           </span>
                           <div className="calc-row-values">
@@ -700,10 +829,11 @@ export default function CalculationsPanel() {
                                 {isReversible && (
                                   <button
                                     className="reverse-trigger"
-                                    onClick={() => setReverseEditing(p => ({ ...p, [r.key]: '' }))}
+                                    onClick={() => startReverseEdit(r.key)}
                                     title="Set target value (reverse calculate)"
                                   >
                                     <Pencil size={8} />
+                                    <span className="reverse-trigger-text">Edit target</span>
                                   </button>
                                 )}
                               </>
@@ -717,8 +847,133 @@ export default function CalculationsPanel() {
                             )}
                           </div>
                         </div>
-                        {/* Reverse result card */}
-                        {revResult && (
+                        {/* Reverse result card — enhanced for bootstrap what-if */}
+                        {revResult && BOOTSTRAP_WHATIF_KEYS.has(r.key) && revResult.downstream ? (
+                          <div className={`boot-whatif ${revResult.feasible ? 'feasible' : 'infeasible'}`}>
+                            {/* ── Header ── */}
+                            <div className="boot-whatif-header">
+                              <div className="boot-whatif-title-row">
+                                <span className={`boot-whatif-badge ${revResult.feasible ? 'feasible' : 'infeasible'}`}>
+                                  {revResult.feasible ? <Check size={10} /> : <AlertTriangle size={10} />}
+                                </span>
+                                <span className="boot-whatif-title">Bootstrap What-If Analysis</span>
+                              </div>
+                              <span className="boot-whatif-target">
+                                Target: <strong>{revResult.target_value}{revResult.actual_output_unit ? ` ${revResult.actual_output_unit}` : ''}</strong>
+                                {revResult.ideal_value !== revResult.solved_value && (
+                                  <span className="boot-whatif-snap"> → E12: {revResult.solved_value} {revResult.solved_unit}</span>
+                                )}
+                              </span>
+                            </div>
+
+                            {/* ── Before / After comparison grid ── */}
+                            {revResult.current_vals && (() => {
+                              const ds = revResult.downstream
+                              const cv = revResult.current_vals
+                              const rows = [
+                                { label: 'C_boot', before: cv.c_boot_nf, after: ds.c_boot_nf, unit: 'nF', icon: <Activity size={10} /> },
+                                { label: 'Voltage Droop', before: cv.droop_v, after: ds.droop_v, unit: 'V', icon: <ArrowDownRight size={10} />, lowerBetter: true },
+                                { label: 'Min On-Time', before: cv.min_on_time_ns, after: ds.min_on_time_ns, unit: 'ns', icon: <Clock size={10} />, lowerBetter: true },
+                                { label: 'Hold Time', before: cv.hold_time_ms, after: ds.hold_time_ms, unit: 'ms', icon: <Clock size={10} />, higherBetter: true },
+                              ]
+                              return (
+                                <div className="boot-whatif-grid">
+                                  <div className="boot-whatif-grid-header">
+                                    <span>Parameter</span>
+                                    <span>Current</span>
+                                    <span></span>
+                                    <span>What-If</span>
+                                  </div>
+                                  {rows.map(row => {
+                                    const changed = row.before !== row.after
+                                    const better = row.lowerBetter ? row.after < row.before : row.higherBetter ? row.after > row.before : null
+                                    return (
+                                      <div key={row.label} className={`boot-whatif-grid-row ${changed ? 'changed' : ''}`}>
+                                        <span className="boot-whatif-grid-label">
+                                          {row.icon}
+                                          {row.label}
+                                        </span>
+                                        <span className="boot-whatif-grid-val before">{row.before ?? '—'} {row.unit}</span>
+                                        <span className="boot-whatif-grid-arrow">{changed ? <ArrowRight size={10} /> : '='}</span>
+                                        <span className={`boot-whatif-grid-val after ${changed ? (better === true ? 'better' : better === false ? 'worse' : 'neutral') : ''}`}>
+                                          {row.after ?? '—'} {row.unit}
+                                        </span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )
+                            })()}
+
+                            {/* ── UVLO Data Quality + Safety Check ── */}
+                            {(() => {
+                              const ds = revResult.downstream
+                              const dataStatus = ds.uvlo_data_status || 'missing'
+                              const dataBadge = uvloDataBadgeInfo(dataStatus)
+                              return (
+                                <div className={`boot-whatif-uvlo boot-whatif-uvlo--${ds.uvlo_status}`}>
+                                  <Shield size={12} className="boot-whatif-uvlo-icon" />
+                                  <div className="boot-whatif-uvlo-content">
+                                    <div className="boot-whatif-uvlo-title">
+                                      <span className={`boot-whatif-uvlo-badge ${dataBadge.cls}`}>{dataBadge.label}</span>
+                                      {ds.vbs_uvlo_v != null && ds.uvlo_margin_v != null && (
+                                        <>
+                                          <span style={{ marginLeft: 6 }}>UVLO Margin: <strong>{ds.uvlo_margin_v}V</strong></span>
+                                          <span className={`boot-whatif-uvlo-badge ${ds.uvlo_status}`}>
+                                            {ds.uvlo_status === 'ok' ? 'SAFE' : ds.uvlo_status === 'warning' ? 'TIGHT' : 'FAIL'}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+                                    <div className="boot-whatif-uvlo-detail">
+                                      {dataBadge.note}
+                                      {ds.vbs_uvlo_v != null
+                                        ? ` V_gate after droop: ${ds.v_gate_min_v}V vs UVLO: ${ds.vbs_uvlo_v}V.`
+                                        : ''}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })()}
+
+                            {/* ── RC Detail ── */}
+                            <div className="boot-whatif-rc">
+                              τ = R_boot × C_boot = {revResult.downstream.r_boot_ohm}Ω × {revResult.downstream.c_boot_nf}nF = {revResult.downstream.tau_ns}ns
+                              <span className="boot-whatif-rc-note">({revResult.downstream.min_on_time_ns}ns = 3τ → 95% charge)</span>
+                            </div>
+
+                            {/* ── Constraint warning ── */}
+                            {revResult.constraint && (
+                              <div className="boot-whatif-constraint">
+                                <AlertTriangle size={10} />
+                                {revResult.constraint}
+                              </div>
+                            )}
+
+                            {/* ── Apply button ── */}
+                            <div className="boot-whatif-actions">
+                              <button
+                                className="btn boot-whatif-apply"
+                                onClick={() => applyBootstrapWhatIf(revResult)}
+                                disabled={!revResult.feasible}
+                                title={revResult.feasible ? 'Apply this configuration and re-run all calculations' : 'Cannot apply — design constraint violated'}
+                              >
+                                <Check size={11} />
+                                Apply & Re-Run
+                              </button>
+                              <button
+                                className="btn btn-ghost boot-whatif-dismiss"
+                                onClick={() => {
+                                  setReverseEditing(p => { const n = { ...p }; delete n[r.key]; return n })
+                                  setReverseResults(p => { const n = { ...p }; delete n[r.key]; return n })
+                                }}
+                              >
+                                <X size={10} />
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        ) : revResult && (
                           <div className={`reverse-result ${revResult.feasible ? 'feasible' : 'infeasible'}`}>
                             <div className="reverse-result-header">
                               <span className={`reverse-result-badge ${revResult.feasible ? 'feasible' : 'infeasible'}`}>

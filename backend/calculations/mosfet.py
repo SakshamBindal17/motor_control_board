@@ -449,14 +449,19 @@ class MosfetMixin:
             self.audit_log.append("[Driver] VCC range not extracted — cannot validate supply compatibility.")
 
         # ── Bootstrap UVLO check ──
-        vbs_uvlo = self._get(self.driver, "DRIVER", "vbs_uvlo", None)
+        uvlo_info = self._bootstrap_uvlo_info()
+        vbs_uvlo = uvlo_info["value_v"]
         # Bootstrap voltage = Vdrv - diode_Vf
         boot_vf = self._dc("gate.bootstrap_vf")
         v_boot = self.v_drv - boot_vf
         self._log_hc("driver_compatibility", "Bootstrap diode Vf", f"{boot_vf} V", "Assumed Schottky diode forward drop", "gate.bootstrap_vf")
         results["v_bootstrap_v"] = round(v_boot, 2)
+        results["vbs_uvlo_data_status"] = uvlo_info["status"]
+        results["vbs_uvlo_data_trusted"] = uvlo_info["trusted"]
+        results["vbs_uvlo_source_key"] = uvlo_info["source_key"]
+        results["vbs_uvlo_data_note"] = uvlo_info["note"]
 
-        if vbs_uvlo is not None:
+        if vbs_uvlo is not None and uvlo_info["trusted"]:
             results["vbs_uvlo_v"] = round(vbs_uvlo, 2)
             boot_margin = v_boot - vbs_uvlo
             results["bootstrap_margin_v"] = round(boot_margin, 2)
@@ -475,8 +480,22 @@ class MosfetMixin:
                 )
             else:
                 self.audit_log.append(f"[Driver] Bootstrap: Vboot={v_boot:.1f}V vs UVLO={vbs_uvlo:.1f}V — OK ({boot_margin:.1f}V margin).")
+        elif vbs_uvlo is not None:
+            results["vbs_uvlo_v"] = round(vbs_uvlo, 2)
+            results["bootstrap_ok"] = None
+            warnings.append(
+                f"WARNING: Bootstrap UVLO extracted as {vbs_uvlo:.2f}V is marked suspicious. "
+                "Bootstrap margin check is not trusted until datasheet extraction is confirmed."
+            )
+            self.audit_log.append(
+                f"[Driver] WARNING: Bootstrap UVLO value {vbs_uvlo:.2f}V failed data-quality checks. "
+                "Skipping trusted UVLO margin decision."
+            )
         else:
             results["bootstrap_ok"] = None
+            warnings.append(
+                "WARNING: Bootstrap UVLO (vbs_uvlo) not extracted. Bootstrap UVLO margin cannot be validated."
+            )
             self.audit_log.append("[Driver] VBS UVLO not extracted — cannot validate bootstrap margin.")
 
         # ── Logic level compatibility (MCU → Driver) ──
