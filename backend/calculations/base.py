@@ -48,6 +48,12 @@ DESIGN_CONSTANTS = {
     # Dead Time
     "dt.abs_margin":           (20,   "ns",   "Dead Time",   "Absolute margin",              "Fixed safety margin added to minimum DT"),
     "dt.safety_mult":          (1.5,  "x",    "Dead Time",   "Safety multiplier",            "Recommended margin over minimum DT"),
+    # Waveform
+    "waveform.common_source_inductance_nh": (1.5,   "nH",   "Waveform",    "Common-source inductance",      "Source loop inductance feeding back into effective Vgs"),
+    "waveform.qrr_miller_coupling":         (0.30,  "x",    "Waveform",    "Qrr-to-Miller coupling",        "Fraction of diode recovery charge reflected into turn-on Miller charge"),
+    "waveform.qgd_temp_coeff":              (0.0015,"1/C",  "Waveform",    "Qgd temperature coefficient",   "Per-degree increase of effective Qgd above 25C"),
+    "waveform.qrr_temp_coeff":              (0.005, "1/C",  "Waveform",    "Qrr temperature coefficient",   "Per-degree increase of effective Qrr above 25C"),
+    "waveform.driver_temp_derate_per_c":    (0.001, "1/C",  "Waveform",    "Driver current temp derate",    "Per-degree reduction of effective gate-driver source/sink current above 25C"),
     # Snubber
     "snub.coss_mult":          (3,    "x",    "Snubber",     "Coss multiplier",              "Snubber cap = N × Coss for overdamped response"),
     "snub.stray_l_default":    (10,   "nH",   "Snubber",     "Default stray inductance",     "Assumed PCB power loop inductance"),
@@ -192,6 +198,11 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         "input.esr_per_cap":     (0.1,  1000),
         "dt.abs_margin":         (0,    500),
         "dt.safety_mult":        (1.0,  5.0),
+        "waveform.common_source_inductance_nh": (0.0, 20.0),
+        "waveform.qrr_miller_coupling":         (0.0, 1.5),
+        "waveform.qgd_temp_coeff":              (0.0, 0.01),
+        "waveform.qrr_temp_coeff":              (0.0, 0.02),
+        "waveform.driver_temp_derate_per_c":    (0.0, 0.01),
         "snub.coss_mult":        (1,    20),
         "snub.stray_l_default":  (1,    500),
         "emi.cm_choke_uh":       (1,    10000),
@@ -999,8 +1010,10 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             return {"target_key": "p_total_6_snubbers_w", "target_value": target_w,
                     "feasible": False, "constraint": "Target power must be > 0"}
 
-        # Forward: P_total = 6 × 0.5 × Cs × V² × fsw → Cs = 2P / (6 × V² × fsw)
-        cs_ideal_f  = (2 * target_w) / (6 * self.v_peak ** 2 * self.fsw)
+        n_snubbers = max(1, int(self.num_fets))
+
+        # Forward: P_total = N × 0.5 × Cs × V² × fsw → Cs = 2P / (N × V² × fsw)
+        cs_ideal_f  = (2 * target_w) / (n_snubbers * self.v_peak ** 2 * self.fsw)
         cs_ideal_pf = cs_ideal_f * 1e12
 
         E12_pF = [100,120,150,180,220,270,330,390,470,560,680,820,
@@ -1008,11 +1021,30 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
                   5600,6800,8200,10000,12000,15000,18000,22000,27000,33000,47000,
                   56000,68000,82000,100000,120000,150000,180000,220000,270000,330000,470000,
                   560000,680000,820000,1000000]
-        cs_std = float(next((v for v in E12_pF if v >= cs_ideal_pf), E12_pF[-1]))
-        cs_std = max(100.0, cs_std)
+        cs_min_pf = float(E12_pF[0])
+        cs_max_pf = float(E12_pF[-1])
+        cs_std = float(next((v for v in E12_pF if v >= cs_ideal_pf), cs_max_pf))
+        cs_std = max(cs_min_pf, cs_std)
+
+        feasible_low = cs_ideal_pf >= cs_min_pf
+        feasible_high = cs_ideal_pf <= cs_max_pf
 
         # Forward verify
-        p_actual = 6 * 0.5 * (cs_std * 1e-12) * (self.v_peak ** 2) * self.fsw
+        p_actual = n_snubbers * 0.5 * (cs_std * 1e-12) * (self.v_peak ** 2) * self.fsw
+
+        constraint = None
+        if not feasible_low:
+            p_min = n_snubbers * 0.5 * (cs_min_pf * 1e-12) * (self.v_peak ** 2) * self.fsw
+            constraint = (
+                f"Target is below minimum achievable total snubber power "
+                f"{round(p_min, 3)}W with minimum practical Cs={int(cs_min_pf)}pF and N={n_snubbers}."
+            )
+        elif not feasible_high:
+            p_max = n_snubbers * 0.5 * (cs_max_pf * 1e-12) * (self.v_peak ** 2) * self.fsw
+            constraint = (
+                f"Target exceeds maximum achievable total snubber power "
+                f"{round(p_max, 3)}W with maximum supported Cs={int(cs_max_pf)}pF and N={n_snubbers}."
+            )
 
         return {
             "target_key": "p_total_6_snubbers_w",
@@ -1023,9 +1055,12 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             "ideal_value": round(cs_ideal_pf, 1),
             "actual_output": round(p_actual, 3),
             "actual_output_unit": "W",
-            "feasible": True,
-            "constraint": None,
-            "note": f"Cs={cs_std}pF \u2192 P_total={round(p_actual, 3)}W @ Vpeak={self.v_peak}V, fsw={self.fsw/1e3:.0f}kHz",
+            "feasible": feasible_low and feasible_high,
+            "constraint": constraint,
+            "note": (
+                f"Cs={cs_std}pF \u2192 P_total={round(p_actual, 3)}W @ Vpeak={self.v_peak}V, "
+                f"fsw={self.fsw/1e3:.0f}kHz, N={n_snubbers}"
+            ),
         }
 
     # ═══════════════════════════════════════════════════════════════════

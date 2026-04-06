@@ -157,6 +157,72 @@ class TestCalculationEngine:
         sn = engine.calc_snubber()
         assert sn["rs_recommended_ohm"] >= 1
         assert sn["cs_recommended_pf"] >= 100
+        assert sn["num_fets"] == engine.num_fets
+
+    def test_waveform_reported_overshoot_matches_sampled_peak(self, engine):
+        wf = engine.calc_waveform()
+        reported = wf["annotations"].get("v_overshoot_v")
+        if reported is None:
+            pytest.skip("Ringing disabled for this waveform configuration")
+        sampled = max(0.0, max(wf["vds"]) - engine.v_peak)
+        assert reported == pytest.approx(sampled, abs=0.1)
+        assert wf["params_used"]["v_overshoot_v"] == pytest.approx(sampled, abs=0.1)
+
+    def test_waveform_miller_times_increase_with_vds_swing(self, default_specs):
+        from calc_engine import CalculationEngine
+
+        mosfet = {
+            "qgd": 29, "qgd__unit": "nC",
+            "qrr": 110, "qrr__unit": "nC",
+            "vds_max": 80, "vds_max__unit": "V",
+            "vgs_plateau": 4.9,
+            "vgs_th": 3.0,
+            "rg_int": 1.4,
+            "id_cont": 425, "id_cont__unit": "A",
+            "crss": 84, "crss__unit": "pF",
+            "ciss": 11000, "ciss__unit": "pF",
+            "rds_on": 0.95, "rds_on__unit": "mΩ",
+        }
+
+        low_vds_specs = {**default_specs, "peak_voltage": 55}
+        high_vds_specs = {**default_specs, "peak_voltage": 80}
+
+        e_low = CalculationEngine(low_vds_specs, mosfet, {}, {}, {}, {})
+        e_high = CalculationEngine(high_vds_specs, mosfet, {}, {}, {}, {})
+
+        wf_low = e_low.calc_waveform()
+        wf_high = e_high.calc_waveform()
+
+        assert wf_high["annotations"]["turn_on"]["t_miller_on_ns"] > wf_low["annotations"]["turn_on"]["t_miller_on_ns"]
+        assert wf_high["annotations"]["turn_off"]["t_miller_off_ns"] > wf_low["annotations"]["turn_off"]["t_miller_off_ns"]
+
+    def test_waveform_turn_times_increase_with_load_current(self, default_specs):
+        from calc_engine import CalculationEngine
+
+        mosfet = {
+            "qgd": 29, "qgd__unit": "nC",
+            "qrr": 110, "qrr__unit": "nC",
+            "vds_max": 80, "vds_max__unit": "V",
+            "vgs_plateau": 4.9,
+            "vgs_th": 3.0,
+            "rg_int": 1.4,
+            "id_cont": 425, "id_cont__unit": "A",
+            "crss": 84, "crss__unit": "pF",
+            "ciss": 11000, "ciss__unit": "pF",
+            "rds_on": 0.95, "rds_on__unit": "mΩ",
+        }
+
+        low_i_specs = {**default_specs, "max_phase_current": 40}
+        high_i_specs = {**default_specs, "max_phase_current": 120}
+
+        e_low = CalculationEngine(low_i_specs, mosfet, {}, {}, {}, {})
+        e_high = CalculationEngine(high_i_specs, mosfet, {}, {}, {}, {})
+
+        wf_low = e_low.calc_waveform()
+        wf_high = e_high.calc_waveform()
+
+        assert wf_high["annotations"]["turn_on"]["total_on_ns"] > wf_low["annotations"]["turn_on"]["total_on_ns"]
+        assert wf_high["annotations"]["turn_off"]["total_off_ns"] > wf_low["annotations"]["turn_off"]["total_off_ns"]
 
     def test_gate_resistors_handles_nonpositive_rise_target_override(self, default_specs):
         from calc_engine import CalculationEngine
@@ -452,6 +518,37 @@ class TestReverseAliasesAndConstraints:
         rev = engine.reverse_calculate({"p_total_all_snubbers_w": 2.0})
         assert "p_total_all_snubbers_w" in rev
         assert rev["p_total_all_snubbers_w"]["solved_key"] == "cs_recommended_pf"
+
+    def test_reverse_snubber_power_respects_configured_fet_count(self, default_specs):
+        """Reverse snubber power solver must use configured snubber count, not a hardcoded 6."""
+        from calc_engine import CalculationEngine
+        specs = {**default_specs, "num_fets": 12}
+        e = CalculationEngine(
+            system_specs=specs,
+            mosfet_params={},
+            driver_params={},
+            mcu_params={},
+            motor_specs={},
+            overrides={},
+        )
+        r = e.reverse_calculate({"p_total_all_snubbers_w": 4.0})["p_total_all_snubbers_w"]
+        assert r["solved_value"] == pytest.approx(10000.0)
+        assert "N=12" in (r.get("note") or "")
+
+    def test_reverse_snubber_power_flags_infeasible_when_target_above_supported_range(self, default_specs):
+        """Targets requiring Cs above max supported E12 value must be marked infeasible."""
+        from calc_engine import CalculationEngine
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={},
+            driver_params={},
+            mcu_params={},
+            motor_specs={},
+            overrides={},
+        )
+        r = e.reverse_calculate({"p_total_all_snubbers_w": 300.0})["p_total_all_snubbers_w"]
+        assert r["feasible"] is False
+        assert "maximum achievable" in (r.get("constraint") or "").lower()
 
     def test_reverse_dt_pct_marks_above_mcu_limit_infeasible(self, default_specs):
         """Dead-time percentage reverse solver should enforce MCU max dead-time limit."""

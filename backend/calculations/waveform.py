@@ -47,6 +47,7 @@ class WaveformMixin:
         ciss    = self._get(self.mosfet, "MOSFET", "ciss",        3000e-12)  # F
         qg      = self._get(self.mosfet, "MOSFET", "qg",          92e-9)     # C
         qgd     = self._get(self.mosfet, "MOSFET", "qgd",         30e-9)     # C
+        qrr     = self._get(self.mosfet, "MOSFET", "qrr",         44e-9)     # C
         rds_on  = self._get(self.mosfet, "MOSFET", "rds_on",      1.5e-3)    # Ω
         vgs_th  = self._get(self.mosfet, "MOSFET", "vgs_th",      3.0)       # V
         vgs_pl  = self._get(self.mosfet, "MOSFET", "vgs_plateau", None)      # V
@@ -78,6 +79,23 @@ class WaveformMixin:
 
         rg_on  = rg_int + rg_on_ext    # total on-path gate resistance (Ω)
         rg_off = rg_int + rg_off_ext   # total off-path gate resistance (Ω)
+
+        # ── Temperature-aware switching factors ─────────────────────
+        # Uses thermal estimate when available; clamps to practical silicon range.
+        tj_est = self.t_amb + 35.0
+        try:
+            ml = self.calc_mosfet_losses()
+            self._current_module = "waveform"
+            tj_est = float(ml.get("junction_temp_est_c", tj_est))
+        except Exception:
+            pass
+        tj_sw = max(25.0, min(tj_est, 175.0))
+        temp_delta = max(0.0, tj_sw - 25.0)
+        qgd_temp_factor = 1.0 + self._dc("waveform.qgd_temp_coeff") * temp_delta
+        qrr_temp_factor = 1.0 + self._dc("waveform.qrr_temp_coeff") * temp_delta
+        drv_derate = max(0.7, 1.0 - self._dc("waveform.driver_temp_derate_per_c") * temp_delta)
+        io_source_eff = max(0.2, io_source * drv_derate)
+        io_sink_eff = max(0.2, io_sink * drv_derate)
 
         # ── Stray PCB inductance (for ringing calculation) ────────────
         l_stray_nh = float(self.ovr.get("stray_inductance_nh", self._dc("snub.stray_l_default")))
@@ -130,51 +148,74 @@ class WaveformMixin:
         vds_on = i_load * rds_derated
         vds_on = max(vds_on, 0.01)  # physical floor
 
-        # ── FIX 2: Effective Qgd scaled to actual bus voltage ─────────
-        # Datasheet Qgd is integral of Cgd over 0 → Vds_test.
-        # Cgd is highly nonlinear — large at low Vds, small at high Vds.
-        # Crss (= Cgd at high Vds) severely underestimates average Cgd.
-        # Best available approach: scale proportionally to actual Vds swing
-        # relative to the datasheet test voltage.
-        # Datasheets typically measure Qg/Qgd at Vds = Vds_max × 0.5.
-        # So: Qgd_eff = Qgd_spec × (Vbus − Vds_on) / Vds_test
-        # This is a linear approximation (Cgd treated as roughly flat on average),
-        # valid to ±30% for most silicon MOSFETs.
+        # ── FIX 2: Effective Qgd from nonlinear Cgd(Vds) integration ─
+        # Uses calibrated integral when Crss is available and falls back to
+        # a bounded power-law scaling when only sparse charge data exists.
+        def _qgd_nonlinear(v_swing: float, qgd_spec: float, v_test: float, crss_hi):
+            if v_test <= 1e-9:
+                return qgd_spec, "datasheet"
+            if crss_hi is None or crss_hi <= 1e-14:
+                gamma = 0.78 if v_swing >= v_test else 0.90
+                q_eff = qgd_spec * ((v_swing / v_test) ** gamma)
+                return max(qgd_spec * 0.45, min(q_eff, qgd_spec * 2.5)), "power_law"
+
+            vk = max(4.0, 0.15 * max(v_bus, v_test))
+            c_hi = max(crss_hi, (qgd_spec / v_test) * 0.02)
+            ln_test = math.log(1.0 + v_test / vk)
+            denom = max(vk * ln_test, 1e-15)
+            c_lo = c_hi + (qgd_spec - c_hi * v_test) / denom
+            c_lo = max(c_hi * 1.05, min(c_lo, c_hi * 40.0))
+
+            q_eff = c_hi * v_swing + (c_lo - c_hi) * vk * math.log(1.0 + v_swing / vk)
+            q_eff = max(qgd_spec * 0.35, min(q_eff, qgd_spec * 3.0))
+            return q_eff, "nonlinear_cgd_integral"
+
         v_ds_swing  = max(v_bus - vds_on, 1.0)
         vds_max_val = self._get(self.mosfet, "MOSFET", "vds_max", None)
 
         if vds_max_val is not None and vds_max_val > 0:
             # Typical datasheet test: Vds = 50% of Vds_max
             vds_test  = vds_max_val * 0.5
-            qgd_eff   = qgd * (v_ds_swing / vds_test)
-            # Keep within ±2× of datasheet spec (nonlinearity safety margin)
-            qgd_eff   = max(qgd * 0.5, min(qgd_eff, qgd * 2.0))
+            qgd_eff_base, qgd_method = _qgd_nonlinear(v_ds_swing, qgd, vds_test, crss)
             self.audit_log.append(
-                f"[Waveform] Qgd_eff: Qgd_spec × (Vds_swing / Vds_test) = "
-                f"{qgd*1e9:.1f} nC × ({v_ds_swing:.1f} V / {vds_test:.0f} V) = "
-                f"{qgd_eff*1e9:.2f} nC  [Vds_max={vds_max_val:.0f} V, "
-                f"test={vds_test:.0f} V assumed]."
+                f"[Waveform] Qgd_eff ({qgd_method}): "
+                f"Qgd_spec={qgd*1e9:.1f} nC, Vds_swing={v_ds_swing:.1f} V, "
+                f"Vds_test={vds_test:.0f} V → Qgd_eff_base={qgd_eff_base*1e9:.2f} nC."
             )
         elif crss is not None and crss > 1e-14 and v_ds_swing > 5:
-            # Secondary: Crss-based, but only trust it if Vds swing is large
-            # (Crss is Cgd at high Vds — underestimates but proportional to swing)
-            # Empirically, average Cgd ≈ 3–5× Crss due to low-Vds peak.
-            cgd_avg_est = crss * 4.0   # rough average over full swing
-            qgd_eff = cgd_avg_est * v_ds_swing
-            qgd_eff = max(qgd * 0.5, min(qgd_eff, qgd * 2.0))
+            vds_test = 40.0
+            qgd_eff_base, qgd_method = _qgd_nonlinear(v_ds_swing, qgd, vds_test, crss)
             self.audit_log.append(
-                f"[Waveform] Vds_max not extracted — Qgd_eff estimated from "
-                f"Crss={crss*1e12:.0f} pF × 4 (avg Cgd factor) × {v_ds_swing:.1f} V "
-                f"= {qgd_eff*1e9:.2f} nC (datasheet Qgd={qgd*1e9:.1f} nC)."
+                f"[Waveform] Vds_max missing — Qgd_eff ({qgd_method}) from "
+                f"Crss={crss*1e12:.0f} pF, Vds_swing={v_ds_swing:.1f} V "
+                f"(ref Vds_test={vds_test:.0f} V): {qgd_eff_base*1e9:.2f} nC."
             )
         else:
             # Fallback: use datasheet Qgd as-is
-            qgd_eff = qgd
+            qgd_eff_base = qgd
+            qgd_method = "datasheet"
             self.audit_log.append(
                 f"[Waveform] Vds_max and Crss not extracted — using datasheet "
                 f"Qgd = {qgd*1e9:.1f} nC directly. Extract Vds_max for accurate "
                 f"Miller time scaling."
             )
+
+        qgd_eff_temp = qgd_eff_base * qgd_temp_factor
+        qrr_eff = qrr * qrr_temp_factor
+        qrr_coupling = self._dc("waveform.qrr_miller_coupling")
+        comm_scale = min(1.5, max(0.3, i_load / max(id_cont or i_load, 1.0)))
+        qgd_rr = qrr_eff * qrr_coupling * comm_scale
+
+        # Turn-on includes additional commutation burden from reverse recovery;
+        # turn-off excludes it because this term is tied to opposite diode recovery.
+        qgd_on_eff = max(qgd * 0.35, min(qgd_eff_temp + qgd_rr, qgd * 4.0))
+        qgd_off_eff = max(qgd * 0.35, min(qgd_eff_temp, qgd * 3.5))
+
+        self.audit_log.append(
+            f"[Waveform] Temp-adjusted charges at Tj_model={tj_sw:.1f}C: "
+            f"Qgd_on_eff={qgd_on_eff*1e9:.2f} nC, Qgd_off_eff={qgd_off_eff*1e9:.2f} nC, "
+            f"Qrr_eff={qrr_eff*1e9:.1f} nC, driver derate={drv_derate:.3f}."
+        )
 
         # ── Transconductance (for Region 2 Id shape) ─────────────────
         gfs = i_load / (vgs_pl - vgs_th) if (vgs_pl - vgs_th) > 0.1 else i_load / 0.5
@@ -222,10 +263,20 @@ class WaveformMixin:
         else:
             t_r2 = 5e-9
 
-        # Region 3: Miller plateau — uses corrected Qgd_eff and corrected Vgs_pl
-        ig_miller_on  = (v_drv - vgs_pl) / rg_on if rg_on > 0 else io_source
-        ig_miller_on  = min(max(ig_miller_on, 1e-6), io_source)
-        t_r3 = qgd_eff / ig_miller_on   # ← uses Qgd_eff (voltage-scaled)
+        # Region 3: Miller plateau with common-source inductance feedback.
+        l_cs_nh = self._dc("waveform.common_source_inductance_nh")
+        l_cs = max(0.0, l_cs_nh) * 1e-9
+        di_dt_on_raw = i_load / max(t_r2, 5e-9)
+        di_dt_limited = v_ds_swing / max(l_stray, 1e-9)
+        di_dt_on = min(di_dt_on_raw, di_dt_limited)
+        v_lcs_on_raw = l_cs * di_dt_on
+        v_lcs_on = min(v_lcs_on_raw, max(0.2, 0.65 * max(v_drv - vgs_pl, 0.3)))
+
+        ig_miller_on_ideal = (v_drv - vgs_pl) / rg_on if rg_on > 0 else io_source_eff
+        ig_miller_on_floor = max(0.02, min(io_source_eff * 0.2, max(ig_miller_on_ideal * 0.2, 0.02)))
+        ig_miller_on = (v_drv - vgs_pl - v_lcs_on) / rg_on if rg_on > 0 else io_source_eff
+        ig_miller_on = min(max(ig_miller_on, ig_miller_on_floor), io_source_eff)
+        t_r3 = qgd_on_eff / ig_miller_on
 
         # Region 4: Post-plateau Vgs charges Vplateau → Vdrv (~4τ)
         t_r4 = min(-tau_on * math.log(0.02) if tau_on > 0 else 20e-9, 200e-9)
@@ -239,16 +290,21 @@ class WaveformMixin:
             200e-9
         )
 
-        # Region 3': Miller plateau (reverse) — same Qgd_eff
-        ig_miller_off = vgs_pl / rg_off if rg_off > 0 else io_sink
-        ig_miller_off = min(max(ig_miller_off, 1e-6), io_sink)
-        t_r3_off = qgd_eff / ig_miller_off   # ← uses Qgd_eff
-
         # Region 2': Vgs discharges Vplateau → Vth, Id falls to 0
         t_r2_off = min(
             -tau_off * math.log(vgs_th / vgs_pl) if (vgs_th < vgs_pl and tau_off > 0) else 5e-9,
             50e-9
         )
+
+        di_dt_off_raw = i_load / max(t_r2_off, 5e-9)
+        di_dt_off = min(di_dt_off_raw, di_dt_limited)
+        v_lcs_off_raw = l_cs * di_dt_off
+        v_lcs_off = min(v_lcs_off_raw, max(0.15, 0.65 * max(vgs_pl, 0.2)))
+        ig_miller_off_ideal = vgs_pl / rg_off if rg_off > 0 else io_sink_eff
+        ig_miller_off_floor = max(0.02, min(io_sink_eff * 0.2, max(ig_miller_off_ideal * 0.2, 0.02)))
+        ig_miller_off = (vgs_pl - v_lcs_off) / rg_off if rg_off > 0 else io_sink_eff
+        ig_miller_off = min(max(ig_miller_off, ig_miller_off_floor), io_sink_eff)
+        t_r3_off = qgd_off_eff / ig_miller_off
 
         # Region 1': Sub-threshold discharge Vth → 0
         t_r1_off = min(
@@ -298,7 +354,7 @@ class WaveformMixin:
                 t_r1, t_r2, t_r3, t_r4,
                 t_r4_off, t_r3_off, t_r2_off, t_r1_off,
                 dead_time, t_turn_on, view_on_flat, t_turn_off,
-                l_stray, coss,   # ← new: for ringing
+                tau_ring, omega_ring, v_overshoot_off, v_ring_on,
             )
             times.append(round(t * 1e9, 2))
             vgs_arr.append(round(vgs, 3))
@@ -307,6 +363,8 @@ class WaveformMixin:
             ig_arr.append(round(i_g, 3))
             pd_arr.append(round(max(0.0, vds) * max(0.0, i_d), 1))
             t += dt_step
+
+        sampled_v_overshoot = max(0.0, max(vds_arr) - v_bus) if vds_arr else 0.0
 
         # ── Timing annotations ────────────────────────────────────────
         annotations = {
@@ -319,6 +377,7 @@ class WaveformMixin:
                 "t_r4_ns":          round(t_r4 * 1e9, 1),
                 "total_on_ns":      round(t_turn_on * 1e9, 1),
                 "ig_miller_on_a":   round(ig_miller_on, 2),
+                "v_lcs_on_v":       round(v_lcs_on, 3),
             },
             "turn_off": {
                 "t_r4_off_ns":      round(t_r4_off * 1e9, 1),
@@ -327,12 +386,13 @@ class WaveformMixin:
                 "t_r1_off_ns":      round(t_r1_off * 1e9, 1),
                 "total_off_ns":     round(t_turn_off * 1e9, 1),
                 "ig_miller_off_a":  round(ig_miller_off, 2),
+                "v_lcs_off_v":      round(v_lcs_off, 3),
             },
             "dead_time_ns":         round(dead_time * 1e9, 1),
             "vgs_plateau_v":        round(vgs_pl, 2),
             "vgs_threshold_v":      round(vgs_th, 2),
             "ring_freq_mhz":        round(f_ring / 1e6, 0) if f_ring > 0 else None,
-            "v_overshoot_v":        round(v_overshoot_off, 1) if f_ring > 0 else None,
+            "v_overshoot_v":        round(sampled_v_overshoot, 1) if f_ring > 0 else None,
         }
 
         # ── Parameters used (shown in UI transparency panel) ──────────
@@ -340,12 +400,22 @@ class WaveformMixin:
             "ciss_pf":          round(ciss * 1e12, 0),
             "qg_nc":            round(qg * 1e9, 1),
             "qgd_spec_nc":      round(qgd * 1e9, 1),
-            "qgd_eff_nc":       round(qgd_eff * 1e9, 2),
+            "qgd_eff_base_nc":  round(qgd_eff_base * 1e9, 2),
+            "qgd_on_eff_nc":    round(qgd_on_eff * 1e9, 2),
+            "qgd_off_eff_nc":   round(qgd_off_eff * 1e9, 2),
+            "qrr_eff_nc":       round(qrr_eff * 1e9, 1),
+            "qrr_to_miller_nc": round(qgd_rr * 1e9, 2),
+            "qgd_method":       qgd_method,
             "crss_pf":          round(crss * 1e12, 1) if crss is not None else None,
             "rds_on_mohm":      round(rds_on * 1e3, 2),
             "vgs_th_v":         round(vgs_th, 2),
             "vgs_pl_spec_v":    round(vgs_pl_datasheet, 2),
             "vgs_pl_actual_v":  round(vgs_pl, 2),
+            "temp_model_tj_c":  round(tj_sw, 1),
+            "qgd_temp_factor":  round(qgd_temp_factor, 3),
+            "qrr_temp_factor":  round(qrr_temp_factor, 3),
+            "driver_temp_derate": round(drv_derate, 3),
+            "common_source_l_nh": round(l_cs_nh, 3),
             "id_cont_a":        round(id_cont, 1) if id_cont is not None else None,
             "gm_s":             round(gm_est, 1) if gm_est is not None else None,
             "rg_int_ohm":       round(rg_int, 2),
@@ -358,15 +428,15 @@ class WaveformMixin:
             "l_stray_nh":       round(l_stray_nh, 1),
             "coss_pf":          round(coss * 1e12, 0),
             "f_ring_mhz":       round(f_ring / 1e6, 0) if f_ring > 0 else None,
-            "v_overshoot_v":    round(v_overshoot_off, 1) if f_ring > 0 else None,
+            "v_overshoot_v":    round(sampled_v_overshoot, 1) if f_ring > 0 else None,
         }
 
         self.audit_log.append(
             f"[Waveform] Generated: turn-on = {t_turn_on*1e9:.0f} ns "
-            f"(t_R3_Miller = {t_r3*1e9:.0f} ns with Qgd_eff = {qgd_eff*1e9:.1f} nC, "
+            f"(t_R3_Miller = {t_r3*1e9:.0f} ns with Qgd_on_eff = {qgd_on_eff*1e9:.1f} nC, "
             f"Vpl = {vgs_pl:.2f} V), "
             f"turn-off = {t_turn_off*1e9:.0f} ns, dead-time = {dead_time*1e9:.0f} ns, "
-            f"ring = {f_ring/1e6:.0f} MHz, V_ov = {v_overshoot_off:.1f} V."
+            f"ring = {f_ring/1e6:.0f} MHz, V_ov(sampled) = {sampled_v_overshoot:.1f} V."
         )
 
         return {
@@ -380,11 +450,13 @@ class WaveformMixin:
             "params_used": params_used,
             "model_note": (
                 "Physics-accurate 4-region MOSFET switching model.\n"
-                "• Qgd_eff uses Vds-swing scaling: "
-                "Qgd_eff ≈ Qgd_spec × ((Vbus−Vds_on)/Vds_test), with Crss fallback if needed. "
+                "• Qgd_eff uses nonlinear Cgd(Vds) integration with bounded fallback scaling. "
                 "Higher Vbus generally increases Miller time.\n"
+                "• Turn-on Miller includes Qrr-coupled commutation charge, while turn-off uses only MOSFET charge.\n"
                 "• Vgs_plateau adjusted for actual operating current (Id/gm). "
                 "Higher load current → higher Vpl → longer Miller plateau.\n"
+                "• Common-source inductance feedback reduces effective gate headroom via Ls·di/dt on both edges.\n"
+                "• Charge/current terms are temperature-adjusted using a bounded Tj model.\n"
                 "• Post-switch Vds ringing: damped LC oscillation at "
                 "f = 1/(2π√(L_stray×Coss)), V_peak = I×√(L/C), Q ≈ 8.\n"
                 "• Region 2 Vds held at Vbus (complementary body-diode clamps node).\n"
@@ -404,7 +476,7 @@ class WaveformMixin:
         t_r1, t_r2, t_r3, t_r4,
         t_r4_off, t_r3_off, t_r2_off, t_r1_off,
         dead_time, t_turn_on, flat_on, t_turn_off,
-        l_stray, coss,
+        tau_ring, omega_ring, v_overshoot_off, v_ring_on,
     ):
         """Sample Vgs, Vds, Id, Ig at absolute time t within one switching cycle.
 
@@ -415,26 +487,13 @@ class WaveformMixin:
           [t_flat_end, t_off_end)             → Turn-off transition (R4'→R3'→R2'→R1')
           [t_off_end,  ...)                   → Dead time 2 (Vds overshoot decays)
         """
-        # ── Pre-compute ringing parameters ────────────────────────────
-        if l_stray > 0 and coss > 0:
-            _f_ring     = 1.0 / (2 * math.pi * math.sqrt(l_stray * coss))
-            _Q          = 8.0
-            _tau        = _Q / (math.pi * _f_ring)
-            _omega      = 2 * math.pi * _f_ring
-            _v_ov_off   = i_load * math.sqrt(l_stray / max(coss, 1e-15))
-            _v_ov_off   = min(_v_ov_off, v_bus * 1.5)
-            _v_ring_on  = _v_ov_off * 0.15
-        else:
-            _f_ring = 0.0;  _tau = 1e-9;  _omega = 0.0
-            _v_ov_off = 0.0;  _v_ring_on = 0.0
-
         def _ring_sin(t_abs, t_start, amplitude):
             """Damped sinusoidal ring (sine start → zero crossing, natural impulse shape).
             Starts at 0, peaks near t = π/(2ω), then decays exponentially."""
             dt = t_abs - t_start
-            if dt < 0 or _tau <= 0 or _omega <= 0:
+            if dt < 0 or tau_ring <= 0 or omega_ring <= 0:
                 return 0.0
-            return amplitude * math.exp(-dt / _tau) * math.sin(_omega * dt)
+            return amplitude * math.exp(-dt / tau_ring) * math.sin(omega_ring * dt)
 
         # ── Absolute timeline boundaries ───────────────────────────────
         t_on_start   = dead_time
@@ -494,13 +553,13 @@ class WaveformMixin:
                 t_local_r4 = t_local - t_r1 - t_r2 - t_r3
                 vgs = v_drv - (v_drv - vgs_pl) * math.exp(-t_local_r4 / tau_on) if tau_on > 0 else v_drv
                 ig  = (v_drv - vgs) / rg_on if rg_on > 0 else 0.0
-                vds = vds_on + _ring_sin(t, t_ring_on, _v_ring_on)
+                vds = vds_on + _ring_sin(t, t_ring_on, v_ring_on)
                 return (vgs, max(0.0, vds), i_load, ig)
 
         # ── Fully on (flat conduction) ─────────────────────────────────
         # Vds ring from turn-on continues to decay.
         elif t < t_flat_end:
-            vds = vds_on + _ring_sin(t, t_ring_on, _v_ring_on)
+            vds = vds_on + _ring_sin(t, t_ring_on, v_ring_on)
             return (v_drv, max(0.0, vds), i_load, 0.0)
 
         # ── Turn-off transition ────────────────────────────────────────
@@ -544,10 +603,10 @@ class WaveformMixin:
                 t_from_r1 = t_local - t_r4_off - t_r3_off - t_r2_off
                 vgs = vgs_th * math.exp(-t_from_r1 / tau_off) if tau_off > 0 else 0.0
                 ig  = -vgs / rg_off if rg_off > 0 else 0.0
-                vds = v_bus + _ring_sin(t, t_ring_off, _v_ov_off)
+                vds = v_bus + _ring_sin(t, t_ring_off, v_overshoot_off)
                 return (vgs, max(0.0, vds), 0.0, ig)
 
         # ── Dead time 2 (FET off, Vds spike decaying) ─────────────────
         else:
-            vds = v_bus + _ring_sin(t, t_ring_off, _v_ov_off)
+            vds = v_bus + _ring_sin(t, t_ring_off, v_overshoot_off)
             return (0.0, max(0.0, vds), 0.0, 0.0)

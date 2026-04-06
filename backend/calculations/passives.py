@@ -283,6 +283,7 @@ class PassivesMixin:
             self.audit_log.append(f"[Snubber] Qoss={qoss*1e9:.0f}nC from datasheet. E_oss={e_oss_uj:.1f}µJ, E_snub={e_snub_uj:.1f}µJ.")
 
         result = {
+            "num_fets":                 self.num_fets,
             "stray_inductance_nh":      l_stray_nh,
             "coss_pf":                  coss_pf,
             "resonant_freq_mhz":        round(f_res_mhz,   1),

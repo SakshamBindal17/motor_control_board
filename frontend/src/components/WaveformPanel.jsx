@@ -47,6 +47,32 @@ function getDesignConstant(designConstants, key, fallback) {
   return Number.isFinite(n) ? n : fallback
 }
 
+function calcNonlinearQgd(vSwing, qgdSpec, vTest, vBus, crss) {
+  if (!(vTest > 1e-9)) {
+    return { qgdEff: qgdSpec, method: 'datasheet' }
+  }
+
+  if (!(crss > 1e-14)) {
+    const gamma = vSwing >= vTest ? 0.78 : 0.9
+    const q = qgdSpec * Math.pow(vSwing / vTest, gamma)
+    return {
+      qgdEff: Math.max(qgdSpec * 0.45, Math.min(q, qgdSpec * 2.5)),
+      method: 'power_law',
+    }
+  }
+
+  const vk = Math.max(4.0, 0.15 * Math.max(vBus, vTest))
+  const cHi = Math.max(crss, (qgdSpec / vTest) * 0.02)
+  const lnTest = Math.log(1 + vTest / vk)
+  const denom = Math.max(vk * lnTest, 1e-15)
+  let cLo = cHi + (qgdSpec - cHi * vTest) / denom
+  cLo = Math.max(cHi * 1.05, Math.min(cLo, cHi * 40.0))
+
+  let q = cHi * vSwing + (cLo - cHi) * vk * Math.log(1 + vSwing / vk)
+  q = Math.max(qgdSpec * 0.35, Math.min(q, qgdSpec * 3.0))
+  return { qgdEff: q, method: 'nonlinear_cgd_integral' }
+}
+
 function extractMosfetSIParams(blockState) {
   if (!blockState || blockState.status !== 'done') return null
   const dict = buildParamsDict(blockState)
@@ -56,6 +82,7 @@ function extractMosfetSIParams(blockState) {
     crss: extractSIParam(dict, 'crss', { 'pF': 1e-12, 'nF': 1e-9, 'F': 1 }),
     qg: extractSIParam(dict, 'qg', { 'nC': 1e-9, 'µC': 1e-6, 'C': 1 }) || 92e-9,
     qgd: extractSIParam(dict, 'qgd', { 'nC': 1e-9, 'µC': 1e-6, 'C': 1 }) || 30e-9,
+    qrr: extractSIParam(dict, 'qrr', { 'nC': 1e-9, 'µC': 1e-6, 'C': 1 }) || 44e-9,
     rds_on: extractSIParam(dict, 'rds_on', { 'mΩ': 1e-3, 'Ω': 1 }) || 1.5e-3,
     vgs_th: extractSIParam(dict, 'vgs_th', { 'V': 1 }) || 3.0,
     vgs_plateau: extractSIParam(dict, 'vgs_plateau', { 'V': 1 }),
@@ -79,11 +106,6 @@ function calcTraceInductance_nH(len, w, h) {
   return 0.2 * len * Math.log(x + Math.sqrt(x * x - 1))
 }
 
-function toPosNum(val) {
-  const n = parseFloat(val)
-  return Number.isFinite(n) && n > 0 ? n : null
-}
-
 /* ═══════════════════════════════════════════════════════════════════════
    PARASITIC RLC OVERLAY — adds ringing when inductance > 0
    Physics: damped sinusoid  V(t) = A × e^(-ζω₀t) × sin(ωd×t)
@@ -95,7 +117,7 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
   dead_time, t_turn_on, flat_on, t_turn_off, regionTimes,
   operatingPoint,
   designConstants,
-  calibration = null) {
+  parasiticInputs = {}) {
   const gateL_nH = calcTraceInductance_nH(
     systemSpecs.gate_trace_length_mm || 0,
     systemSpecs.gate_trace_width_mm || 0,
@@ -110,30 +132,33 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
   const Lg = gateL_nH * 1e-9   // nH → H
   const Lp = powerL_nH * 1e-9  // nH → H
 
-  // Package stray inductance (bond wires + lead frame) is ALWAYS present
-  // even with a perfectly clean PCB layout. This guarantees ringing is visible
-  // even when the user has not entered trace dimensions.
-  const lPkgNhCfg = getDesignConstant(designConstants, 'waveform.pkg_inductance_nh', 5)
-  const L_pkg_min = Math.max(0.5, lPkgNhCfg) * 1e-9
-  let L_ring_eff = Math.max(Lp, 0) + L_pkg_min   // total power loop L
+  // Package + bond-wire inductance exists even when PCB dimensions are not entered.
+  const gatePkgNhCfg = getDesignConstant(designConstants, 'waveform.gate_pkg_inductance_nh', 4)
+  const powerPkgNhCfg = getDesignConstant(designConstants, 'waveform.pkg_inductance_nh', 5)
+  const L_gate_pkg = Math.max(0.2, gatePkgNhCfg) * 1e-9
+  const L_power_pkg = Math.max(0.5, powerPkgNhCfg) * 1e-9
+
+  const Lg_eff = Math.max(Lg, 0) + L_gate_pkg
+  const L_power_geom = Math.max(Lp, 0) + L_power_pkg
+
+  const strayOverrideRaw = parseFloat(parasiticInputs?.strayNh)
+  const strayOverrideNh = Number.isFinite(strayOverrideRaw) && strayOverrideRaw > 0
+    ? strayOverrideRaw
+    : null
+  let L_ring_eff = L_power_geom
+  if (strayOverrideNh != null) {
+    L_ring_eff = Math.max(L_ring_eff, strayOverrideNh * 1e-9)
+  }
 
   const ciss = mosfetP.ciss
   const coss = mosfetP.coss || 500e-12  // fallback Coss
+  const snubberCsPfRaw = parseFloat(parasiticInputs?.snubberCsPf)
+  const snubberCsPf = Number.isFinite(snubberCsPfRaw) && snubberCsPfRaw > 0
+    ? snubberCsPfRaw
+    : 0
+  const c_eff = coss + snubberCsPf * 1e-12
 
-  const calEnabled = calibration?.enabled === true
-  const calRingMHz = calibration?.ringMHz || null
-  const calOvershootV = calibration?.overshootV || null
-
-  if (calEnabled && calRingMHz && coss > 0) {
-    const w_fit = 2 * Math.PI * calRingMHz * 1e6
-    const l_fit = 1 / (w_fit * w_fit * coss)
-    if (Number.isFinite(l_fit) && l_fit > 0) {
-      L_ring_eff = l_fit
-    }
-  }
-
-  // Skip only when gate trace is absent AND Coss is zero — in practice never happens
-  if (Lg <= 0 && L_ring_eff <= 0) return waveform
+  if (Lg_eff <= 0 && L_ring_eff <= 0) return waveform
   const n = waveform.time_ns.length
   const vgs = [...waveform.vgs]
   const vds = [...waveform.vds]
@@ -155,52 +180,59 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
   const i_load = operatingPoint?.i_load || systemSpecs.max_phase_current || 80
   const v_drv = operatingPoint?.v_drv || systemSpecs.gate_drive_voltage || 12
   const vgs_pl_actual = operatingPoint?.vgs_pl || mosfetP.vgs_plateau || 5
+  const io_source = operatingPoint?.io_source || 4
+  const io_sink = operatingPoint?.io_sink || 4
 
-  const z_char_nom = coss > 0 ? Math.sqrt(L_ring_eff / coss) : 0
-  const rDampCfg = getDesignConstant(designConstants, 'waveform.power_damping_ohm', 0.1)
-  let R_damp = Math.max(0.01, Math.min(rDampCfg, 2.0))
-
-  if (calEnabled && calOvershootV && coss > 0 && z_char_nom > 0) {
-    const v_ideal_pk = i_load * z_char_nom
-    const ratio = Math.max(1e-3, Math.min(0.98, calOvershootV / Math.max(v_ideal_pk, 1e-6)))
-    const zeta_fit = Math.max(0.0, Math.min(0.99, (-2 / Math.PI) * Math.log(ratio)))
-    R_damp = 2 * zeta_fit * Math.sqrt(L_ring_eff / coss)
-    R_damp = Math.max(0.01, Math.min(R_damp, 2.0))
-  }
+  const rDampCfg = getDesignConstant(designConstants, 'waveform.power_damping_ohm', 0.12)
+  const R_damp = Math.max(0.01, Math.min(rDampCfg, 2.0))
+  const vdsOvershootCap = mosfetP.vds_max
+    ? Math.max(0, mosfetP.vds_max * 0.9 - v_bus)
+    : v_bus * 0.6
+  const vdsClampMax = v_bus + vdsOvershootCap + 5
+  const idMin = -0.25 * i_load
+  const idMax = 1.25 * i_load
+  const igClamp = Math.max(
+    io_source,
+    io_sink,
+    Math.abs((v_drv - vgs_pl_actual) / Math.max(rg_on, 0.2)),
+    Math.abs(vgs_pl_actual / Math.max(rg_off, 0.2)),
+  ) * 1.35
 
   for (let i = 0; i < n; i++) {
     const t_ns = waveform.time_ns[i]
 
     // ── Gate loop ringing — LgCiss oscillation on Vgs ──
     // Superimposed during Region 4 (post-plateau) and after turn-off
-    if (Lg > 0 && ciss > 0) {
+    if (Lg_eff > 0 && ciss > 0) {
       const R = (t_ns > tFlatEnd_ns) ? rg_off : rg_on
-      const w0 = 1 / Math.sqrt(Lg * ciss)
-      const zeta = R / (2 * Math.sqrt(Lg / ciss))
+      const w0 = 1 / Math.sqrt(Lg_eff * ciss)
+      const zeta = R / (2 * Math.sqrt(Lg_eff / ciss))
 
       if (zeta < 1) {
         const wd = w0 * Math.sqrt(1 - zeta * zeta)
         let dt_ring = -1
+        let turnOffRing = false
 
         // After turn-on Miller plateau: Vgs overshoots toward Vdrv
         if (t_ns > tMillerOnEnd_ns && t_ns < tFlatEnd_ns) {
           dt_ring = (t_ns - tMillerOnEnd_ns) * 1e-9
         }
-        // After turn-off completes: Vgs rings around 0
-        else if (t_ns > tOffEnd_ns) {
-          dt_ring = (t_ns - tOffEnd_ns) * 1e-9
+        // At turn-off edge: Vgs rings around its discharge trajectory.
+        else if (t_ns > tFlatEnd_ns && t_ns < tOffEnd_ns + 250) {
+          dt_ring = (t_ns - tFlatEnd_ns) * 1e-9
+          turnOffRing = true
         }
 
         if (dt_ring > 0) {
-          // Amplitude from energy stored in gate inductance: V = Ig × √(Lg/Ciss)
-          const ig_peak = (t_ns > tFlatEnd_ns)
+          // Amplitude from gate-loop impulse energy; clamped to keep ring realistic.
+          const ig_peak = turnOffRing
             ? vgs_pl_actual / rg_off   // turn-off Miller current
             : (v_drv - vgs_pl_actual) / rg_on
-          const v_ring_amp = Math.min(ig_peak * Math.sqrt(Lg / ciss), 3.0) // cap at 3V
-          const dir = (t_ns > tFlatEnd_ns) ? -1 : 1
+          const v_ring_amp = Math.min(Math.max(0.03, ig_peak * Math.sqrt(Lg_eff / ciss) * 0.45), 1.2)
+          const dir = turnOffRing ? -1 : 1
           const ring = dir * v_ring_amp * Math.exp(-zeta * w0 * dt_ring) * Math.sin(wd * dt_ring)
           vgs[i] += ring
-          ig[i] += ring * ciss * wd * 0.5  // approximate Ig perturbation
+          ig[i] += ring * ciss * wd * 0.35
         }
       }
     }
@@ -209,12 +241,12 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
     // Starts after Miller plateau when Vds transition completes.
     // The MOSFET is OFF during the turn-off ring — Rds_on is NOT in the
     // ring loop. Only PCB copper resistance + package contact resistance matter.
-    // L_pkg_min and L_ring_eff are computed once above the loop (5nH min always).
-    if (L_ring_eff > 0 && coss > 0) {
+    // L_ring_eff includes PCB and package loop inductance.
+    if (L_ring_eff > 0 && c_eff > 0) {
       // R_damp: PCB trace + package contact resistance only (~100mΩ typical).
       // Do NOT include Rds_on — the FET is switching off, not conducting.
-      const w0 = 1 / Math.sqrt(L_ring_eff * coss)
-      const zeta = R_damp / (2 * Math.sqrt(L_ring_eff / coss))
+      const w0 = 1 / Math.sqrt(L_ring_eff * c_eff)
+      const zeta = R_damp / (2 * Math.sqrt(L_ring_eff / c_eff))
 
       if (zeta < 1) {
         const wd = w0 * Math.sqrt(1 - zeta * zeta)
@@ -234,56 +266,52 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
 
         if (dt_ring > 0 && direction !== 0) {
           // V_spike = I × √(L/C) — lossless LC impulse (upper bound)
-          // Cap at Vds_max × 0.9 if known, else 2× Vbus — shows real risk
-          const z_char = Math.sqrt(L_ring_eff / coss)
-          const v_max = mosfetP.vds_max ? mosfetP.vds_max * 0.9 : v_bus * 2.0
-          let v_spike = Math.min(i_load * z_char, v_max - v_bus)
-
-          // If measured overshoot is available, fit ring amplitude to measured first peak.
-          if (calEnabled && calOvershootV > 0) {
-            const tp = Math.PI / (2 * Math.max(wd, 1e-6))
-            const decay_to_pk = Math.exp(-zeta * w0 * tp)
-            const a_fit = calOvershootV / Math.max(decay_to_pk, 1e-6)
-            v_spike = Math.min(Math.max(0.0, a_fit), v_max - v_bus)
-          }
+          // Cap by available voltage headroom to keep physically plausible output.
+          const z_char = Math.sqrt(L_ring_eff / c_eff)
+          let v_spike = Math.min(i_load * z_char, vdsOvershootCap)
 
           if (direction < 0) {
-            v_spike *= 0.2
+            v_spike *= 0.12
           }
 
           const ring = direction * v_spike * Math.exp(-zeta * w0 * dt_ring) * Math.sin(wd * dt_ring)
           vds[i] += ring
-          // Parasitic ringing also perturbs Id slightly via Coss dV/dt
-          id[i] += coss * ring * wd * direction * 0.2
+          // Displacement current through effective Coss + snubber capacitor.
+          id[i] += c_eff * v_spike * wd * Math.exp(-zeta * w0 * dt_ring) * Math.cos(wd * dt_ring) * direction * 0.08
         }
       }
     }
+
+    // Numerical guards to prevent unphysical display artifacts.
+    vgs[i] = Math.max(-2.5, Math.min(vgs[i], v_drv + 2.5))
+    vds[i] = Math.max(-5, Math.min(vds[i], vdsClampMax))
+    id[i] = Math.max(idMin, Math.min(id[i], idMax))
+    ig[i] = Math.max(-igClamp, Math.min(ig[i], igClamp))
   }
 
   // Recalculate Pd with parasitic-modified signals
-  const pd = vds.map((v, i) => Math.round(v * id[i] * 10) / 10)
+  const pd = vds.map((v, i) => Math.round(Math.max(0, v * id[i]) * 10) / 10)
 
   const hasGate = Lg > 0
   const hasPower = Lp > 0    // user-entered trace inductance
   let note = waveform.model_note
-  // L_ring_eff always ≥ 5nH (package), so power ringing is always present
-  const powerDesc = hasPower
-    ? `power loop ${(Lp * 1e9).toFixed(1)}nH trace + 5nH pkg = ${(L_ring_eff * 1e9).toFixed(1)}nH`
-    : `power loop 5nH pkg (no trace dims entered)`
-  if (hasGate || true /* package L always shown */) {
-    const gateDesc = hasGate ? `gate loop ${(Lg * 1e9).toFixed(1)}nH` : ''
-    note = `Includes parasitic effects: ${gateDesc}${hasGate ? ', ' : ''}${powerDesc}. ` + note
-  }
+  const hasSnubberInModel = snubberCsPf > 0
 
-  if (calEnabled) {
-    const calParts = []
-    if (calRingMHz) calParts.push(`ring ${calRingMHz.toFixed(1)}MHz`)
-    if (calOvershootV) calParts.push(`overshoot ${calOvershootV.toFixed(1)}V`)
-    note = `Scope-match calibration active (${calParts.join(', ') || 'manual fit'}). ` + note
+  // L_ring_eff always includes package inductance, even if geometry is missing.
+  const powerDesc = hasPower
+    ? `power loop ${(Lp * 1e9).toFixed(1)}nH trace + ${(L_power_pkg * 1e9).toFixed(1)}nH pkg = ${(L_ring_eff * 1e9).toFixed(1)}nH`
+    : `power loop ${(L_power_pkg * 1e9).toFixed(1)}nH pkg (no trace dims entered)`
+  const gateDesc = hasGate
+    ? `gate loop ${(Lg * 1e9).toFixed(1)}nH trace + ${(L_gate_pkg * 1e9).toFixed(1)}nH pkg`
+    : `gate loop ${(L_gate_pkg * 1e9).toFixed(1)}nH pkg (no trace dims entered)`
+
+  note = `Includes parasitic effects: ${gateDesc}; ${powerDesc}. ` + note
+  if (hasSnubberInModel) {
+    note = `Snubber-aware ring model active (Cs=${snubberCsPf.toFixed(0)}pF in parallel with Coss). ` + note
   }
 
   const R_gate = rg_on  // gate loop is damped by Rg — correct
-  const R_power = R_damp // power loop damping from geometry/scope fit
+  const R_power = R_damp // power loop damping from geometry/design constant
   return {
     ...waveform,
     vgs: vgs.map(v => Math.round(v * 1000) / 1000),
@@ -295,33 +323,45 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
     parasitics: {
       gate_loop_nh: Math.round(Lg * 1e9 * 10) / 10,
       power_loop_nh: Math.round(Lp * 1e9 * 10) / 10,
-      pkg_inductance_nh: Math.round(L_pkg_min * 1e9 * 10) / 10,
+      gate_pkg_inductance_nh: Math.round(L_gate_pkg * 1e9 * 10) / 10,
+      pkg_inductance_nh: Math.round(L_power_pkg * 1e9 * 10) / 10,
       total_power_nh: Math.round(L_ring_eff * 1e9 * 10) / 10,
+      stray_override_nh: strayOverrideNh,
+      snubber_cs_pf: snubberCsPf > 0 ? Math.round(snubberCsPf) : null,
+      effective_coss_pf: Math.round(c_eff * 1e12),
       // ζ displayed uses total inductance (trace + 5nH package) and corrected R_damp
-      gate_damping: Lg > 0 && ciss > 0
-        ? Math.round(R_gate / (2 * Math.sqrt(Lg / ciss)) * 100) / 100
+      gate_damping: Lg_eff > 0 && ciss > 0
+        ? Math.round(R_gate / (2 * Math.sqrt(Lg_eff / ciss)) * 100) / 100
         : null,
-      power_damping: coss > 0
-        ? Math.round(R_power / (2 * Math.sqrt(L_ring_eff / coss)) * 100) / 100
+      power_damping: c_eff > 0
+        ? Math.round(R_power / (2 * Math.sqrt(L_ring_eff / c_eff)) * 100) / 100
         : null,
-      scope_calibration_active: calEnabled,
-      scope_fit_ring_mhz: calRingMHz,
-      scope_fit_overshoot_v: calOvershootV,
-      scope_fit_r_damp_ohm: Math.round(R_power * 1000) / 1000,
+      power_damping_ohm: Math.round(R_power * 1000) / 1000,
       operating_vbus_v: Math.round(v_bus * 10) / 10,
       operating_iload_a: Math.round(i_load * 10) / 10,
-      pkg_inductance_config_nh: Math.round(L_pkg_min * 1e10) / 10,
+      pkg_inductance_config_nh: Math.round(L_power_pkg * 1e10) / 10,
+      gate_pkg_inductance_config_nh: Math.round(L_gate_pkg * 1e10) / 10,
       power_damping_config_ohm: Math.round(rDampCfg * 1000) / 1000,
     },
   }
 }
 
 
-function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, designConstants) {
+function computeWaveformFrontend(
+  mosfetP,
+  driverP,
+  systemSpecs,
+  gateCalc,
+  designConstants,
+  passivesOverrides = {},
+  snubberCalc = null,
+  mosfetLosses = null,
+) {
   if (!mosfetP) return null
 
   const ciss = mosfetP.ciss
   const qgd = mosfetP.qgd
+  const qrr = mosfetP.qrr
   const rds_on = mosfetP.rds_on
   const vgs_th = mosfetP.vgs_th
   const rg_int = mosfetP.rg_int
@@ -340,11 +380,26 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, design
   const rg_on = rg_int + rg_on_ext
   const rg_off = rg_int + rg_off_ext
 
-  const calEnabled = Number(systemSpecs.wave_cal_enable || 0) > 0
-  const calMillerOnNs = toPosNum(systemSpecs.wave_cal_miller_on_ns)
-  const calMillerOffNs = toPosNum(systemSpecs.wave_cal_miller_off_ns)
-  const calRingMHz = toPosNum(systemSpecs.wave_cal_ring_mhz)
-  const calOvershootV = toPosNum(systemSpecs.wave_cal_overshoot_v)
+  const tjRaw = parseFloat(mosfetLosses?.junction_temp_est_c)
+  const tjEst = Number.isFinite(tjRaw)
+    ? tjRaw
+    : (systemSpecs.ambient_temp_c || 30) + 35
+  const tjSw = Math.max(25, Math.min(tjEst, 175))
+  const tempDelta = Math.max(0, tjSw - 25)
+  const qgdTempFactor = 1 + getDesignConstant(designConstants, 'waveform.qgd_temp_coeff', 0.0015) * tempDelta
+  const qrrTempFactor = 1 + getDesignConstant(designConstants, 'waveform.qrr_temp_coeff', 0.005) * tempDelta
+  const driverTempDerate = Math.max(0.7, 1 - getDesignConstant(designConstants, 'waveform.driver_temp_derate_per_c', 0.001) * tempDelta)
+  const io_source_eff = Math.max(0.2, io_source * driverTempDerate)
+  const io_sink_eff = Math.max(0.2, io_sink * driverTempDerate)
+
+  const strayOverrideRaw = parseFloat(passivesOverrides?.stray_inductance_nh)
+  const strayOverrideNh = Number.isFinite(strayOverrideRaw) && strayOverrideRaw > 0
+    ? strayOverrideRaw
+    : null
+  const snubberCsRaw = parseFloat(snubberCalc?.cs_recommended_pf)
+  const snubberCsPf = Number.isFinite(snubberCsRaw) && snubberCsRaw > 0
+    ? snubberCsRaw
+    : null
 
   // ── FIX: Vgs_plateau scaled for actual operating current ──────────────
   // Physics: Vpl = Vth + Id/gm. Higher load current → higher plateau → longer Miller.
@@ -375,45 +430,45 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, design
   const vds_max = mosfetP.vds_max
   const crss = mosfetP.crss
   const v_ds_swing = Math.max(v_bus - vds_on, 1.0)
-  let qgd_eff = qgd
-  let qgd_scope_fit_nc = null
+  let qgd_eff_base = qgd
   let qgd_method = 'datasheet'
   if (vds_max != null && vds_max > 0) {
     const vds_test = vds_max * 0.5   // datasheet test condition
-    qgd_eff = qgd * (v_ds_swing / vds_test)
-    qgd_eff = Math.max(qgd * 0.5, Math.min(qgd_eff, qgd * 2.0))  // ±2× bounds
-    qgd_method = 'vds_ratio'
+    const qgdResult = calcNonlinearQgd(v_ds_swing, qgd, vds_test, v_bus, crss)
+    qgd_eff_base = qgdResult.qgdEff
+    qgd_method = qgdResult.method
   } else if (crss != null && crss > 1e-14 && v_ds_swing > 5) {
-    // Crss is high-Vds Cgd; average Cgd over full swing is typically several times higher.
-    const cgdAvgEst = crss * 4.0
-    qgd_eff = cgdAvgEst * v_ds_swing
-    qgd_eff = Math.max(qgd * 0.5, Math.min(qgd_eff, qgd * 2.0))
-    qgd_method = 'crss_fallback'
+    const qgdResult = calcNonlinearQgd(v_ds_swing, qgd, 40.0, v_bus, crss)
+    qgd_eff_base = qgdResult.qgdEff
+    qgd_method = qgdResult.method
   }
 
-  if (calEnabled) {
-    const qgdCandidates = []
-    const ig_on_fit = Math.min(Math.max((v_drv - vgs_pl) / Math.max(rg_on, 1e-6), 1e-6), io_source)
-    const ig_off_fit = Math.min(Math.max(vgs_pl / Math.max(rg_off, 1e-6), 1e-6), io_sink)
-
-    if (calMillerOnNs) qgdCandidates.push(calMillerOnNs * 1e-9 * ig_on_fit)
-    if (calMillerOffNs) qgdCandidates.push(calMillerOffNs * 1e-9 * ig_off_fit)
-
-    if (qgdCandidates.length > 0) {
-      qgd_eff = qgdCandidates.reduce((a, b) => a + b, 0) / qgdCandidates.length
-      qgd_eff = Math.max(qgd * 0.35, Math.min(qgd_eff, qgd * 3.0))
-      qgd_scope_fit_nc = qgd_eff * 1e9
-    }
-  }
+  const qgd_eff_temp = qgd_eff_base * qgdTempFactor
+  const qrr_eff = qrr * qrrTempFactor
+  const qrrCoupling = getDesignConstant(designConstants, 'waveform.qrr_miller_coupling', 0.3)
+  const commScale = Math.min(1.5, Math.max(0.3, i_load / Math.max(id_cont || i_load, 1)))
+  const qgd_rr = qrr_eff * qrrCoupling * commScale
+  const qgd_on_eff = Math.max(qgd * 0.35, Math.min(qgd_eff_temp + qgd_rr, qgd * 4.0))
+  const qgd_off_eff = Math.max(qgd * 0.35, Math.min(qgd_eff_temp, qgd * 3.5))
 
   // Turn-on region durations
   const t_r1 = (v_drv > vgs_th && tau_on > 0) ? -tau_on * Math.log(1 - vgs_th / v_drv) : 10e-9
   const t_r1_r2 = (v_drv > vgs_pl && tau_on > 0) ? -tau_on * Math.log(1 - vgs_pl / v_drv) : t_r1 + 5e-9
   const t_r2 = Math.max(0, t_r1_r2 - t_r1)
 
-  let ig_miller_on = (v_drv - vgs_pl) / rg_on
-  ig_miller_on = Math.min(ig_miller_on, io_source)
-  const t_r3 = ig_miller_on > 0 ? qgd_eff / ig_miller_on : 20e-9  // uses scaled Qgd
+  const lCsNh = Math.max(0, getDesignConstant(designConstants, 'waveform.common_source_inductance_nh', 1.5))
+  const lCs = lCsNh * 1e-9
+  const di_dt_on_raw = i_load / Math.max(t_r2, 5e-9)
+  const di_dt_limited = v_ds_swing / Math.max((strayOverrideNh != null ? strayOverrideNh * 1e-9 : 10e-9), 1e-9)
+  const di_dt_on = Math.min(di_dt_on_raw, di_dt_limited)
+  const v_lcs_on_raw = lCs * di_dt_on
+  const v_lcs_on = Math.min(v_lcs_on_raw, Math.max(0.2, 0.65 * Math.max(v_drv - vgs_pl, 0.3)))
+
+  const ig_miller_on_ideal = (v_drv - vgs_pl) / rg_on
+  const ig_miller_on_floor = Math.max(0.02, Math.min(io_source_eff * 0.2, Math.max(ig_miller_on_ideal * 0.2, 0.02)))
+  let ig_miller_on = (v_drv - vgs_pl - v_lcs_on) / rg_on
+  ig_miller_on = Math.min(Math.max(ig_miller_on, ig_miller_on_floor), io_source_eff)
+  const t_r3 = ig_miller_on > 0 ? qgd_on_eff / ig_miller_on : 20e-9
 
   let t_r4 = tau_on > 0 ? -tau_on * Math.log(0.02) : 20e-9
   t_r4 = Math.min(t_r4, 200e-9)
@@ -424,12 +479,18 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, design
   let t_r4_off = (v_drv > 0 && tau_off > 0) ? -tau_off * Math.log(vgs_pl / v_drv) : 20e-9
   t_r4_off = Math.min(t_r4_off, 200e-9)
 
-  let ig_miller_off = vgs_pl / rg_off
-  ig_miller_off = Math.min(ig_miller_off, io_sink)
-  const t_r3_off = ig_miller_off > 0 ? qgd_eff / ig_miller_off : 20e-9  // uses scaled Qgd
-
   let t_r2_off = (vgs_pl > 0 && tau_off > 0 && vgs_th < vgs_pl) ? -tau_off * Math.log(vgs_th / vgs_pl) : 5e-9
   t_r2_off = Math.min(t_r2_off, 50e-9)
+
+  const di_dt_off_raw = i_load / Math.max(t_r2_off, 5e-9)
+  const di_dt_off = Math.min(di_dt_off_raw, di_dt_limited)
+  const v_lcs_off_raw = lCs * di_dt_off
+  const v_lcs_off = Math.min(v_lcs_off_raw, Math.max(0.15, 0.65 * Math.max(vgs_pl, 0.2)))
+  const ig_miller_off_ideal = vgs_pl / rg_off
+  const ig_miller_off_floor = Math.max(0.02, Math.min(io_sink_eff * 0.2, Math.max(ig_miller_off_ideal * 0.2, 0.02)))
+  let ig_miller_off = (vgs_pl - v_lcs_off) / rg_off
+  ig_miller_off = Math.min(Math.max(ig_miller_off, ig_miller_off_floor), io_sink_eff)
+  const t_r3_off = ig_miller_off > 0 ? qgd_off_eff / ig_miller_off : 20e-9
 
   let t_r1_off = (vgs_th > 0.02 && tau_off > 0) ? -tau_off * Math.log(0.02 / vgs_th) : 20e-9
   t_r1_off = Math.min(t_r1_off, 200e-9)
@@ -482,6 +543,7 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, design
         t_r4_ns: Math.round(t_r4 * 1e10) / 10,
         total_on_ns: Math.round(t_turn_on * 1e10) / 10,
         ig_miller_on_a: Math.round(ig_miller_on * 100) / 100,
+        v_lcs_on_v: Math.round(v_lcs_on * 1000) / 1000,
       },
       turn_off: {
         t_r4_off_ns: Math.round(t_r4_off * 1e10) / 10,
@@ -490,6 +552,7 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, design
         t_r1_off_ns: Math.round(t_r1_off * 1e10) / 10,
         total_off_ns: Math.round(t_turn_off * 1e10) / 10,
         ig_miller_off_a: Math.round(ig_miller_off * 100) / 100,
+        v_lcs_off_v: Math.round(v_lcs_off * 1000) / 1000,
       },
       dead_time_ns: Math.round(dead_time * 1e10) / 10,
       vgs_plateau_v: Math.round(vgs_pl * 100) / 100,
@@ -499,8 +562,11 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, design
       ciss_pf: Math.round(ciss * 1e12),
       qg_nc: Math.round(mosfetP.qg * 1e10) / 10,
       qgd_spec_nc: Math.round(qgd * 1e10) / 10,
-      qgd_eff_nc: Math.round(qgd_eff * 1e10) / 10,
-      qgd_scope_fit_nc: qgd_scope_fit_nc != null ? Math.round(qgd_scope_fit_nc * 10) / 10 : null,
+      qgd_eff_base_nc: Math.round(qgd_eff_base * 1e10) / 10,
+      qgd_on_eff_nc: Math.round(qgd_on_eff * 1e10) / 10,
+      qgd_off_eff_nc: Math.round(qgd_off_eff * 1e10) / 10,
+      qrr_eff_nc: Math.round(qrr_eff * 1e10) / 10,
+      qrr_to_miller_nc: Math.round(qgd_rr * 1e10) / 10,
       qgd_method,
       crss_pf: crss != null ? Math.round(crss * 1e13) / 10 : null,
       rds_on_mohm: Math.round(rds_on * 1e5) / 100,
@@ -509,6 +575,11 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, design
       vgs_th_v: Math.round(vgs_th * 100) / 100,
       vgs_pl_spec_v: Math.round(vgs_pl_spec * 100) / 100,
       vgs_pl_actual_v: Math.round(vgs_pl * 100) / 100,
+      temp_model_tj_c: Math.round(tjSw * 10) / 10,
+      qgd_temp_factor: Math.round(qgdTempFactor * 1000) / 1000,
+      qrr_temp_factor: Math.round(qrrTempFactor * 1000) / 1000,
+      driver_temp_derate: Math.round(driverTempDerate * 1000) / 1000,
+      common_source_l_nh: Math.round(lCsNh * 1000) / 1000,
       rg_int_ohm: Math.round(rg_int * 100) / 100,
       rg_on_ext_ohm: rg_on_ext,
       rg_off_ext_ohm: rg_off_ext,
@@ -516,17 +587,12 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, design
       v_bus_v: v_bus,
       i_load_a: i_load,
       fsw_khz: (systemSpecs.pwm_freq_hz || 20000) / 1000,
-      scope_cal_enabled: calEnabled,
-      scope_cal_miller_on_ns: calMillerOnNs,
-      scope_cal_miller_off_ns: calMillerOffNs,
-      scope_cal_ring_mhz: calRingMHz,
-      scope_cal_overshoot_v: calOvershootV,
       dt_model: 'backend_consistent',
       dt_prop_on_ns: Math.round(dtProp * 1e10) / 10,
       dt_abs_margin_ns: Math.round(dtAbs * 1e10) / 10,
       dt_safety_mult: Math.round(dtSafety * 1000) / 1000,
     },
-    model_note: `${calEnabled ? 'Scope-match calibration is enabled. ' : ''}Analytical 4-region MOSFET switching model. Miller relation: t_miller_on ≈ Qgd_eff / Ig_on, where Ig_on ≈ min(Isource, (Vdrv−Vplateau)/Rg_on_total). Assumes linear Ciss/Cgd, constant load current, and ideal gate driver current limiting. Waveform shapes and timing are representative — for exact behavior, validate with oscilloscope measurement.`,
+    model_note: 'Analytical 4-region MOSFET switching model with nonlinear Cgd(Vds), Qrr-coupled turn-on Miller charge, common-source inductance (Ls*di/dt) feedback, and temperature-adjusted charge/current terms. Vgs follows RC charging/discharging with Miller plateau, and parasitic ringing is modeled from gate/power loop L-C dynamics. Validate final tuning against oscilloscope capture at the same operating point.',
   }
 
   // Apply parasitic RLC effects if inductance values are present
@@ -547,13 +613,14 @@ function computeWaveformFrontend(mosfetP, driverP, systemSpecs, gateCalc, design
       i_load,
       v_drv,
       vgs_pl,
+      io_source: io_source_eff,
+      io_sink: io_sink_eff,
     },
     designConstants,
     {
-      enabled: calEnabled,
-      ringMHz: calRingMHz,
-      overshootV: calOvershootV,
-    }
+      strayNh: strayOverrideNh,
+      snubberCsPf,
+    },
   )
 }
 
@@ -955,52 +1022,6 @@ function drawScope(canvas, waveform, visibleChannels, viewWindow) {
   ctx.fillText('Analytical 4-region model', w - 6, h - 4)
 }
 
-function buildWaveformConsistencyReport(backendWaveform, frontendWaveform) {
-  if (!backendWaveform || !frontendWaveform) return null
-  const b = backendWaveform.annotations
-  const f = frontendWaveform.annotations
-  if (!b || !f) return null
-
-  const metrics = [
-    { key: 'turn_on.t_miller_on_ns', label: 'Turn-on Miller', unit: 'ns', pctTol: 0.12, absTol: 2.0 },
-    { key: 'turn_off.t_miller_off_ns', label: 'Turn-off Miller', unit: 'ns', pctTol: 0.12, absTol: 2.0 },
-    { key: 'turn_on.total_on_ns', label: 'Total turn-on', unit: 'ns', pctTol: 0.12, absTol: 3.0 },
-    { key: 'turn_off.total_off_ns', label: 'Total turn-off', unit: 'ns', pctTol: 0.12, absTol: 3.0 },
-    { key: 'dead_time_ns', label: 'Dead time', unit: 'ns', pctTol: 0.10, absTol: 5.0 },
-    { key: 'vgs_plateau_v', label: 'Vgs plateau', unit: 'V', pctTol: 0.08, absTol: 0.2 },
-  ]
-
-  const getByPath = (obj, path) => path.split('.').reduce((acc, p) => (acc == null ? undefined : acc[p]), obj)
-  const issues = []
-
-  for (const m of metrics) {
-    const bVal = getByPath(b, m.key)
-    const fVal = getByPath(f, m.key)
-    if (!Number.isFinite(bVal) || !Number.isFinite(fVal)) continue
-    const absErr = Math.abs(fVal - bVal)
-    const relErr = absErr / Math.max(Math.abs(bVal), 1e-6)
-    const tol = Math.max(m.absTol, Math.abs(bVal) * m.pctTol)
-    if (absErr > tol) {
-      issues.push({
-        ...m,
-        backend: bVal,
-        frontend: fVal,
-        absErr,
-        relErr,
-      })
-    }
-  }
-
-  const status = issues.length === 0 ? 'ok' : 'warn'
-  issues.sort((x, y) => y.relErr - x.relErr)
-  return {
-    status,
-    issueCount: issues.length,
-    topIssues: issues.slice(0, 3),
-  }
-}
-
-
 /* ═══════════════════════════════════════════════════════════════════════
    WAVEFORM PANEL
    ═══════════════════════════════════════════════════════════════════════ */
@@ -1011,26 +1032,30 @@ export default function WaveformPanel() {
   const canvasRef = useRef(null)
   const [visible, setVisible] = useState(DEFAULT_VISIBLE)
 
-  // Use backend waveform if available; otherwise compute in frontend
+  // Live waveform source: always compute from current tab inputs + extracted params.
   const mosfetParams = useMemo(() => extractMosfetSIParams(project.blocks.mosfet), [project.blocks.mosfet])
   const driverParams = useMemo(() => extractDriverSIParams(project.blocks.driver), [project.blocks.driver])
   const gateCalc = project.calculations?.gate_resistors
+  const mosfetLosses = project.calculations?.mosfet_losses || null
+  const snubberCalc = project.calculations?.snubber || null
+  const passivesOverrides = project.blocks.passives?.overrides || {}
 
   const frontendWaveform = useMemo(
-    () => computeWaveformFrontend(mosfetParams, driverParams, project.system_specs, gateCalc, project.design_constants),
-    [mosfetParams, driverParams, project.system_specs, gateCalc, project.design_constants]
+    () => computeWaveformFrontend(
+      mosfetParams,
+      driverParams,
+      project.system_specs,
+      gateCalc,
+      project.design_constants,
+      passivesOverrides,
+      snubberCalc,
+      mosfetLosses,
+    ),
+    [mosfetParams, driverParams, project.system_specs, gateCalc, project.design_constants, passivesOverrides, snubberCalc, mosfetLosses]
   )
 
   const backendWaveform = project.calculations?.waveform || null
-  const consistency = useMemo(
-    () => buildWaveformConsistencyReport(backendWaveform, frontendWaveform),
-    [backendWaveform, frontendWaveform]
-  )
-
-  // Reliability-first source of truth:
-  // 1) Prefer backend waveform (shared engine used for project calculations/reports)
-  // 2) Fall back to frontend preview only when backend waveform is unavailable
-  const waveform = backendWaveform || frontendWaveform
+  const waveform = frontendWaveform || backendWaveform
   const hasData = waveform && waveform.time_ns && waveform.time_ns.length > 0
 
   // View window (pan/zoom)
@@ -1237,7 +1262,6 @@ export default function WaveformPanel() {
 
   const ann = waveform?.annotations
   const params = waveform?.params_used
-  const isFromFrontend = !project.calculations?.waveform && !!frontendWaveform
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 1100 }}>
@@ -1247,9 +1271,7 @@ export default function WaveformPanel() {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--txt-1)' }}>Switching Waveform Simulator</div>
           <div style={{ fontSize: 11, color: 'var(--txt-3)' }}>
-            {isFromFrontend
-              ? 'Frontend preview from extracted parameters • Run Calculations for authoritative waveform'
-              : 'Scroll to zoom • Click & drag to pan • Shift+scroll to pan'}
+            Scroll to zoom • Click and drag to pan • Shift+scroll to pan
           </div>
         </div>
         {hasData && <button onClick={exportPNG} className="scope-btn" title="Export current zoomed view as PNG">📷 Export PNG</button>}
@@ -1266,27 +1288,6 @@ export default function WaveformPanel() {
         </div>
       ) : (
         <>
-          {consistency?.status === 'warn' && (
-            <div style={{
-              padding: '8px 12px', borderRadius: 8,
-              border: '1px solid rgba(255,193,7,0.35)',
-              background: 'rgba(255,193,7,0.10)',
-              color: '#FFD54F', fontSize: 11, lineHeight: 1.6,
-            }}>
-              <div style={{ fontWeight: 700, marginBottom: 2 }}>
-                Backend/Preview consistency warning: {consistency.issueCount} metric(s) exceed strict tolerance.
-              </div>
-              <div style={{ opacity: 0.92 }}>
-                {consistency.topIssues.map((it, idx) => (
-                  <div key={idx}>
-                    {it.label}: backend {it.backend.toFixed(2)} {it.unit}, preview {it.frontend.toFixed(2)} {it.unit}
-                    {' '}({(it.relErr * 100).toFixed(0)}% diff)
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Toolbar */}
           <div className="scope-toolbar">
             {CHANNELS.map(ch => (
@@ -1319,9 +1320,6 @@ export default function WaveformPanel() {
 
           {/* Waveform Override Inputs */}
           <WaveformInputsBar project={project} dispatch={dispatch} gateCalc={gateCalc} />
-
-          {/* Scope-match calibration inputs */}
-          <ScopeCalibrationBar project={project} dispatch={dispatch} waveform={waveform} />
 
           {/* PCB Parasitic Inductance Inputs */}
           <PCBParasiticsBar project={project} dispatch={dispatch} parasitics={waveform?.parasitics} />
@@ -1385,7 +1383,7 @@ export default function WaveformPanel() {
               lineHeight: 1.7, fontFamily: 'var(--font-mono)',
             }}>
               <span style={{ color: 'var(--txt-2)', fontWeight: 700 }}>Params: </span>
-              Ciss={params.ciss_pf}pF · Qg={params.qg_nc}nC · Qgd_eff={params.qgd_eff_nc ?? params.qgd_nc}nC · Qgd_spec={params.qgd_spec_nc ?? params.qgd_nc}nC ·
+              Ciss={params.ciss_pf}pF · Qg={params.qg_nc}nC · Qgd_on={params.qgd_on_eff_nc ?? params.qgd_eff_nc ?? params.qgd_nc}nC · Qgd_off={params.qgd_off_eff_nc ?? params.qgd_eff_nc ?? params.qgd_nc}nC · Qgd_spec={params.qgd_spec_nc ?? params.qgd_nc}nC ·
               Rg_int={params.rg_int_ohm}Ω · Rg_on={params.rg_on_ext_ohm}Ω · Rg_off={params.rg_off_ext_ohm}Ω ·
               Vdrv={params.v_drv_v}V · Vbus={params.v_bus_v}V · Iload={params.i_load_a}A · fsw={params.fsw_khz}kHz
             </div>
@@ -1545,223 +1543,6 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
           Leave empty for defaults. Syncs with Passives tab.
         </div>
       </div>
-    </div>
-  )
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   SCOPE MATCH CALIBRATION BAR
-   Enter measured waveform features to fit simulated shape to scope capture.
-   ═══════════════════════════════════════════════════════════════════════ */
-
-function ScopeCalibrationBar({ project, dispatch, waveform }) {
-  const specs = project.system_specs
-  const CAL_KEYS = [
-    'wave_cal_enable',
-    'wave_cal_miller_on_ns',
-    'wave_cal_miller_off_ns',
-    'wave_cal_ring_mhz',
-    'wave_cal_overshoot_v',
-  ]
-
-  const initLocal = () => ({
-    wave_cal_enable: Number(specs.wave_cal_enable || 0) > 0,
-    wave_cal_miller_on_ns: specs.wave_cal_miller_on_ns != null ? String(specs.wave_cal_miller_on_ns) : '',
-    wave_cal_miller_off_ns: specs.wave_cal_miller_off_ns != null ? String(specs.wave_cal_miller_off_ns) : '',
-    wave_cal_ring_mhz: specs.wave_cal_ring_mhz != null ? String(specs.wave_cal_ring_mhz) : '',
-    wave_cal_overshoot_v: specs.wave_cal_overshoot_v != null ? String(specs.wave_cal_overshoot_v) : '',
-  })
-
-  const [local, setLocal] = useState(initLocal)
-  const [dirty, setDirty] = useState(false)
-
-  const localUpdate = (key, val) => {
-    setLocal(prev => ({ ...prev, [key]: val }))
-    setDirty(true)
-  }
-
-  const applyAll = () => {
-    dispatch({
-      type: 'SET_SYSTEM_SPECS',
-      payload: {
-        wave_cal_enable: local.wave_cal_enable ? 1 : 0,
-        wave_cal_miller_on_ns: local.wave_cal_miller_on_ns,
-        wave_cal_miller_off_ns: local.wave_cal_miller_off_ns,
-        wave_cal_ring_mhz: local.wave_cal_ring_mhz,
-        wave_cal_overshoot_v: local.wave_cal_overshoot_v,
-      },
-    })
-    setDirty(false)
-  }
-
-  const clearAll = () => {
-    const empty = {}
-    for (const k of CAL_KEYS) empty[k] = ''
-    setLocal({
-      wave_cal_enable: false,
-      wave_cal_miller_on_ns: '',
-      wave_cal_miller_off_ns: '',
-      wave_cal_ring_mhz: '',
-      wave_cal_overshoot_v: '',
-    })
-    setDirty(false)
-    dispatch({
-      type: 'SET_SYSTEM_SPECS',
-      payload: {
-        ...empty,
-        wave_cal_enable: 0,
-      },
-    })
-  }
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter') applyAll()
-  }
-
-  const inputStyle = {
-    width: 72, padding: '3px 6px', fontSize: 11, textAlign: 'right',
-    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.20)',
-    borderRadius: 4, color: '#ffffff', fontFamily: 'var(--font-mono)', fontWeight: 600,
-  }
-  const unitStyle = { fontSize: 10, color: '#90a0b0', fontWeight: 500 }
-  const hasCalData = local.wave_cal_miller_on_ns || local.wave_cal_miller_off_ns || local.wave_cal_ring_mhz || local.wave_cal_overshoot_v
-
-  const p = waveform?.parasitics
-  const fitNh = p?.total_power_nh
-  const geomNh = (p?.power_loop_nh || 0) + (p?.pkg_inductance_nh || 0)
-  const highMismatch = Number.isFinite(fitNh) && (fitNh > Math.max(80, geomNh * 4))
-  const lowMismatch = Number.isFinite(fitNh) && Number.isFinite(geomNh) && geomNh > 1 && (fitNh < geomNh * 0.25)
-
-  return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 14px',
-      background: local.wave_cal_enable ? 'rgba(129,199,132,0.08)' : 'rgba(255,255,255,0.03)',
-      borderRadius: 8, border: `1px solid ${local.wave_cal_enable ? 'rgba(129,199,132,0.26)' : 'rgba(255,255,255,0.10)'}`,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: local.wave_cal_enable ? '#81C784' : '#c0cad4', letterSpacing: '.04em' }}>
-          🎯 SCOPE MATCH CALIBRATION
-        </span>
-        {(local.wave_cal_enable || hasCalData) && (
-          <button className="scope-btn scope-btn-sm" onClick={clearAll}>Clear Fit</button>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#c8cfd8', fontWeight: 600 }}>
-          <input
-            type="checkbox"
-            checked={local.wave_cal_enable}
-            onChange={e => localUpdate('wave_cal_enable', e.target.checked)}
-          />
-          Enable fit from measured waveform
-        </label>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ fontSize: 11, color: '#FFD700', fontWeight: 600 }}>Miller ON:</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            style={inputStyle}
-            className="inp"
-            value={local.wave_cal_miller_on_ns}
-            onKeyDown={handleKeyDown}
-            onChange={e => localUpdate('wave_cal_miller_on_ns', e.target.value)}
-            placeholder="ns"
-          />
-          <span style={unitStyle}>ns</span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ fontSize: 11, color: '#00CED1', fontWeight: 600 }}>Miller OFF:</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            style={inputStyle}
-            className="inp"
-            value={local.wave_cal_miller_off_ns}
-            onKeyDown={handleKeyDown}
-            onChange={e => localUpdate('wave_cal_miller_off_ns', e.target.value)}
-            placeholder="ns"
-          />
-          <span style={unitStyle}>ns</span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ fontSize: 11, color: '#64B5F6', fontWeight: 600 }}>Ring:</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            style={inputStyle}
-            className="inp"
-            value={local.wave_cal_ring_mhz}
-            onKeyDown={handleKeyDown}
-            onChange={e => localUpdate('wave_cal_ring_mhz', e.target.value)}
-            placeholder="MHz"
-          />
-          <span style={unitStyle}>MHz</span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ fontSize: 11, color: '#EF5350', fontWeight: 600 }}>Overshoot:</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            style={inputStyle}
-            className="inp"
-            value={local.wave_cal_overshoot_v}
-            onKeyDown={handleKeyDown}
-            onChange={e => localUpdate('wave_cal_overshoot_v', e.target.value)}
-            placeholder="V"
-          />
-          <span style={unitStyle}>V</span>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <button
-          className="scope-btn"
-          onClick={applyAll}
-          disabled={!dirty}
-          style={{
-            padding: '5px 14px', fontSize: 11, fontWeight: 700,
-            background: dirty ? 'rgba(76,175,80,0.25)' : 'rgba(255,255,255,0.06)',
-            border: `1px solid ${dirty ? 'rgba(76,175,80,0.5)' : 'rgba(255,255,255,0.15)'}`,
-            color: dirty ? '#81C784' : '#808890',
-            borderRadius: 5, cursor: dirty ? 'pointer' : 'default',
-          }}
-        >
-          {dirty ? '▶ Apply Fit' : '✓ Applied'}
-        </button>
-        {dirty && <span style={{ fontSize: 10, color: '#FFD54F' }}>Press Enter or click Apply</span>}
-        <div style={{ fontSize: 9, color: 'var(--txt-4)', marginLeft: 'auto' }}>
-          Use scope values from the same Vbus/Id condition shown above.
-        </div>
-      </div>
-
-      {local.wave_cal_enable && highMismatch && (
-        <div style={{
-          padding: '6px 10px', borderRadius: 6,
-          background: 'rgba(255,193,7,0.10)', border: '1px solid rgba(255,193,7,0.28)',
-          color: '#FFD54F', fontSize: 10, lineHeight: 1.5,
-        }}>
-          Calibration warning: entered ring/overshoot implies total power-loop L ≈ {fitNh.toFixed(1)} nH,
-          much higher than geometry estimate ≈ {geomNh.toFixed(1)} nH. Check probe grounding and measurement setup.
-        </div>
-      )}
-
-      {local.wave_cal_enable && lowMismatch && (
-        <div style={{
-          padding: '6px 10px', borderRadius: 6,
-          background: 'rgba(255,193,7,0.10)', border: '1px solid rgba(255,193,7,0.28)',
-          color: '#FFD54F', fontSize: 10, lineHeight: 1.5,
-        }}>
-          Calibration warning: entered ring/overshoot implies total power-loop L ≈ {fitNh.toFixed(1)} nH,
-          much lower than geometry estimate ≈ {geomNh.toFixed(1)} nH. Confirm Coss, ring frequency pick point, and scope bandwidth limit.
-        </div>
-      )}
     </div>
   )
 }
