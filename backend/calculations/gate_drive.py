@@ -310,7 +310,8 @@ class GateDriveMixin:
         # P_body = Vf × I_avg × dt_actual × fsw × 2 (two dead-time intervals per cycle)
         sin_avg = 2.0 / math.pi
         p_body_diode_per_leg = body_diode_vf * self.i_max * sin_avg * (dt_actual * 1e-9) * self.fsw * 2
-        num_legs = self.num_fets // 2  # 2 MOSFETs per phase leg
+        # Three physical phase legs are fixed; parallel MOSFET count should not change leg count.
+        num_legs = 3
         p_body_diode_total = p_body_diode_per_leg * num_legs
 
         # Reverse recovery time check

@@ -13,8 +13,18 @@ export default function SettingsModal() {
   function close() { dispatch({ type: 'TOGGLE_SETTINGS' }) }
 
   function save() {
+    const parsedParallel = Number.isFinite(parseInt(localSpecs.mosfets_parallel_per_switch, 10))
+      ? Math.max(1, Math.min(12, parseInt(localSpecs.mosfets_parallel_per_switch, 10)))
+      : Math.max(1, Math.round((localSpecs.num_fets || 6) / 6))
+
+    const syncedSpecs = {
+      ...localSpecs,
+      mosfets_parallel_per_switch: parsedParallel,
+      num_fets: 6 * parsedParallel,
+    }
+
     dispatch({ type: 'SET_SETTINGS', payload: { api_key: localKey.trim() } })
-    dispatch({ type: 'SET_SYSTEM_SPECS', payload: localSpecs })
+    dispatch({ type: 'SET_SYSTEM_SPECS', payload: syncedSpecs })
     toast.success('Settings saved')
     close()
   }
@@ -43,8 +53,12 @@ export default function SettingsModal() {
     { key: 'pwm_freq_hz', label: 'PWM Frequency', unit: 'Hz' },
     { key: 'ambient_temp_c', label: 'Ambient Temperature', unit: '°C' },
     { key: 'gate_drive_voltage', label: 'Gate Drive Voltage', unit: 'V' },
-    { key: 'num_fets', label: 'Number of MOSFETs', unit: 'pcs' },
   ]
+
+  const parallelPerSwitch = Number.isFinite(parseInt(localSpecs.mosfets_parallel_per_switch, 10))
+    ? Math.max(1, Math.min(12, parseInt(localSpecs.mosfets_parallel_per_switch, 10)))
+    : Math.max(1, Math.round((localSpecs.num_fets || 6) / 6))
+  const totalFetsDerived = 6 * parallelPerSwitch
 
   // overlay
   const overlay = {
@@ -159,6 +173,10 @@ export default function SettingsModal() {
                 </div>
               ))}
             </div>
+            <p style={{ fontSize: 11, color: 'var(--txt-3)', lineHeight: 1.5, marginTop: 8 }}>
+              MOSFET count is managed from the MOSFET tab parallel configuration.
+              {' '}Current: {parallelPerSwitch} per switch, total {totalFetsDerived} devices (fixed 3 limbs, 6 switch positions).
+            </p>
           </section>
 
           {/* ── Cooling Method ── */}

@@ -42,6 +42,7 @@ const DEFAULT_SYSTEM_SPECS = {
   cooling: 'natural',
   pcb_layers: 6,
   num_fets: 6,               // Total MOSFETs in inverter (6 = 3-phase half-bridge)
+  mosfets_parallel_per_switch: 1, // Parallel MOSFETs per switch position (upper/lower device of each limb)
   // Phase 2: PCB trace dimensions (mm) — used to auto-calculate parasitic inductance
   gate_trace_length_mm: 0,    // Gate driver → MOSFET gate trace length
   gate_trace_width_mm: 0,     // Gate trace width
@@ -161,6 +162,7 @@ function reducer(state, action) {
         ...state,
         project: {
           ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
           blocks: {
             ...state.project.blocks,
             [block]: {

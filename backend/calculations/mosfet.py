@@ -42,6 +42,11 @@ class MosfetMixin:
         except (TypeError, ValueError):
             lph = 0.0
 
+        # Parallel MOSFET count per switch position (upper or lower device in each limb).
+        # num_fets=6 means 1x parallel, 12 means 2x, etc.
+        n_parallel = max(1.0, float(self.num_fets) / 6.0)
+        i_max_dev = self.i_max / n_parallel
+
         # 3-phase SPWM per-switch RMS (Mohan textbook):
         # I_sw_rms = I_peak × sqrt(1/8 + M/(3π)), M = modulation index ≈ 0.9
         # This formula ALREADY accounts for duty-cycle weighting — do NOT divide by 2 again
@@ -82,6 +87,8 @@ class MosfetMixin:
             i_rms_sw = i_fund_rms
             rms_method = f"3-ph SPWM (Mohan, M={M_spwm}), no Lph for ripple"
 
+        i_rms_sw_dev = i_rms_sw / n_parallel
+
         # ─── Conduction loss with temperature-dependent Rds(on) derating ──
         # Silicon MOSFET Rds(on) scales roughly as (Tj/Tref)^α where α ≈ 2.0-2.3
         # We iterate: guess Tj → compute Rds(Tj) → compute loss → new Tj → converge
@@ -121,8 +128,8 @@ class MosfetMixin:
 
         self._log_hc("mosfet_losses", "Rds(on) thermal derating", f"{rds_derating}x",
                       f"{'User override' if user_overrode_derating else f'Iterative model at Tj≈{tj_for_rds}°C (α=2.1)'}", "thermal.rds_derating")
-        # P_cond = I_rms² × Rds(on)  — NO /2, I_rms is already per-switch
-        p_cond  = i_rms_sw**2 * rds_hot
+        # P_cond(per-device) = I_device_rms² × Rds(on)
+        p_cond  = i_rms_sw_dev**2 * rds_hot
 
         # ─── Switching loss — use actual Rg from gate_resistors if available ───
         rg_int = self._get(self.mosfet, "MOSFET", "rg_int", None)  # Ω
@@ -197,12 +204,12 @@ class MosfetMixin:
             t_miller_off = qgd / i_gate_off if i_gate_off > 0 else tf
 
             # Sinusoidally-averaged switching energy: E = 0.5 × V × I_avg × t
-            e_on = 0.5 * self.v_bus * self.i_max * sin_avg * t_miller_on
-            e_off = 0.5 * self.v_bus * self.i_max * sin_avg * t_miller_off
+            e_on = 0.5 * self.v_bus * i_max_dev * sin_avg * t_miller_on
+            e_off = 0.5 * self.v_bus * i_max_dev * sin_avg * t_miller_off
             p_sw = (e_on + e_off) * self.fsw
 
             # Also compute overlap model for comparison
-            p_sw_overlap = self.v_bus * self.i_max * (tr + tf) * self.fsw / math.pi
+            p_sw_overlap = self.v_bus * i_max_dev * (tr + tf) * self.fsw / math.pi
             sw_method = (
                 f"Qgd-based ({rg_source}): Vplateau={vgs_plateau:.1f}V, "
                 f"Rg_on_total={rg_total_on:.2f}Ω, Rg_off_total={rg_total_off:.2f}Ω, "
@@ -219,7 +226,7 @@ class MosfetMixin:
         else:
             # ─── Standard overlap model (sinusoidally averaged) ───
             # P_sw = V_bus × I_peak × (tr + tf) × fsw / π
-            p_sw = self.v_bus * self.i_max * (tr + tf) * self.fsw / math.pi
+            p_sw = self.v_bus * i_max_dev * (tr + tf) * self.fsw / math.pi
             sw_method = "overlap model, sin-averaged (Vgs_plateau or Rg_int not available)"
             driver_limited = False
 
@@ -255,7 +262,7 @@ class MosfetMixin:
             pass
         dt_s = dt_ns * 1e-9
         # Two dead-time events per PWM cycle, sin-averaged current, per FET = half a leg
-        p_body_diode = body_diode_vf * self.i_max * sin_avg * dt_s * self.fsw * 2 / 2
+        p_body_diode = body_diode_vf * i_max_dev * sin_avg * dt_s * self.fsw * 2 / 2
         self.audit_log.append(
             f"[MOSFET] Body diode loss: Vf={body_diode_vf:.1f}V × I_avg × "
             f"dt={dt_ns:.0f}ns × fsw × 2 events / 2 FETs = {p_body_diode:.3f}W/FET."
@@ -289,16 +296,18 @@ class MosfetMixin:
             "total_all_6_fets_w":         round(p_total_6, 3),  # backward compat
             "num_fets":                   self.num_fets,
             "i_rms_switch_a":             round(i_rms_sw,  2),
+            "i_rms_per_device_a":         round(i_rms_sw_dev, 2),
             "i_rms_fundamental_a":        round(i_fund_rms, 2),
             "i_rms_ripple_a":             round(i_ripple_rms, 2) if lph > 0 else None,
             "ripple_delta_i_a":           round(delta_i, 1) if lph > 0 else None,
+            "parallel_per_switch":        round(n_parallel, 3),
             "rds_on_derated_mohm":        round(rds_mohm*rds_derating, 3),
             "junction_temp_est_c":        round(t_junc,    1),
             "efficiency_mosfet_pct":      round(eff,       2),
             "dead_time_used_ns":          round(dt_ns, 1),
             "notes": {
                 "rds_basis":    f"Rds(on)={rds_mohm}mΩ × {rds_derating} temp derating",
-                "irms_method":  f"I_rms={round(i_rms_sw,2)}A — {rms_method}",
+                "irms_method":  f"I_rms(total switch)={round(i_rms_sw,2)}A, I_rms/device={round(i_rms_sw_dev,2)}A (N={round(n_parallel,3)}) — {rms_method}",
                 "sw_basis":     f"tr={tr_ns}ns, tf={tf_ns}ns @ fsw={self.fsw/1e3:.0f}kHz, Vbus={self.v_bus}V — {sw_method}",
                 "rr_basis":     f"Qrr={qrr_nc}nC × Vbus × fsw",
                 "coss_basis":   f"Qoss={'%.0f' % (qoss*1e9) if qoss else 'N/A'}nC — {'from datasheet' if qoss else 'not extracted'}",

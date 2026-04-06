@@ -1,26 +1,10 @@
 import React, { useState, useRef, useMemo } from 'react'
-import { Zap, RefreshCw, ChevronDown, AlertTriangle, Maximize2, X, Eye, ArrowUpRight, ArrowDownRight, Scale, Pencil, CornerDownLeft, ArrowRight, Check, Shield, Clock, Activity } from 'lucide-react'
+import { Zap, RefreshCw, ChevronDown, AlertTriangle, Maximize2, X, Eye, Pencil, CornerDownLeft, ArrowRight, ArrowDownRight, Check, Shield, Clock, Activity } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
 import { CALC_CRITICAL } from './BlockPanel.jsx'
 import { runCalculations, runReverseCalculation } from '../api.js'
 import { fmtNum, thresholdClass } from '../utils.js'
-import ComparisonCard, { MOSFET_DEPENDENT_SECTIONS } from './ComparisonCard.jsx'
-
-// Directions for inline comparison annotations
-const METRIC_DIRS = {
-  voltage_margin_pct: 'higher', current_margin_pct: 'higher',
-  conduction_loss_per_fet_w: 'lower', switching_loss_per_fet_w: 'lower',
-  recovery_loss_per_fet_w: 'lower', total_loss_per_fet_w: 'lower',
-  total_all_6_fets_w: 'lower', efficiency_mosfet_pct: 'higher',
-  t_junction_est_c: 'lower', thermal_margin_c: 'higher',
-  p_per_fet_w: 'lower', copper_area_per_fet_mm2: 'lower',
-  system_total_loss_w: 'lower',
-  dt_minimum_ns: 'lower', dt_recommended_ns: 'lower',
-  dt_actual_ns: 'lower', dt_pct_of_period: 'lower',
-  voltage_overshoot_v: 'lower', v_sw_peak_v: 'lower',
-  p_total_all_snubbers_w: 'lower', p_total_6_snubbers_w: 'lower', min_hs_on_time_ns: 'lower',
-}
 
 // Which calc sections depend on which block being uploaded
 const BLOCK_DEPS = {
@@ -119,31 +103,6 @@ function uvloDataBadgeInfo(status) {
   }
 }
 
-// Quick verdict score from two result sets
-function quickVerdictScore(resA, resB) {
-  if (!resA || !resB) return null
-  const metrics = [
-    { key: 'total_loss_per_fet_w', section: 'mosfet_losses', dir: 'lower' },
-    { key: 'efficiency_mosfet_pct', section: 'mosfet_losses', dir: 'higher' },
-    { key: 't_junction_est_c', section: 'thermal', dir: 'lower' },
-    { key: 'thermal_margin_c', section: 'thermal', dir: 'higher' },
-    { key: 'dt_minimum_ns', section: 'dead_time', dir: 'lower' },
-    { key: 'voltage_margin_pct', section: 'mosfet_rating_check', dir: 'higher' },
-    { key: 'current_margin_pct', section: 'mosfet_rating_check', dir: 'higher' },
-    { key: 'voltage_overshoot_v', section: 'snubber', dir: 'lower' },
-  ]
-  let a = 0, b = 0, t = 0
-  for (const m of metrics) {
-    const vA = resA?.[m.section]?.[m.key]
-    const vB = resB?.[m.section]?.[m.key]
-    if (vA == null || vB == null || typeof vA !== 'number' || typeof vB !== 'number') { t++; continue }
-    if (Math.abs(vA - vB) < 0.001) { t++; continue }
-    const aWins = m.dir === 'lower' ? vA < vB : vA > vB
-    if (aWins) a++; else b++
-  }
-  return { a, b, t }
-}
-
 // Maps section keys to friendly labels for the transparency panel
 const SECTION_LABELS = {}
 // Will be populated from SECTIONS after definition
@@ -158,8 +117,6 @@ export default function CalculationsPanel() {
   const [showGrid, setShowGrid] = useState(false)
   const [showTransparency, setShowTransparency] = useState(false)
   const [expandedTransMods, setExpandedTransMods] = useState({})
-  const [compResults, setCompResults] = useState(null) // MOSFET B calc results
-  const [showComparison, setShowComparison] = useState(false)
   const [reverseEditing, setReverseEditing] = useState({}) // { key: value_string }
   const [reverseResults, setReverseResults] = useState({}) // { key: result_object }
   const [reverseLoading, setReverseLoading] = useState({}) // { key: bool }
@@ -262,36 +219,14 @@ export default function CalculationsPanel() {
       })
       dispatch({ type: 'SET_CALCULATIONS', payload: result })
 
-      // Run comparison MOSFET calculation if mosfet_b is uploaded and has valid params
-      const mosfetB = project.blocks.mosfet_b
-      if (mosfetB?.status === 'done' && mosfetB?.raw_data?.parameters?.length > 0) {
-        try {
-          const resultB = await runCalculations({
-            ...basePayload,
-            mosfet_params: buildParamsDict(mosfetB),
-          })
-          setCompResults(resultB)
-          dispatch({ type: 'SET_COMPARISON_RESULTS', payload: resultB })
-        } catch (eB) {
-          console.warn('MOSFET B calculation failed:', eB.message)
-          setCompResults(null)
-          dispatch({ type: 'SET_COMPARISON_RESULTS', payload: null })
-        }
-      } else {
-        setCompResults(null)
-        dispatch({ type: 'SET_COMPARISON_RESULTS', payload: null })
-      }
+      // Legacy compare sidebar flow removed: dedicated Compare tab handles analyzer + selection.
+      dispatch({ type: 'SET_COMPARISON_RESULTS', payload: null })
 
       if (warnings.length === 0) toast.success('Done!', { id: 'c' })
     } catch (e) {
       toast.error(e.message, { id: 'c' })
     } finally { setLoading(false); calcInFlight.current = false }
   }
-
-  // Quick score for comparison button
-  const quickScore = useMemo(() => quickVerdictScore(project.calculations, compResults), [project.calculations, compResults])
-  const nameA = project.blocks.mosfet?.raw_data?.component_name || 'Primary'
-  const nameB = project.blocks.mosfet_b?.raw_data?.component_name || 'Compare'
 
   // Reverse calculation solver
   async function solveReverse(key) {
@@ -608,15 +543,6 @@ export default function CalculationsPanel() {
           </div>
         )}
 
-        {/* ── MOSFET Comparison Button (when comparing) ──────────── */}
-        {C && compResults && quickScore && (
-          <button className="btn comp-results-btn" onClick={() => setShowComparison(true)}>
-            <Scale size={13} />
-            <span>Compare: {nameA} vs {nameB}</span>
-            <span className="comp-results-btn-badge">{quickScore.a}–{quickScore.t}–{quickScore.b}</span>
-          </button>
-        )}
-
         {/* ── Transparency Panel (below run button) ───────────── */}
         {C && renderTransparency()}
 
@@ -765,13 +691,6 @@ export default function CalculationsPanel() {
                     const tc = (wrn !== undefined || dng !== undefined) ? thresholdClass(v, wrn, dng) : ''
                     const tip = buildRowTip(r, tc, sec.key)
 
-                    // Inline comparison annotation
-                    const compV = compResults?.[sec.key]?.[r.key]
-                    const showComp = compV != null && MOSFET_DEPENDENT_SECTIONS.has(sec.key) && typeof compV === 'number'
-                    const compDelta = showComp && v !== 0 ? ((compV - v) / Math.abs(v) * 100) : 0
-                    const compDir = METRIC_DIRS[r.key]
-                    const compBetter = compDir ? (compDir === 'lower' ? compV < v : compDir === 'higher' ? compV > v : null) : null
-
                     // Reverse calculation state
                     const isReversible = REVERSIBLE_KEYS.has(r.key)
                     const isEditing = reverseEditing[r.key] !== undefined
@@ -837,13 +756,6 @@ export default function CalculationsPanel() {
                                   </button>
                                 )}
                               </>
-                            )}
-                            {showComp && compV !== v && !isEditing && (
-                              <span className={`comp-inline ${compBetter === true ? 'better' : compBetter === false ? 'worse' : 'neutral'}`}
-                                    title={`${project.blocks.mosfet_b?.raw_data?.component_name || 'MOSFET B'}: ${fmtNum(compV, r.dec ?? 3)}${r.unit ? ' ' + r.unit : ''}`}>
-                                {compDelta > 0 ? <ArrowUpRight size={8} /> : <ArrowDownRight size={8} />}
-                                <span>{fmtNum(compV, r.dec ?? 3)}</span>
-                              </span>
                             )}
                           </div>
                         </div>
@@ -1045,39 +957,6 @@ export default function CalculationsPanel() {
           </div>
         )}
       </div>
-
-      {/* ── Grid Viewer Modal ─────────────────────────────────── */}
-      {/* ── Comparison Slide-out Panel ───────────────────────── */}
-      {showComparison && C && compResults && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex' }}>
-          <div style={{ flex: 1, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }} onClick={() => setShowComparison(false)} />
-          <div style={{
-            width: '85%', maxWidth: 1000, background: 'var(--bg-1)',
-            borderLeft: '1px solid var(--border-3)',
-            boxShadow: '-10px 0 30px rgba(0,0,0,0.5)',
-            display: 'flex', flexDirection: 'column',
-            animation: 'slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
-          }}>
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Scale size={18} style={{ color: 'var(--cyan)' }} />
-                <h2 style={{ margin: 0, fontSize: 18, color: 'var(--txt-1)' }}>MOSFET Comparison</h2>
-                <span style={{ fontSize: 12, color: 'var(--txt-3)' }}>{nameA} vs {nameB}</span>
-              </div>
-              <button className="btn btn-ghost btn-icon" onClick={() => setShowComparison(false)}><X size={20} /></button>
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-              <ComparisonCard
-                resultsA={C}
-                resultsB={compResults}
-                nameA={nameA}
-                nameB={nameB}
-                iMax={project.system_specs.max_phase_current}
-              />
-            </div>
-          </div>
-        </div>
-      )}
 
       {showGrid && C && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex' }}>

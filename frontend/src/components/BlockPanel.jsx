@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, RefreshCw, CheckCircle, AlertCircle, ChevronDown, ChevronRight, AlertTriangle, X, Plus } from 'lucide-react'
+import { Upload, RefreshCw, CheckCircle, AlertCircle, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject } from '../context/ProjectContext.jsx'
 import { extractDatasheet } from '../api.js'
@@ -8,18 +8,6 @@ import { PARAM_LABELS } from '../constants.js'
 import ParameterTable from './ParameterTable.jsx'
 import CalculationsPanel from './CalculationsPanel.jsx'
 import UnitPicker from './UnitPicker.jsx'
-
-// Config for the second MOSFET (comparison)
-const MOSFET_B_CONFIG = {
-  key: 'mosfet_b',
-  label: 'MOSFET B',
-  fullLabel: 'MOSFET B (Compare)',
-  icon: '🔋',
-  color: '#ff8844',
-  type: 'upload',
-  extractionType: 'mosfet',
-  desc: 'Second MOSFET for side-by-side comparison',
-}
 
 // ── ESSENTIAL PARAMS ────────────────────────────────────────────────────────
 // These are required for calculations and board design.
@@ -137,21 +125,13 @@ export default function BlockPanel({ blockKey, config }) {
   const { state, dispatch } = useProject()
   const { settings } = state
   const [collapsed, setCollapsed] = useState({})
-  const [mosfetTab, setMosfetTab] = useState('primary')
-
-  // ── MOSFET comparison tab logic ─────────────────────────────────────
   const isMosfet = blockKey === 'mosfet'
-  const hasCompare = isMosfet && state.project.blocks.mosfet_b != null
 
-  // If compare was removed while on compare tab, snap back to primary
-  const effectiveTab = (mosfetTab === 'compare' && !hasCompare) ? 'primary' : mosfetTab
-
-  // Determine effective block/config for the active tab
-  const activeBlockKey = (isMosfet && effectiveTab === 'compare' && hasCompare) ? 'mosfet_b' : blockKey
-  const activeConfig = (activeBlockKey === 'mosfet_b') ? MOSFET_B_CONFIG : config
+  const activeBlockKey = blockKey
+  const activeConfig = config
 
   const blockState = state.project.blocks[activeBlockKey]
-  if (!blockState) return null // safety for null mosfet_b
+  if (!blockState) return null
 
   async function doExtract(file) {
     if (!settings.api_key) {
@@ -164,7 +144,6 @@ export default function BlockPanel({ blockKey, config }) {
     try {
       dispatch({ type: 'SET_BLOCK_STATUS', payload: { block: activeBlockKey, status: 'extracting' } })
       toast.loading('Claude is reading the datasheet…', { id: 'ex' })
-      // Use extractionType for API call (mosfet_b → 'mosfet'), activeBlockKey for dispatch
       const extractionType = activeConfig.extractionType || activeBlockKey
       const data = await extractDatasheet(extractionType, file, settings.api_key)
       dispatch({ type: 'SET_BLOCK_DATA', payload: { block: activeBlockKey, filename: file.name, raw_data: data } })
@@ -191,9 +170,9 @@ export default function BlockPanel({ blockKey, config }) {
     groups[cat].push(p)
   }
 
-  // Detect missing expected params (mosfet_b uses same expected params as mosfet)
+  // Detect missing expected params
   const extractedIds = new Set((raw_data?.parameters || []).map(p => p.id))
-  const paramsLookupKey = activeBlockKey === 'mosfet_b' ? 'mosfet' : activeBlockKey
+  const paramsLookupKey = activeBlockKey
   const expectedIds = EXPECTED_PARAMS[paramsLookupKey] || []
   const missingIds = expectedIds.filter(id => !extractedIds.has(id))
 
@@ -206,59 +185,6 @@ export default function BlockPanel({ blockKey, config }) {
     <div style={{ display: 'flex', gap: 14, height: '100%', minHeight: 0 }}>
       {/* ─── Left: Upload + params ─────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0, overflowY: 'auto', paddingRight: 4 }}>
-
-        {/* ── MOSFET comparison tab bar ────────────────────────────── */}
-        {isMosfet && (
-          <div className="mosfet-tab-bar">
-            <button
-              className={`mosfet-tab ${effectiveTab === 'primary' ? 'active' : ''}`}
-              onClick={() => setMosfetTab('primary')}
-            >
-              <span className="mosfet-tab-icon">🔋</span>
-              <span>Primary</span>
-              {state.project.blocks.mosfet?.raw_data?.component_name && (
-                <span className="mosfet-tab-chip">{state.project.blocks.mosfet.raw_data.component_name}</span>
-              )}
-              {state.project.blocks.mosfet?.status === 'done' && <span className="mosfet-tab-dot done" />}
-            </button>
-
-            {hasCompare ? (
-              <button
-                className={`mosfet-tab ${effectiveTab === 'compare' ? 'active' : ''}`}
-                onClick={() => setMosfetTab('compare')}
-              >
-                <span className="mosfet-tab-icon">🔋</span>
-                <span>Compare</span>
-                {state.project.blocks.mosfet_b?.raw_data?.component_name && (
-                  <span className="mosfet-tab-chip compare">{state.project.blocks.mosfet_b.raw_data.component_name}</span>
-                )}
-                {state.project.blocks.mosfet_b?.status === 'done' && <span className="mosfet-tab-dot done" />}
-                <span
-                  className="mosfet-tab-remove"
-                  onClick={e => {
-                    e.stopPropagation()
-                    dispatch({ type: 'REMOVE_MOSFET_B' })
-                    setMosfetTab('primary')
-                  }}
-                  title="Remove comparison MOSFET"
-                >
-                  <X size={10} />
-                </span>
-              </button>
-            ) : (
-              <button
-                className="mosfet-tab add-tab"
-                onClick={() => {
-                  dispatch({ type: 'ADD_MOSFET_B' })
-                  setMosfetTab('compare')
-                }}
-              >
-                <Plus size={12} />
-                <span>Compare MOSFET</span>
-              </button>
-            )}
-          </div>
-        )}
 
         {/* Block info card */}
         <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -303,6 +229,10 @@ export default function BlockPanel({ blockKey, config }) {
             </button>
           )}
         </div>
+
+        {isMosfet && (
+          <MosfetParallelConfig systemSpecs={state.project.system_specs} dispatch={dispatch} />
+        )}
 
         {/* Upload zone or loading */}
         {(status === 'idle' || status === 'error') && (
@@ -525,6 +455,81 @@ export default function BlockPanel({ blockKey, config }) {
       <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
         <CalculationsPanel />
       </div>
+    </div>
+  )
+}
+
+function MosfetParallelConfig({ systemSpecs, dispatch }) {
+  const currentN = Number.isFinite(parseInt(systemSpecs.mosfets_parallel_per_switch, 10))
+    ? Math.max(1, parseInt(systemSpecs.mosfets_parallel_per_switch, 10))
+    : Math.max(1, Math.round((systemSpecs.num_fets || 6) / 6))
+
+  const updateN = (value) => {
+    const parsed = parseInt(value, 10)
+    if (!Number.isFinite(parsed)) return
+    const n = Math.max(1, Math.min(12, parsed))
+    dispatch({
+      type: 'SET_SYSTEM_SPECS',
+      payload: {
+        mosfets_parallel_per_switch: n,
+        num_fets: 6 * n,
+      },
+    })
+  }
+
+  const iTotal = Number(systemSpecs.max_phase_current) || 0
+  const iPerDevice = currentN > 0 ? iTotal / currentN : iTotal
+
+  return (
+    <div className="card" style={{ padding: '10px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--txt-1)' }}>Parallel MOSFET Configuration</div>
+          <div style={{ fontSize: 10, color: 'var(--txt-3)', marginTop: 1 }}>
+            3 limbs fixed. External Rg value is per MOSFET device (same value for each parallel path).
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 10, color: 'var(--txt-3)' }}>Per switch</label>
+          <input
+            type="number"
+            min="1"
+            max="12"
+            step="1"
+            className="inp inp-mono inp-sm"
+            style={{ width: 72, textAlign: 'center' }}
+            value={currentN}
+            onChange={(e) => updateN(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 6 }}>
+        <InfoMini label="Limbs" value="3" />
+        <InfoMini label="Switches" value="6" />
+        <InfoMini label="Total FETs" value={String(6 * currentN)} />
+        <InfoMini label="I per device" value={`${iPerDevice.toFixed(1)} A`} />
+      </div>
+      <div style={{ fontSize: 10, color: 'var(--txt-4)', marginTop: 6 }}>
+        Phase current in system specs is treated as total branch current; per-device stress scales by parallel count.
+      </div>
+    </div>
+  )
+}
+
+function InfoMini({ label, value }) {
+  return (
+    <div style={{
+      background: 'var(--bg-3)',
+      border: '1px solid var(--border-1)',
+      borderRadius: 6,
+      padding: '5px 6px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 1,
+    }}>
+      <span style={{ fontSize: 9, color: 'var(--txt-3)' }}>{label}</span>
+      <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--txt-1)', fontWeight: 700 }}>{value}</span>
     </div>
   )
 }

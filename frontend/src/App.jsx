@@ -152,11 +152,11 @@ export const BLOCK_CONFIGS = {
   compare: {
     key: 'compare',
     label: 'Compare',
-    fullLabel: 'MOSFET Comparison',
+    fullLabel: 'MOSFET Loss Analyzer',
     icon: '⚖️',
     color: '#00d4e8',
     type: 'compare',
-    desc: 'Head-to-head MOSFET comparison — loss, thermal, rating, radar, datasheet params',
+    desc: 'Batch MOSFET datasheet analysis — queued extraction, ranking, timing and optional project selection',
   },
 }
 

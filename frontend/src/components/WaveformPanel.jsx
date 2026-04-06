@@ -73,6 +73,42 @@ function calcNonlinearQgd(vSwing, qgdSpec, vTest, vBus, crss) {
   return { qgdEff: q, method: 'nonlinear_cgd_integral' }
 }
 
+function adaptiveSampleCount(totalView, featureTimes, minPoints = 700, maxPoints = 6000) {
+  const finiteFeatures = featureTimes.filter(v => Number.isFinite(v) && v > 0)
+  const smallestFeature = finiteFeatures.length ? Math.min(...finiteFeatures) : totalView / minPoints
+  const targetDt = Math.max(0.25e-9, smallestFeature / 20)
+  const n = Math.ceil(totalView / targetDt)
+  return Math.max(minPoints, Math.min(maxPoints, n))
+}
+
+function evaluateWaveformHealth({
+  t_r3,
+  t_r3_off,
+  t_turn_on,
+  t_turn_off,
+  dead_time,
+  ig_miller_on,
+  ig_miller_off,
+  ig_miller_on_floor,
+  ig_miller_off_floor,
+  fsw,
+}) {
+  const issues = []
+  const halfPeriod = 0.5 / Math.max(fsw, 1)
+
+  if (!Number.isFinite(t_r3) || t_r3 <= 0) issues.push('Invalid turn-on Miller duration')
+  if (!Number.isFinite(t_r3_off) || t_r3_off <= 0) issues.push('Invalid turn-off Miller duration')
+  if (t_r3 > 5e-6) issues.push('Turn-on Miller duration exceeds 5us')
+  if (t_r3_off > 5e-6) issues.push('Turn-off Miller duration exceeds 5us')
+  if (t_turn_on > halfPeriod * 0.9) issues.push('Total turn-on exceeds 90% of PWM half-cycle')
+  if (t_turn_off > halfPeriod * 0.9) issues.push('Total turn-off exceeds 90% of PWM half-cycle')
+  if (dead_time >= 1.95e-6) issues.push('Dead-time hit max clamp')
+  if (ig_miller_on <= ig_miller_on_floor * 1.02 && t_r3 > 1.5e-6) issues.push('Turn-on Miller current collapsed to floor')
+  if (ig_miller_off <= ig_miller_off_floor * 1.02 && t_r3_off > 1.5e-6) issues.push('Turn-off Miller current collapsed to floor')
+
+  return { valid: issues.length === 0, issues }
+}
+
 function extractMosfetSIParams(blockState) {
   if (!blockState || blockState.status !== 'done') return null
   const dict = buildParamsDict(blockState)
@@ -197,6 +233,14 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
     Math.abs((v_drv - vgs_pl_actual) / Math.max(rg_on, 0.2)),
     Math.abs(vgs_pl_actual / Math.max(rg_off, 0.2)),
   ) * 1.35
+  const parasiticClamp = {
+    vgs_clamped_points: 0,
+    vds_clamped_points: 0,
+    id_clamped_points: 0,
+    ig_clamped_points: 0,
+    vds_spike_limited_events: 0,
+  }
+  const spikeLimitEventSeen = { turn_on: false, turn_off: false }
 
   for (let i = 0; i < n; i++) {
     const t_ns = waveform.time_ns[i]
@@ -268,7 +312,18 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
           // V_spike = I × √(L/C) — lossless LC impulse (upper bound)
           // Cap by available voltage headroom to keep physically plausible output.
           const z_char = Math.sqrt(L_ring_eff / c_eff)
-          let v_spike = Math.min(i_load * z_char, vdsOvershootCap)
+          const v_spike_ideal = i_load * z_char
+          if (v_spike_ideal > vdsOvershootCap + 1e-9) {
+            if (direction > 0 && !spikeLimitEventSeen.turn_off) {
+              parasiticClamp.vds_spike_limited_events += 1
+              spikeLimitEventSeen.turn_off = true
+            }
+            if (direction < 0 && !spikeLimitEventSeen.turn_on) {
+              parasiticClamp.vds_spike_limited_events += 1
+              spikeLimitEventSeen.turn_on = true
+            }
+          }
+          let v_spike = Math.min(v_spike_ideal, vdsOvershootCap)
 
           if (direction < 0) {
             v_spike *= 0.12
@@ -283,10 +338,24 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
     }
 
     // Numerical guards to prevent unphysical display artifacts.
-    vgs[i] = Math.max(-2.5, Math.min(vgs[i], v_drv + 2.5))
-    vds[i] = Math.max(-5, Math.min(vds[i], vdsClampMax))
-    id[i] = Math.max(idMin, Math.min(id[i], idMax))
-    ig[i] = Math.max(-igClamp, Math.min(ig[i], igClamp))
+    const vgsRaw = vgs[i]
+    const vdsRaw = vds[i]
+    const idRaw = id[i]
+    const igRaw = ig[i]
+    const vgsClamped = Math.max(-2.5, Math.min(vgsRaw, v_drv + 2.5))
+    const vdsClamped = Math.max(-5, Math.min(vdsRaw, vdsClampMax))
+    const idClamped = Math.max(idMin, Math.min(idRaw, idMax))
+    const igClamped = Math.max(-igClamp, Math.min(igRaw, igClamp))
+
+    if (vgsClamped !== vgsRaw) parasiticClamp.vgs_clamped_points += 1
+    if (vdsClamped !== vdsRaw) parasiticClamp.vds_clamped_points += 1
+    if (idClamped !== idRaw) parasiticClamp.id_clamped_points += 1
+    if (igClamped !== igRaw) parasiticClamp.ig_clamped_points += 1
+
+    vgs[i] = vgsClamped
+    vds[i] = vdsClamped
+    id[i] = idClamped
+    ig[i] = igClamped
   }
 
   // Recalculate Pd with parasitic-modified signals
@@ -312,6 +381,7 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
 
   const R_gate = rg_on  // gate loop is damped by Rg — correct
   const R_power = R_damp // power loop damping from geometry/design constant
+  const existingClamp = waveform?.clamp_activity || {}
   return {
     ...waveform,
     vgs: vgs.map(v => Math.round(v * 1000) / 1000),
@@ -320,6 +390,10 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
     ig: ig.map(v => Math.round(v * 1000) / 1000),
     pd,
     model_note: note,
+    clamp_activity: {
+      ...existingClamp,
+      parasitic: parasiticClamp,
+    },
     parasitics: {
       gate_loop_nh: Math.round(Lg * 1e9 * 10) / 10,
       power_loop_nh: Math.round(Lp * 1e9 * 10) / 10,
@@ -342,6 +416,7 @@ function applyParasitics(waveform, systemSpecs, mosfetP, rg_on, rg_off,
       pkg_inductance_config_nh: Math.round(L_power_pkg * 1e10) / 10,
       gate_pkg_inductance_config_nh: Math.round(L_gate_pkg * 1e10) / 10,
       power_damping_config_ohm: Math.round(rDampCfg * 1000) / 1000,
+      clamp_activity: parasiticClamp,
     },
   }
 }
@@ -391,6 +466,22 @@ function computeWaveformFrontend(
   const driverTempDerate = Math.max(0.7, 1 - getDesignConstant(designConstants, 'waveform.driver_temp_derate_per_c', 0.001) * tempDelta)
   const io_source_eff = Math.max(0.2, io_source * driverTempDerate)
   const io_sink_eff = Math.max(0.2, io_sink * driverTempDerate)
+  const timingClamp = {
+    fallback_applied: false,
+    fallback_reasons: [],
+    unresolved_after_fallback: false,
+    post_fallback_issues: [],
+    di_dt_on_limited: false,
+    di_dt_off_limited: false,
+    v_lcs_on_clamped: false,
+    v_lcs_off_clamped: false,
+    ig_miller_on_floored: false,
+    ig_miller_off_floored: false,
+    ig_miller_on_capped: false,
+    ig_miller_off_capped: false,
+    t_r3_hard_capped: false,
+    t_r3_off_hard_capped: false,
+  }
 
   const strayOverrideRaw = parseFloat(passivesOverrides?.stray_inductance_nh)
   const strayOverrideNh = Number.isFinite(strayOverrideRaw) && strayOverrideRaw > 0
@@ -461,19 +552,24 @@ function computeWaveformFrontend(
   const di_dt_on_raw = i_load / Math.max(t_r2, 5e-9)
   const di_dt_limited = v_ds_swing / Math.max((strayOverrideNh != null ? strayOverrideNh * 1e-9 : 10e-9), 1e-9)
   const di_dt_on = Math.min(di_dt_on_raw, di_dt_limited)
+  timingClamp.di_dt_on_limited = di_dt_on < di_dt_on_raw
   const v_lcs_on_raw = lCs * di_dt_on
-  const v_lcs_on = Math.min(v_lcs_on_raw, Math.max(0.2, 0.65 * Math.max(v_drv - vgs_pl, 0.3)))
+  const v_lcs_on_cap = Math.max(0.2, 0.65 * Math.max(v_drv - vgs_pl, 0.3))
+  let v_lcs_on = Math.min(v_lcs_on_raw, v_lcs_on_cap)
+  timingClamp.v_lcs_on_clamped = v_lcs_on < v_lcs_on_raw
 
   const ig_miller_on_ideal = (v_drv - vgs_pl) / rg_on
   const ig_miller_on_floor = Math.max(0.02, Math.min(io_source_eff * 0.2, Math.max(ig_miller_on_ideal * 0.2, 0.02)))
   let ig_miller_on = (v_drv - vgs_pl - v_lcs_on) / rg_on
   ig_miller_on = Math.min(Math.max(ig_miller_on, ig_miller_on_floor), io_source_eff)
-  const t_r3 = ig_miller_on > 0 ? qgd_on_eff / ig_miller_on : 20e-9
+  timingClamp.ig_miller_on_floored = ig_miller_on <= ig_miller_on_floor * 1.001
+  timingClamp.ig_miller_on_capped = ig_miller_on >= io_source_eff * 0.999
+  let t_r3 = ig_miller_on > 0 ? qgd_on_eff / ig_miller_on : 20e-9
 
   let t_r4 = tau_on > 0 ? -tau_on * Math.log(0.02) : 20e-9
   t_r4 = Math.min(t_r4, 200e-9)
 
-  const t_turn_on = t_r1 + t_r2 + t_r3 + t_r4
+  let t_turn_on = t_r1 + t_r2 + t_r3 + t_r4
 
   // Turn-off region durations
   let t_r4_off = (v_drv > 0 && tau_off > 0) ? -tau_off * Math.log(vgs_pl / v_drv) : 20e-9
@@ -484,33 +580,104 @@ function computeWaveformFrontend(
 
   const di_dt_off_raw = i_load / Math.max(t_r2_off, 5e-9)
   const di_dt_off = Math.min(di_dt_off_raw, di_dt_limited)
+  timingClamp.di_dt_off_limited = di_dt_off < di_dt_off_raw
   const v_lcs_off_raw = lCs * di_dt_off
-  const v_lcs_off = Math.min(v_lcs_off_raw, Math.max(0.15, 0.65 * Math.max(vgs_pl, 0.2)))
+  const v_lcs_off_cap = Math.max(0.15, 0.65 * Math.max(vgs_pl, 0.2))
+  let v_lcs_off = Math.min(v_lcs_off_raw, v_lcs_off_cap)
+  timingClamp.v_lcs_off_clamped = v_lcs_off < v_lcs_off_raw
   const ig_miller_off_ideal = vgs_pl / rg_off
   const ig_miller_off_floor = Math.max(0.02, Math.min(io_sink_eff * 0.2, Math.max(ig_miller_off_ideal * 0.2, 0.02)))
   let ig_miller_off = (vgs_pl - v_lcs_off) / rg_off
   ig_miller_off = Math.min(Math.max(ig_miller_off, ig_miller_off_floor), io_sink_eff)
-  const t_r3_off = ig_miller_off > 0 ? qgd_off_eff / ig_miller_off : 20e-9
+  timingClamp.ig_miller_off_floored = ig_miller_off <= ig_miller_off_floor * 1.001
+  timingClamp.ig_miller_off_capped = ig_miller_off >= io_sink_eff * 0.999
+  let t_r3_off = ig_miller_off > 0 ? qgd_off_eff / ig_miller_off : 20e-9
 
   let t_r1_off = (vgs_th > 0.02 && tau_off > 0) ? -tau_off * Math.log(0.02 / vgs_th) : 20e-9
   t_r1_off = Math.min(t_r1_off, 200e-9)
 
-  const t_turn_off = t_r4_off + t_r3_off + t_r2_off + t_r1_off
+  let t_turn_off = t_r4_off + t_r3_off + t_r2_off + t_r1_off
 
   // Dead time (backend-consistent): (t_turn_off + t_prop_on) * safety + abs_margin
   const dtProp = driverP?.prop_delay_on || 15e-9
   const dtAbs = getDesignConstant(designConstants, 'dt.abs_margin', 20) * 1e-9
-  const dtSafety = getDesignConstant(designConstants, 'dt.safety_mult', 1.3)
-  const dead_time = Math.min(2e-6, Math.max(50e-9, (t_turn_off + dtProp) * dtSafety + dtAbs))
+  const dtSafety = getDesignConstant(designConstants, 'dt.safety_mult', 1.5)
+  let dead_time = Math.min(2e-6, Math.max(50e-9, (t_turn_off + dtProp) * dtSafety + dtAbs))
+
+  const health = evaluateWaveformHealth({
+    t_r3,
+    t_r3_off,
+    t_turn_on,
+    t_turn_off,
+    dead_time,
+    ig_miller_on,
+    ig_miller_off,
+    ig_miller_on_floor,
+    ig_miller_off_floor,
+    fsw: systemSpecs.pwm_freq_hz || 20000,
+  })
+  if (!health.valid) {
+    const qgd_on_conservative = Math.max(qgd_on_eff, qgd_eff_temp, qgd * 0.5)
+    const qgd_off_conservative = Math.max(qgd_off_eff, qgd_eff_temp, qgd * 0.5)
+    ig_miller_on = Math.min(Math.max((v_drv - vgs_pl) / Math.max(rg_on, 0.2), 0.05), io_source_eff)
+    ig_miller_off = Math.min(Math.max(vgs_pl / Math.max(rg_off, 0.2), 0.05), io_sink_eff)
+    v_lcs_on = 0
+    v_lcs_off = 0
+    t_r3 = qgd_on_conservative / ig_miller_on
+    t_r3_off = qgd_off_conservative / ig_miller_off
+    t_turn_on = t_r1 + t_r2 + t_r3 + t_r4
+    t_turn_off = t_r4_off + t_r3_off + t_r2_off + t_r1_off
+    dead_time = Math.min(2e-6, Math.max(50e-9, (t_turn_off + dtProp) * dtSafety + dtAbs))
+    timingClamp.fallback_applied = true
+    timingClamp.fallback_reasons = health.issues
+
+    const healthAfterFallback = evaluateWaveformHealth({
+      t_r3,
+      t_r3_off,
+      t_turn_on,
+      t_turn_off,
+      dead_time,
+      ig_miller_on,
+      ig_miller_off,
+      ig_miller_on_floor,
+      ig_miller_off_floor,
+      fsw: systemSpecs.pwm_freq_hz || 20000,
+    })
+    if (!healthAfterFallback.valid) {
+      timingClamp.unresolved_after_fallback = true
+      timingClamp.post_fallback_issues = healthAfterFallback.issues
+      const halfPeriod = 0.5 / Math.max(systemSpecs.pwm_freq_hz || 20000, 1)
+      const maxMillerDuration = Math.max(100e-9, halfPeriod * 0.45)
+      if (t_r3 > maxMillerDuration) {
+        t_r3 = maxMillerDuration
+        timingClamp.t_r3_hard_capped = true
+      }
+      if (t_r3_off > maxMillerDuration) {
+        t_r3_off = maxMillerDuration
+        timingClamp.t_r3_off_hard_capped = true
+      }
+      t_turn_on = t_r1 + t_r2 + t_r3 + t_r4
+      t_turn_off = t_r4_off + t_r3_off + t_r2_off + t_r1_off
+      dead_time = Math.min(2e-6, Math.max(50e-9, (t_turn_off + dtProp) * dtSafety + dtAbs))
+    }
+  }
 
   // View window: show transitions with some flat time around them
   const flat_on = Math.max(t_turn_on * 1.5, 100e-9)
   const flat_off_pad = Math.max(t_turn_off, 100e-9)
   const total_view = dead_time + t_turn_on + flat_on + t_turn_off + dead_time + flat_off_pad
 
-  // Sample ~800 points
-  const n_points = 800
-  const dt_step = total_view / n_points
+  // Adaptive sampling: resolve fast switching/ringing details without over-sampling flat regions.
+  const cEffForSampling = (mosfetP.coss || 500e-12) + (snubberCsPf || 0) * 1e-12
+  const lEffForSampling = Math.max((strayOverrideNh != null ? strayOverrideNh * 1e-9 : 10e-9), 1e-9)
+  const ringPeriod = 2 * Math.PI * Math.sqrt(lEffForSampling * Math.max(cEffForSampling, 1e-15))
+  const n_points = adaptiveSampleCount(
+    total_view,
+    [t_r1, t_r2, t_r3, t_r4, t_r4_off, t_r3_off, t_r2_off, t_r1_off, ringPeriod / 8],
+    700,
+    6000,
+  )
+  const dt_step = total_view / Math.max(1, n_points - 1)
 
   const time_ns = [], vgs = [], vds = [], id = [], ig = [], pd = []
 
@@ -557,6 +724,7 @@ function computeWaveformFrontend(
       dead_time_ns: Math.round(dead_time * 1e10) / 10,
       vgs_plateau_v: Math.round(vgs_pl * 100) / 100,
       vgs_threshold_v: Math.round(vgs_th * 100) / 100,
+      fallback_active: timingClamp.fallback_applied,
     },
     params_used: {
       ciss_pf: Math.round(ciss * 1e12),
@@ -591,8 +759,19 @@ function computeWaveformFrontend(
       dt_prop_on_ns: Math.round(dtProp * 1e10) / 10,
       dt_abs_margin_ns: Math.round(dtAbs * 1e10) / 10,
       dt_safety_mult: Math.round(dtSafety * 1000) / 1000,
+      sample_points: n_points,
+      sample_dt_ns: Math.round(dt_step * 1e9 * 1000) / 1000,
     },
-    model_note: 'Analytical 4-region MOSFET switching model with nonlinear Cgd(Vds), Qrr-coupled turn-on Miller charge, common-source inductance (Ls*di/dt) feedback, and temperature-adjusted charge/current terms. Vgs follows RC charging/discharging with Miller plateau, and parasitic ringing is modeled from gate/power loop L-C dynamics. Validate final tuning against oscilloscope capture at the same operating point.',
+    clamp_activity: {
+      timing: timingClamp,
+    },
+    guardrails: {
+      fallback_active: timingClamp.fallback_applied,
+      reasons: timingClamp.fallback_reasons,
+      unresolved_after_fallback: timingClamp.unresolved_after_fallback,
+      post_fallback_issues: timingClamp.post_fallback_issues,
+    },
+    model_note: `${timingClamp.fallback_applied ? 'Guardrail fallback active: advanced timing path became unphysical, so conservative Miller timing was auto-applied. ' : ''}Analytical 4-region MOSFET switching model with nonlinear Cgd(Vds), Qrr-coupled turn-on Miller charge, common-source inductance (Ls*di/dt) feedback, and temperature-adjusted charge/current terms. Vgs follows RC charging/discharging with Miller plateau, and parasitic ringing is modeled from gate/power loop L-C dynamics. Validate final tuning against oscilloscope capture at the same operating point.`,
   }
 
   // Apply parasitic RLC effects if inductance values are present
@@ -1262,6 +1441,28 @@ export default function WaveformPanel() {
 
   const ann = waveform?.annotations
   const params = waveform?.params_used
+  const guardrails = waveform?.guardrails || {}
+  const clampActivity = waveform?.clamp_activity || {}
+  const timingClampInfo = clampActivity?.timing || {}
+  const parasiticClampInfo = clampActivity?.parasitic || {}
+  const totalParasiticClampPoints =
+    (parasiticClampInfo.vgs_clamped_points || 0) +
+    (parasiticClampInfo.vds_clamped_points || 0) +
+    (parasiticClampInfo.id_clamped_points || 0) +
+    (parasiticClampInfo.ig_clamped_points || 0)
+  const hasTimingClamp = [
+    timingClampInfo.di_dt_on_limited,
+    timingClampInfo.di_dt_off_limited,
+    timingClampInfo.v_lcs_on_clamped,
+    timingClampInfo.v_lcs_off_clamped,
+    timingClampInfo.ig_miller_on_floored,
+    timingClampInfo.ig_miller_off_floored,
+    timingClampInfo.ig_miller_on_capped,
+    timingClampInfo.ig_miller_off_capped,
+    timingClampInfo.t_r3_hard_capped,
+    timingClampInfo.t_r3_off_hard_capped,
+  ].some(Boolean)
+  const hasClampDiagnostics = hasTimingClamp || totalParasiticClampPoints > 0 || (parasiticClampInfo.vds_spike_limited_events || 0) > 0
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 1100 }}>
@@ -1288,6 +1489,55 @@ export default function WaveformPanel() {
         </div>
       ) : (
         <>
+          {guardrails.fallback_active && (
+            <div style={{
+              padding: '8px 12px', borderRadius: 8,
+              border: '1px solid rgba(255,167,38,0.45)',
+              background: 'rgba(255,167,38,0.10)',
+              color: '#FFCC80', fontSize: 11, lineHeight: 1.5,
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 3 }}>
+                Guardrail fallback active: conservative timing model applied
+              </div>
+              {(guardrails.reasons || []).slice(0, 4).map((reason, idx) => (
+                <div key={idx}>• {reason}</div>
+              ))}
+              {guardrails.unresolved_after_fallback && (
+                <div style={{ marginTop: 4 }}>
+                  Residual instability remained after fallback; hard safety caps were applied.
+                </div>
+              )}
+              {guardrails.unresolved_after_fallback && (guardrails.post_fallback_issues || []).slice(0, 3).map((reason, idx) => (
+                <div key={`post-${idx}`}>• Post-fallback: {reason}</div>
+              ))}
+            </div>
+          )}
+
+          {hasClampDiagnostics && (
+            <div style={{
+              padding: '8px 12px', borderRadius: 8,
+              border: '1px solid rgba(79,195,247,0.35)',
+              background: 'rgba(79,195,247,0.10)',
+              color: '#B3E5FC', fontSize: 11, lineHeight: 1.55,
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 3 }}>Clamp Activity Diagnostics</div>
+              <div>
+                Timing limits: di/dt on {timingClampInfo.di_dt_on_limited ? 'limited' : 'ok'}, di/dt off {timingClampInfo.di_dt_off_limited ? 'limited' : 'ok'},
+                {' '}Vls on {timingClampInfo.v_lcs_on_clamped ? 'clamped' : 'ok'}, Vls off {timingClampInfo.v_lcs_off_clamped ? 'clamped' : 'ok'}.
+              </div>
+              <div>
+                Driver limits: Ig(on) {timingClampInfo.ig_miller_on_floored ? 'floored' : (timingClampInfo.ig_miller_on_capped ? 'capped' : 'ok')},
+                {' '}Ig(off) {timingClampInfo.ig_miller_off_floored ? 'floored' : (timingClampInfo.ig_miller_off_capped ? 'capped' : 'ok')},
+                {' '}Miller hard caps on/off: {timingClampInfo.t_r3_hard_capped ? 'yes' : 'no'} / {timingClampInfo.t_r3_off_hard_capped ? 'yes' : 'no'}.
+              </div>
+              <div>
+                Signal clamps: Vgs {parasiticClampInfo.vgs_clamped_points || 0}, Vds {parasiticClampInfo.vds_clamped_points || 0},
+                {' '}Id {parasiticClampInfo.id_clamped_points || 0}, Ig {parasiticClampInfo.ig_clamped_points || 0} points.
+                {' '}Vds spike-limited events: {parasiticClampInfo.vds_spike_limited_events || 0}.
+              </div>
+            </div>
+          )}
+
           {/* Toolbar */}
           <div className="scope-toolbar">
             {CHANNELS.map(ch => (
@@ -1385,7 +1635,7 @@ export default function WaveformPanel() {
               <span style={{ color: 'var(--txt-2)', fontWeight: 700 }}>Params: </span>
               Ciss={params.ciss_pf}pF · Qg={params.qg_nc}nC · Qgd_on={params.qgd_on_eff_nc ?? params.qgd_eff_nc ?? params.qgd_nc}nC · Qgd_off={params.qgd_off_eff_nc ?? params.qgd_eff_nc ?? params.qgd_nc}nC · Qgd_spec={params.qgd_spec_nc ?? params.qgd_nc}nC ·
               Rg_int={params.rg_int_ohm}Ω · Rg_on={params.rg_on_ext_ohm}Ω · Rg_off={params.rg_off_ext_ohm}Ω ·
-              Vdrv={params.v_drv_v}V · Vbus={params.v_bus_v}V · Iload={params.i_load_a}A · fsw={params.fsw_khz}kHz
+              Vdrv={params.v_drv_v}V · Vbus={params.v_bus_v}V · Iload={params.i_load_a}A · fsw={params.fsw_khz}kHz · N={params.sample_points ?? '—'} · dt={params.sample_dt_ns ?? '—'}ns
             </div>
           )}
 

@@ -90,6 +90,71 @@ class TestCalculationEngine:
         assert ml["total_all_6_fets_w"] > 0
         assert ml["junction_temp_est_c"] > engine.t_amb
 
+    def test_mosfet_parallel_per_device_scaling(self, default_specs):
+        """Per-device current/loss metadata should scale with parallel count."""
+        from calc_engine import CalculationEngine
+
+        mosfet = {
+            "rds_on": 3.0, "rds_on__unit": "mΩ",
+            "qg": 5.0, "qg__unit": "nC",
+            "qgd": 1.0, "qgd__unit": "nC",
+            "qrr": 1.0, "qrr__unit": "nC",
+            "tr": 10.0, "tr__unit": "ns",
+            "tf": 10.0, "tf__unit": "ns",
+            "rth_jc": 0.4, "rth_jc__unit": "°C/W",
+        }
+
+        one_parallel = CalculationEngine(
+            system_specs={**default_specs, "num_fets": 6, "pwm_freq_hz": 5000},
+            mosfet_params=mosfet,
+            driver_params={},
+            mcu_params={},
+            motor_specs={},
+            overrides={},
+        ).calc_mosfet_losses()
+
+        two_parallel = CalculationEngine(
+            system_specs={**default_specs, "num_fets": 12, "pwm_freq_hz": 5000},
+            mosfet_params=mosfet,
+            driver_params={},
+            mcu_params={},
+            motor_specs={},
+            overrides={},
+        ).calc_mosfet_losses()
+
+        assert one_parallel["parallel_per_switch"] == pytest.approx(1.0)
+        assert two_parallel["parallel_per_switch"] == pytest.approx(2.0)
+        assert two_parallel["i_rms_per_device_a"] == pytest.approx(one_parallel["i_rms_per_device_a"] / 2.0, rel=0.03)
+
+        cond_ratio = two_parallel["conduction_loss_per_fet_w"] / one_parallel["conduction_loss_per_fet_w"]
+        # Conduction per FET should be close to quarter when current is split 2-way.
+        assert 0.15 <= cond_ratio <= 0.35
+
+    def test_dead_time_body_diode_total_independent_of_parallel_count(self, default_specs):
+        """Dead-time body-diode total should scale with 3 phase legs, not device count."""
+        from calc_engine import CalculationEngine
+
+        dt_6 = CalculationEngine(
+            system_specs={**default_specs, "num_fets": 6},
+            mosfet_params={"body_diode_vf": 0.8, "body_diode_vf__unit": "V"},
+            driver_params={},
+            mcu_params={},
+            motor_specs={},
+            overrides={},
+        ).calc_dead_time()
+
+        dt_12 = CalculationEngine(
+            system_specs={**default_specs, "num_fets": 12},
+            mosfet_params={"body_diode_vf": 0.8, "body_diode_vf__unit": "V"},
+            driver_params={},
+            mcu_params={},
+            motor_specs={},
+            overrides={},
+        ).calc_dead_time()
+
+        assert dt_6["body_diode_loss_total_w"] == pytest.approx(dt_6["body_diode_loss_per_leg_w"] * 3, rel=1e-3)
+        assert dt_12["body_diode_loss_total_w"] == pytest.approx(dt_6["body_diode_loss_total_w"], rel=1e-3)
+
     def test_mosfet_losses_cached(self, engine):
         """Bug fix: Second call should return cached result."""
         r1 = engine.calc_mosfet_losses()

@@ -109,7 +109,7 @@ export default function Sidebar({ blocks }) {
           <NavItem
             cfg={blocks.compare}
             isActive={active_block === 'compare'}
-            status={b.mosfet_b?.status === 'done' && project.comparison_results ? 'done' : b.mosfet_b ? 'idle' : null}
+            status={null}
             onClick={() => select('compare')}
           />
         </div>
