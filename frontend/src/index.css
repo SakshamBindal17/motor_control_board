@@ -58,40 +58,40 @@
   --glow-blue: 0 0 20px rgba(30, 144, 255, .25), 0 0 40px rgba(30, 144, 255, .10);
   --glow-cyan: 0 0 16px rgba(0, 212, 232, .20);
   --glow-green: 0 0 16px rgba(0, 230, 118, .20);
+}
 
-  /* light theme overrides */
-  &.light {
-    --bg-0: #f0f4f8;
-    --bg-1: #f7fafc;
-    --bg-2: #ffffff;
-    --bg-3: #f0f4f8;
-    --bg-4: #e4edf8;
-    --border-1: #dce6f0;
-    --border-2: #c8d8eb;
-    --border-3: #a8c0d8;
-    --txt-1: #0d1829;
-    /* #0d1829 on white → 16:1 ✓ */
-    --txt-2: #2d4a6a;
-    /* was #3d5a7a → bumped darker, 7:1 ✓ */
-    --txt-3: #4a6a8a;
-    /* was #7a9ab8 (2.8:1 FAIL) → now 4.8:1 ✓ */
-    --txt-4: #6a8aaa;
-    /* extra muted — stays above 3:1 for decorative use */
-    --txt-inv: #ffffff;
-    --accent: #0a6edc;
-    --accent-h: #0080ff;
-    --cyan: #0090a0;
-    /* darkened for light bg contrast */
-    --green: #008040;
-    /* darkened for light bg contrast */
-    --amber: #b06000;
-    /* darkened for light bg contrast */
-    --red: #cc2200;
-    /* darkened for light bg contrast */
-    --glow-blue: none;
-    --glow-cyan: none;
-    --glow-green: none;
-  }
+/* light theme overrides */
+:root.light {
+  --bg-0: #f0f4f8;
+  --bg-1: #f7fafc;
+  --bg-2: #ffffff;
+  --bg-3: #f0f4f8;
+  --bg-4: #e4edf8;
+  --border-1: #dce6f0;
+  --border-2: #c8d8eb;
+  --border-3: #a8c0d8;
+  --txt-1: #0d1829;
+  /* #0d1829 on white -> 16:1 */
+  --txt-2: #2d4a6a;
+  /* was #3d5a7a -> bumped darker, 7:1 */
+  --txt-3: #4a6a8a;
+  /* was #7a9ab8 (2.8:1) -> now 4.8:1 */
+  --txt-4: #6a8aaa;
+  /* extra muted - stays above 3:1 for decorative use */
+  --txt-inv: #ffffff;
+  --accent: #0a6edc;
+  --accent-h: #0080ff;
+  --cyan: #0090a0;
+  /* darkened for light bg contrast */
+  --green: #008040;
+  /* darkened for light bg contrast */
+  --amber: #b06000;
+  /* darkened for light bg contrast */
+  --red: #cc2200;
+  /* darkened for light bg contrast */
+  --glow-blue: none;
+  --glow-cyan: none;
+  --glow-green: none;
 }
 
 /* ─── Base ───────────────────────────────────────────────────────────── */
@@ -337,7 +337,7 @@ select.inp {
 
 /* ── Light theme input overrides — stronger contrast ─────────────────── */
 .light .inp {
-  background: #ffffff;
+  background-color: #ffffff;
   border-color: #b0c8e0;
   color: #0d1829;
 }
@@ -350,13 +350,16 @@ select.inp {
 
 .light .inp:focus {
   border-color: var(--accent);
-  background: #ffffff;
+  background-color: #ffffff;
   box-shadow: 0 0 0 3px rgba(10, 110, 220, .10);
 }
 
 /* select arrow recolored for light mode */
 .light select.inp {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%234a6a8a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 12px;
 }
 
 /* ─── Status / Badge ─────────────────────────────────────────────────── */

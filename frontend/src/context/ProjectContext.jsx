@@ -479,8 +479,12 @@ export function ProjectProvider({ children }) {
   // Persist settings to localStorage
   useEffect(() => {
     localStorage.setItem('mc_designer_state', JSON.stringify({ settings: state.settings }))
-    // Apply theme
-    document.documentElement.classList.toggle('dark', state.settings.theme === 'dark')
+    // Apply theme explicitly so user selection wins over OS/browser preference.
+    const isDark = state.settings.theme === 'dark'
+    const root = document.documentElement
+    root.classList.toggle('dark', isDark)
+    root.classList.toggle('light', !isDark)
+    root.style.colorScheme = isDark ? 'dark' : 'light'
   }, [state.settings])
 
   return (
