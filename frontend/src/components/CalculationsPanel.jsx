@@ -210,6 +210,7 @@ export default function CalculationsPanel() {
         motor_specs: project.blocks.motor.specs || {},
         passives_overrides: project.blocks.passives.overrides || {},
         design_constants: project.design_constants || {},
+        pcb_trace_thermal_params: project.pcb_trace_thermal?.params || {},
       }
 
       // Run primary MOSFET calculation
@@ -1150,6 +1151,7 @@ const SECTIONS = [
       { key: 'thermal_margin_c', label: 'Thermal margin', full: 'Thermal Safety Margin', unit: '°C', dec: 1, warn: 30, danger: 0, explain: 'Tj_max_rated - Tj_estimated' },
       { key: 'p_per_fet_w', label: 'P / FET', full: 'Power Dissipation per Switch', unit: 'W', dec: 3, explain: 'Total power dissipation per individual switch' },
       { key: 'motor_copper_loss_w', label: 'Motor Cu loss', full: 'Motor Copper Stator Loss', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — motor winding copper loss (requires Rph in Motor tab)' },
+      { key: 'trace_conduction_loss_w', label: 'Trace Loss', full: 'Trace Conduction Ohmic Loss', unit: 'W', dec: 2, explain: 'Power dissipated by power traces via PCB thermal physics' },
       { key: 'system_total_loss_w', label: 'System total', full: 'Total System Power Loss', unit: 'W', dec: 1, explain: 'MOSFET losses (×6) + motor copper loss — full system power budget' },
       { key: 'copper_area_per_fet_mm2', label: 'Cu area / FET', full: 'Required PCB Copper Area per Switch', unit: 'mm²', dec: 0, explain: 'IPC-2152 estimate for required 3oz copper area to maintain steady state' },
     ],
@@ -1192,6 +1194,18 @@ const SECTIONS = [
       { key: 'rs_recommended_ohm', label: 'Rs snubber', full: 'Snubber Damping Resistor', unit: 'Ω', dec: 0, explain: 'Critical Damping: √(L_stray / C_oss) snapped to E24 series' },
       { key: 'cs_recommended_pf', label: 'Cs snubber', full: 'Snubber Damping Capacitor', unit: 'pF', dec: 0, explain: 'Capacitance required to damp oscillation: 3 × C_oss' },
       { key: 'p_total_all_snubbers_w', altKey: 'p_total_6_snubbers_w', label: 'Snubber power', full: 'Total Snubber Network Dissipation', unit: 'W', dec: 3, explain: 'N × (0.5 × C_s × V_peak² × f_sw)' },
+    ],
+  },
+  {
+    key: 'pcb_trace_thermal', label: 'PCB Trace Thermal', icon: '🔥',
+    rows: [
+      { key: 'worst_dt_c', label: 'Worst ΔT', full: 'Worst-Case Temperature Rise', unit: '°C', dec: 1, warn: 30, danger: 60, explain: 'Max of trace ΔT and via ΔT — IPC-2221B/2152 empirical model with ρ(T) iteration' },
+      { key: 'max_conductor_temp_c', label: 'Max Temp', full: 'Maximum Conductor Temperature', unit: '°C', dec: 1, warn: 105, danger: 130, explain: 'T_ambient + ΔT_total — must not exceed FR4 Tg or max conductor temp' },
+      { key: 'max_safe_current_a', label: 'Max Safe I', full: 'Maximum Safe Current (all layers)', unit: 'A', dec: 1, explain: 'IPC-2221B Imax at ΔT_allow across all copper layers — binary search with thermal feedback' },
+      { key: 'voltage_drop_mv', label: 'V drop', full: 'Trace Voltage Drop', unit: 'mV', dec: 2, explain: 'I × R_total (trace + via), with ρ(T) temperature correction' },
+      { key: 'power_dissipated_w', label: 'P loss', full: 'Trace Ohmic Power Dissipation', unit: 'W', dec: 3, explain: 'I² × R_total — contributes to system total loss budget' },
+      { key: 'current_density_a_mm2', label: 'J density', full: 'Current Density per Layer', unit: 'A/mm²', dec: 2, warn: 8, danger: 15, explain: 'I_per_layer / (W × T_copper) — IPC limit ~8 A/mm² external, ~15 A/mm² critical' },
+      { key: 'thermal_status', label: 'Status', full: 'Thermal Status', string: true, explain: 'Overall assessment: safe/warn/danger based on ΔT, Tmax, J_density, and via thermal' },
     ],
   },
 ]

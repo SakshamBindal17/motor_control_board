@@ -12,6 +12,7 @@ const ChartsPanel = lazy(() => import('./components/ChartsPanel.jsx'))
 const WaveformPanel = lazy(() => import('./components/WaveformPanel.jsx'))
 const ComparisonPanel = lazy(() => import('./components/ComparisonPanel.jsx'))
 const DiagramPanel = lazy(() => import('./components/DiagramPanel.jsx'))
+const ThermalTracePanel = lazy(() => import('./components/ThermalTracePanel.jsx'))
 
 import SettingsModal from './components/SettingsModal.jsx'
 import ReportPanel from './components/ReportPanel.jsx'
@@ -158,6 +159,15 @@ export const BLOCK_CONFIGS = {
     type: 'compare',
     desc: 'Batch MOSFET datasheet analysis — queued extraction, ranking, timing and optional project selection',
   },
+  pcb_thermal: {
+    key: 'pcb_thermal',
+    label: 'PCB Thermal',
+    fullLabel: 'PCB Trace Thermal Analysis',
+    icon: '🔥',
+    color: '#f0a04a',
+    type: 'pcb_thermal',
+    desc: 'IPC-2221B/2152 trace & via thermal — current capacity, ΔT, voltage drop, recommendations',
+  },
 }
 
 export default function App() {
@@ -176,6 +186,7 @@ export default function App() {
       case 'feedback': return <FeedbackPanel config={cfg} />
       case 'waveform': return <WaveformPanel config={cfg} />
       case 'compare': return <ComparisonPanel config={cfg} />
+      case 'pcb_thermal': return <ThermalTracePanel config={cfg} />
       default: return null
     }
   }
