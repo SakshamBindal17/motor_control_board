@@ -1,6 +1,6 @@
 """Motor Controller Hardware Design — Mosfet Calculations"""
 import math
-
+import re
 
 class MosfetMixin:
     """Mixin providing calculations for: mosfet_losses, mosfet_rating_check, driver_compatibility."""
@@ -402,6 +402,102 @@ class MosfetMixin:
         else:
             results["current_ok"] = None
             self.audit_log.append("[MOSFET Rating] Id_cont not extracted — cannot validate current rating.")
+
+        # ── Avalanche Check (Inductive Kickback) ──
+        eas_mj = self._get(self.mosfet, "MOSFET", "avalanche_energy", None)
+        ias_a = self._get(self.mosfet, "MOSFET", "avalanche_current", None)
+        
+        # If IAS is missing, check if it's buried in the EAS test conditions
+        if ias_a is None and eas_mj is not None:
+            cond_text = self.mosfet.get("avalanche_energy__cond_text", "")
+            match = re.search(r'(?:IAS|I_AS)\s*=\s*([\d\.]+)\s*A', cond_text, re.IGNORECASE)
+            if match:
+                ias_a = float(match.group(1))
+                self.audit_log.append(f"[MOSFET Rating] Extracted Ias={ias_a}A from EAS test condition: {cond_text}")
+        
+        if ias_a is not None:
+            # Option B: Datasheet
+            results["ias_av_a"] = round(ias_a, 1)
+            results["avalanche_energy_mj"] = round(eas_mj, 1) if eas_mj is not None else None
+            results["ias_source"] = "📄 Datasheet"
+        elif eas_mj is not None:
+            # Option A: Formula with Motor Lph
+            eas_j = eas_mj * 1e-3  # Convert mJ to Joules mathematically required by physics formula
+            lph_uh = (self.motor or {}).get("lph_uh", "")
+            try:
+                lph = float(lph_uh) * 1e-6 if lph_uh not in ("", None) else None
+            except (TypeError, ValueError):
+                lph = None
+
+            if lph is not None and lph <= 0:
+                raise ValueError("Inductance must be greater than zero.")
+
+            if lph is not None and lph > 0:
+                vds_max_raw = self._get(self.mosfet, "MOSFET", "vds_max", None)
+                v_bus_raw = self.sys.get("bus_voltage", 48)
+                idm_a = self._get(self.mosfet, "MOSFET", "id_pulsed", None)
+                
+                vds_max = float(vds_max_raw) if vds_max_raw is not None else None
+                v_bus = float(v_bus_raw) if v_bus_raw is not None else None
+
+                if vds_max is not None and v_bus is not None and v_bus >= vds_max:
+                    self.audit_log.append("[MOSFET Rating] Bus voltage >= Vds max. Avalanche physics invalid.")
+                    results["ias_av_a"] = None
+                    results["avalanche_energy_mj"] = round(eas_mj, 1)
+                    results["ias_source"] = "⚠️ Disabled (Vbus >= Vds limit)"
+                    warnings.append("WARNING: Bus voltage is too close to Vds breakdown to safely calculate avalanche physics.")
+                else:
+                    if vds_max is not None and v_bus is not None:
+                        # Voltage-Corrected Formula
+                        calc_ias = math.sqrt( (2 * eas_j * (vds_max - v_bus)) / (lph * vds_max) )
+                        calc_note = f"Estimated at {calc_ias:.1f}A using motor Lph ({lph_uh}µH) and Voltage-Correction."
+                    else:
+                        # Fallback to Simple Formula if Voltage is missing
+                        calc_ias = math.sqrt(2 * eas_j / lph)
+                        calc_note = f"Estimated at {calc_ias:.1f}A using motor Lph ({lph_uh}µH)."
+
+                    # Clamp at Idm if extracted
+                    if idm_a is not None:
+                        idm_f = float(idm_a)
+                        if calc_ias > idm_f:
+                            calc_ias = idm_f
+                            calc_note = f"Estimate exceeded Pulsed Drain Current. Hard-clamped to {idm_f}A."
+
+                    results["ias_av_a"] = round(calc_ias, 1)
+                    results["avalanche_energy_mj"] = round(eas_mj, 1)
+                    results["ias_source"] = "✨ Estimated"
+                    results.setdefault("notes", {})["avalanche"] = f"Avalanche Current (Ias) missing. {calc_note}"
+            else:
+                self.audit_log.append("[MOSFET Rating] Avalanche current estimate disabled: missing Motor Lph.")
+                results["ias_av_a"] = None
+                results["avalanche_energy_mj"] = round(eas_mj, 1)
+                results["ias_source"] = "⚠️ Disabled (Missing Lph)"
+                warnings.append("NOTICE: Avalanche rating disabled. Enter 'Lph' (Motor Phase Inductance) in the Motor tab to estimate it.")
+        else:
+            self.audit_log.append("[MOSFET Rating] Avalanche energy/current not extracted.")
+            results["ias_av_a"] = None
+            results["avalanche_energy_mj"] = None
+            results["ias_source"] = None
+
+        if results.get("ias_av_a") is not None:
+            ias_val = results["ias_av_a"]
+            av_margin_pct = ((ias_val - self.i_max) / ias_val) * 100 if ias_val > 0 else 0
+            results["avalanche_margin_pct"] = round(av_margin_pct, 1)
+            
+            if ias_val < self.i_max:
+                warnings.append(
+                    f"DANGER: Avalanche Current limit ({ias_val:.1f}A) < I_max ({self.i_max}A). "
+                    f"MOSFET will fail under severe inductive kickback. Choose a more rugged MOSFET."
+                )
+                self.audit_log.append(f"[MOSFET Rating] DANGER: Avalanche Current ({ias_val:.1f}A) < I_max ({self.i_max}A).")
+            elif ias_val < self.i_max * 1.25:
+                warnings.append(
+                    f"WARNING: Avalanche Current ({ias_val:.1f}A) has < 25% margin over I_max ({self.i_max}A). "
+                    f"High risk of failure during motor faults or dead-time reverse recovery."
+                )
+                self.audit_log.append(f"[MOSFET Rating] WARNING: Avalanche margin is only {av_margin_pct:.0f}%.")
+            else:
+                self.audit_log.append(f"[MOSFET Rating] Avalanche Ias={ias_val:.1f}A vs I_max={self.i_max}A — OK ({av_margin_pct:.0f}% margin).")
 
         results["warnings"] = warnings
         results["_meta"] = self._module_meta.get("mosfet_rating_check", {"hardcoded": [], "fallbacks": []})

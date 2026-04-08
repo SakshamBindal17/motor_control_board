@@ -168,6 +168,17 @@ export default function CalculationsPanel() {
       if (project.blocks[blockKey]?.status === 'done' && CALC_CRITICAL[blockKey]) {
         const flatDict = buildParamsDict(project.blocks[blockKey])
         for (const req of CALC_CRITICAL[blockKey]) {
+          // Exception: If we have avalanche_energy, we can estimate avalanche_current. So it's not strictly blocking.
+          if (req === 'avalanche_current') {
+            const hasEnergy = flatDict['avalanche_energy'] !== undefined && flatDict['avalanche_energy'] !== null && flatDict['avalanche_energy'] !== ''
+            const hasCurrent = flatDict[req] !== undefined && flatDict[req] !== null && flatDict[req] !== ''
+            if (!hasEnergy && !hasCurrent) {
+               missingCritical.push(`${blockKey.toUpperCase()} -> avalanche_energy OR avalanche_current`)
+            }
+            continue // Handled by the conditional above, or it's implicitly fine if energy exists
+          }
+          if (req === 'avalanche_energy') continue // Handled by the 'avalanche_current' check above safely
+
           if (flatDict[req] === undefined || flatDict[req] === null || flatDict[req] === '') {
             missingCritical.push(`${blockKey.toUpperCase()} -> ${req}`)
           }
@@ -1078,6 +1089,10 @@ const SECTIONS = [
       { key: 'id_cont_a', label: 'Id cont (rated)', full: 'Continuous Drain Current', unit: 'A', dec: 1, explain: 'Continuous drain current rating from MOSFET datasheet' },
       { key: 'i_max_a', label: 'I max (system)', full: 'Maximum Phase Current', unit: 'A', dec: 1, explain: 'Maximum phase current from system specs' },
       { key: 'current_margin_pct', label: 'Current margin', full: 'MOSFET Current Safety Margin', unit: '%', dec: 1, warn: 30, danger: 10, explain: '(Id_cont - I_max) / Id_cont × 100' },
+      { key: 'avalanche_energy_mj', label: 'Eas (rated)', full: 'Single-Pulse Avalanche Energy', unit: 'mJ', dec: 1, explain: 'Maximum energy withstand during an inductive kickback event' },
+      { key: 'ias_source', label: 'Ias source', full: 'Avalanche Current Source', string: true, explain: 'Source of the Ias rating — from the datasheet directly or estimated using the motor Lph (Ias = √(2·Eas/Lph))' },
+      { key: 'ias_av_a', label: 'Ias (avalanche)', full: 'Peak Avalanche Current', unit: 'A', dec: 1, explain: 'Maximum current to safely survive an avalanche breakdown.' },
+      { key: 'avalanche_margin_pct', label: 'Ias margin', full: 'Avalanche Current Safety Margin', unit: '%', dec: 1, warn: 25, danger: 10, explain: '(Ias - I_max) / Ias × 100 — should be ≥ 25% for ruggedness' },
     ],
   },
   {

@@ -14,11 +14,12 @@ export const PARAM_LABELS = {
   td_off: 'Turn-Off Delay Time', tf: 'Fall Time',
   rth_jc: 'Thermal Resistance (J-C)', tj_max: 'Max Junction Temperature',
   body_diode_vf: 'Body Diode Forward Voltage',
+  avalanche_energy: 'Avalanche Energy', avalanche_current: 'Avalanche Current (Ias)',
   // ── MOSFET good-to-have ─────────────────────────────────────────────────
   vgs_max: 'Max Gate-Source Voltage', id_pulsed: 'Pulsed Drain Current',
   ciss: 'Input Capacitance', crss: 'Reverse Transfer Capacitance',
-  avalanche_energy: 'Avalanche Energy', rg_int: 'Internal Gate Resistance',
-  vgs_plateau: 'Gate Plateau Voltage', qoss: 'Output Charge (Qoss)',
+  rg_int: 'Internal Gate Resistance', vgs_plateau: 'Gate Plateau Voltage', 
+  qoss: 'Output Charge (Qoss)',
   // ── Gate Driver essential ────────────────────────────────────────────────
   vcc_range: 'VCC Supply Voltage Range', vcc_uvlo: 'VCC UVLO',
   vbs_max: 'Max Bootstrap Voltage', vbs_uvlo: 'Bootstrap UVLO',

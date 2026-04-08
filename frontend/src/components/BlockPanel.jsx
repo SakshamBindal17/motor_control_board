@@ -37,6 +37,8 @@ const EXPECTED_PARAMS = {
     'body_diode_vf',  // body diode forward drop → dead-time conduction loss
     'rg_int',         // internal gate resistance → Rg_ext calculation
     'ciss',           // input capacitance (for gate resistor Qg fallback)
+    'avalanche_energy', // avalanche energy limit
+    'avalanche_current', // maximum avalanche reverse current withstand
   ],
   // 17 essential Gate Driver params — supply, drive current, timing, logic thresholds, thermal
   driver: [
@@ -101,6 +103,8 @@ export const CALC_CRITICAL = {
     "vgs_max",        // gate drive voltage safety validation
     "rg_int",         // internal gate R → Rg_ext = Rg_total - Rg_int
     "body_diode_vf",  // dead-time body diode conduction loss
+    "avalanche_energy", // avalanche withstand capability
+    "avalanche_current", // peak inductive kickback current withstand limit
   ]),
   driver: new Set([
     "io_source",      // Rg_on calculation

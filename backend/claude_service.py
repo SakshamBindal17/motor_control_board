@@ -184,6 +184,14 @@ id="qoss"
   Name: Output Charge (energy stored in Coss)
   Aliases: Qoss · Q_oss · Qo · Output Charge
 
+id="avalanche_energy"
+  Name: Single-Pulse Avalanche Energy (in mJ)
+  Aliases: Eas · EAS · EAR · Ear · Avalanche Energy · Single-Pulse Avalanche Energy · Drain-Source Avalanche Energy
+
+id="avalanche_current"
+  Name: Avalanche Current (Single-Pulse)
+  Aliases: Ias · IAS · Iar · IAR · Avalanche Current · Single-Pulse Avalanche Current · Repetitive Avalanche Current
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  GOOD-TO-HAVE PARAMETERS  (extract only if present — omit entirely if not found)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -195,10 +203,6 @@ id="id_pulsed"
 id="crss"
   Name: Reverse Transfer Capacitance
   Aliases: Crss · C_rss · Creverse · Reverse Transfer Capacitance · Miller Capacitance · CGD
-
-id="avalanche_energy"
-  Name: Single-Pulse Avalanche Energy
-  Aliases: Eas · EAS · EAR · Ear · Avalanche Energy · Single-Pulse Avalanche Energy · Drain-Source Avalanche Energy
 
 id="vgs_plateau"
   Name: Gate Plateau Voltage (Miller Plateau)

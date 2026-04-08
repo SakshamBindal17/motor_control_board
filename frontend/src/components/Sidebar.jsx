@@ -112,6 +112,12 @@ export default function Sidebar({ blocks }) {
             status={null}
             onClick={() => select('compare')}
           />
+          <NavItem
+            cfg={blocks.pcb_thermal}
+            isActive={active_block === 'pcb_thermal'}
+            status={project.pcb_trace_thermal?.results ? 'done' : null}
+            onClick={() => select('pcb_thermal')}
+          />
         </div>
 
         {/* Feedback (special — horizontal) */}

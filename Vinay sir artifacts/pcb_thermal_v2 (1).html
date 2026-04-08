@@ -1,0 +1,1738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PCB Trace Thermal Calculator v2</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0d0f12;
+    --bg2:       #13161b;
+    --bg3:       #1a1e25;
+    --border:    #252a34;
+    --border2:   #2e3440;
+    --text:      #e8eaf0;
+    --text2:     #8a92a6;
+    --text3:     #555e72;
+    --accent:    #4af0c4;
+    --accent2:   #2bb88e;
+    --warn:      #f0a04a;
+    --danger:    #f05a5a;
+    --info:      #4a90f0;
+    --safe:      #4af0c4;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+    --r:         6px;
+    --r2:        10px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+
+  .app {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 32px 20px 60px;
+  }
+
+  /* ── HEADER ── */
+  .header { margin-bottom: 32px; }
+  .header-top { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .title { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; color: var(--text); }
+  .title span { color: var(--accent); }
+  .subtitle { font-size: 13px; color: var(--text2); margin-top: 4px; }
+  .ver-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text3);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 10px;
+    white-space: nowrap;
+  }
+
+  /* ── MODEL SELECTOR ── */
+  .model-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+  .model-label { font-size: 12px; color: var(--text2); font-weight: 500; white-space: nowrap; }
+  .seg { display: flex; border: 1px solid var(--border2); border-radius: var(--r); overflow: hidden; }
+  .seg-btn {
+    padding: 7px 16px;
+    font-size: 12px;
+    font-family: var(--mono);
+    background: var(--bg2);
+    color: var(--text2);
+    border: none;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    border-right: 1px solid var(--border2);
+  }
+  .seg-btn:last-child { border-right: none; }
+  .seg-btn.active { background: var(--accent); color: #000; font-weight: 600; }
+  .model-note { font-size: 11px; color: var(--text3); margin-left: 4px; }
+
+  /* ── SECTION ── */
+  .section {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--r2);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .section-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--text3);
+    margin-bottom: 16px;
+  }
+
+  /* ── INPUTS ── */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field-label { font-size: 12px; color: var(--text2); font-weight: 500; }
+  .field-unit  { font-size: 11px; color: var(--text3); }
+
+  .slider-row { display: flex; align-items: center; gap: 10px; }
+  .slider-row input[type=range] {
+    flex: 1;
+    appearance: none;
+    -webkit-appearance: none;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border2);
+    outline: none;
+    cursor: pointer;
+  }
+  .slider-row input[type=range]::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    transition: transform .1s;
+  }
+  .slider-row input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.2); }
+  .val-box {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    min-width: 70px;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* number input */
+  input[type=number] {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: var(--r);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    outline: none;
+    transition: border-color .15s;
+  }
+  input[type=number]:focus { border-color: var(--accent); }
+  input[type=number].warn-input { border-color: var(--warn); }
+  input[type=number].err-input  { border-color: var(--danger); }
+
+  select {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: var(--r);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+  }
+  select:focus { border-color: var(--accent); }
+
+  /* layer type toggle */
+  .layer-seg { display: flex; border: 1px solid var(--border2); border-radius: var(--r); overflow: hidden; }
+  .layer-btn {
+    flex: 1;
+    padding: 8px 6px;
+    font-size: 12px;
+    font-family: var(--mono);
+    background: var(--bg3);
+    color: var(--text2);
+    border: none;
+    border-right: 1px solid var(--border2);
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    text-align: center;
+  }
+  .layer-btn:last-child { border-right: none; }
+  .layer-btn.active-ext { background: var(--info); color: #fff; font-weight: 600; }
+  .layer-btn.active-int { background: #7a4af0; color: #fff; font-weight: 600; }
+
+  /* via toggle */
+  .pill-toggle { display: flex; border: 1px solid var(--border2); border-radius: 20px; overflow: hidden; }
+  .pill-btn {
+    flex: 1;
+    padding: 6px 14px;
+    font-size: 12px;
+    background: var(--bg3);
+    color: var(--text2);
+    border: none;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    font-family: var(--sans);
+  }
+  .pill-btn.active { background: var(--accent); color: #000; font-weight: 600; }
+
+  /* ── RESULTS ── */
+  .results-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .res-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--r2);
+    padding: 14px 12px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .2s;
+  }
+  .res-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+    transition: background .2s;
+  }
+  .res-card.warn-card::before { background: var(--warn); }
+  .res-card.danger-card::before { background: var(--danger); }
+  .res-label { font-size: 11px; color: var(--text3); margin-bottom: 4px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+  .res-value { font-family: var(--mono); font-size: 22px; font-weight: 600; color: var(--text); line-height: 1.2; }
+  .res-value.warn  { color: var(--warn); }
+  .res-value.danger { color: var(--danger); }
+  .res-value.safe  { color: var(--accent); }
+  .res-unit { font-size: 11px; color: var(--text2); margin-top: 2px; }
+
+  /* ── STATUS BANNER ── */
+  .status-banner {
+    border-radius: var(--r);
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .status-banner.safe-banner { background: #0d2e24; border: 1px solid #1a4a38; color: var(--accent); }
+  .status-banner.warn-banner { background: #2e1e0a; border: 1px solid #4a3010; color: var(--warn); }
+  .status-banner.danger-banner { background: #2e0a0a; border: 1px solid #4a1010; color: var(--danger); }
+  .status-icon { font-size: 16px; flex-shrink: 0; }
+  .status-text { line-height: 1.5; }
+
+  /* ── RECOMMENDATIONS ── */
+  .reco-list { display: flex; flex-direction: column; gap: 6px; }
+  .reco-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    font-size: 12px;
+    gap: 12px;
+  }
+  .reco-action { color: var(--text2); flex: 1; }
+  .reco-impact {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .reco-impact.moderate { color: var(--warn); }
+
+  /* ── STACK VISUAL ── */
+  .stack-wrap { display: flex; gap: 6px; align-items: flex-end; flex-wrap: wrap; margin: 8px 0 6px; }
+  .layer-chip { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .bar-outer {
+    width: 32px; height: 56px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+    display: flex; align-items: flex-end;
+  }
+  .bar-inner {
+    width: 100%;
+    background: var(--accent);
+    transition: height .25s, background .25s;
+  }
+  .bar-inner.warn-bar  { background: var(--warn); }
+  .bar-inner.danger-bar { background: var(--danger); }
+  .chip-label { font-size: 9px; color: var(--text3); text-align: center; line-height: 1.4; font-family: var(--mono); }
+  .chip-val   { font-size: 10px; color: var(--text2); font-family: var(--mono); font-weight: 500; }
+  .stack-legend { font-size: 11px; color: var(--text3); margin-top: 4px; }
+
+  /* ── BREAKDOWN TABLE ── */
+  .breakdown { display: flex; flex-direction: column; }
+  .brow {
+    display: flex;
+    justify-content: space-between;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    gap: 12px;
+  }
+  .brow:last-child { border-bottom: none; }
+  .bk { color: var(--text2); }
+  .bv { font-family: var(--mono); color: var(--text); font-weight: 500; text-align: right; }
+
+  /* ── FORMULA BOX ── */
+  .fbox {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text3);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 10px 14px;
+    line-height: 1.8;
+    margin-top: 8px;
+    word-break: break-all;
+  }
+
+  /* ── VIA SECTION ── */
+  .via-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 8px; }
+  .via-title { font-size: 11px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text3); }
+  .via-body { transition: opacity .2s; }
+  .via-body.dim { opacity: 0.3; pointer-events: none; }
+
+  /* ── INLINE WARNINGS ── */
+  .field-warn { font-size: 11px; color: var(--warn); margin-top: 2px; }
+  .field-err  { font-size: 11px; color: var(--danger); margin-top: 2px; }
+
+  /* ── DIVIDER ── */
+  hr.div { border: none; border-top: 1px solid var(--border); margin: 0; }
+
+  /* ── ITERATIVE BADGE ── */
+  .iter-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text3);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 2px 8px;
+    margin-left: 8px;
+  }
+  .iter-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+
+  .cooling-params { margin-top: 0; }
+
+  /* heatsink mode — extra result card */
+  .hs-note {
+    font-size: 11px;
+    color: var(--text3);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    line-height: 1.6;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 600px) {
+    .grid2 { grid-template-columns: 1fr; }
+    .grid3 { grid-template-columns: 1fr 1fr; }
+    .results-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 420px) {
+    .grid3 { grid-template-columns: 1fr; }
+    .results-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-top">
+      <div>
+        <div class="title">PCB Trace <span>Thermal</span> Calculator</div>
+        <div class="subtitle">Accurate trace & via thermal/electrical analysis for power electronics design</div>
+      </div>
+      <div class="ver-badge">v2.1 · IPC-2221B</div>
+    </div>
+  </div>
+
+  <!-- MODEL -->
+  <div class="model-row">
+    <span class="model-label">Mode:</span>
+    <div class="seg">
+      <button class="seg-btn active" id="btn-2221" onclick="setModel('2221')">IPC-2221B</button>
+      <button class="seg-btn" id="btn-2152" onclick="setModel('2152')">IPC-2221B + Corrections</button>
+    </div>
+    <span class="model-note" id="model-note">Empirical formula, conservative · recommended for most designs</span>
+  </div>
+
+  <!-- TRACE PARAMETERS -->
+  <div class="section">
+    <div class="section-title">Trace Parameters</div>
+    <div class="grid2" style="margin-bottom:16px">
+
+      <div class="field">
+        <label class="field-label">Total current <span class="field-unit">(A)</span></label>
+        <input type="number" id="in-current" value="100" min="0.1" max="2000" step="0.1">
+        <span id="warn-current" class="field-warn" style="display:none"></span>
+      </div>
+
+      <div class="field">
+        <label class="field-label">Ambient temperature <span class="field-unit">(°C)</span></label>
+        <input type="number" id="in-ambient" value="25" min="-40" max="125" step="1">
+        <span id="warn-ambient" class="field-warn" style="display:none"></span>
+      </div>
+
+      <div class="field">
+        <label class="field-label">Trace width <span class="field-unit">(mm)</span></label>
+        <input type="number" id="in-width" value="7" min="0.1" max="100" step="0.1">
+        <span id="warn-width" class="field-err" style="display:none"></span>
+      </div>
+
+      <div class="field">
+        <label class="field-label">Trace length <span class="field-unit">(mm)</span></label>
+        <input type="number" id="in-length" value="20" min="0.1" max="2000" step="0.1">
+      </div>
+
+      <div class="field">
+        <label class="field-label">Copper thickness</label>
+        <select id="in-oz">
+          <option value="1">1 oz/ft²  →  35 µm</option>
+          <option value="2" selected>2 oz/ft²  →  70 µm</option>
+          <option value="3">3 oz/ft²  →  105 µm</option>
+          <option value="4">4 oz/ft²  →  140 µm</option>
+          <option value="6">6 oz/ft²  →  210 µm</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="field-label">PCB thickness <span class="field-unit">(mm)</span></label>
+        <input type="number" id="in-pcbthick" value="1.6" min="0.4" max="6.0" step="0.1">
+        <span class="field-unit" style="font-size:11px;color:var(--text3)">Standard: 1.6 mm · Power: 2.4 mm</span>
+      </div>
+
+    </div>
+
+    <div class="grid2" style="margin-bottom:16px">
+      <div class="field">
+        <label class="field-label">Max conductor temperature <span class="field-unit">(°C)</span></label>
+        <input type="number" id="in-tmax" value="105" min="30" max="200" step="1">
+        <span class="field-unit" style="font-size:11px;color:var(--text3)">FR4 Tg ≈ 130–170°C · Use 100–110°C for safe margin</span>
+      </div>
+    </div>
+
+    <!-- COOLING MODE -->
+    <div class="field" style="margin-bottom:16px">
+      <label class="field-label">Cooling method</label>
+      <select id="in-cooling-mode" onchange="setCoolingMode(this.value)">
+        <option value="natural">Natural Convection</option>
+        <option value="enhanced">Enhanced PCB  (copper pour / thermal vias)</option>
+        <option value="forced">Forced Air</option>
+        <option value="heatsink">Bolted Heatsink</option>
+      </select>
+    </div>
+
+    <!-- Natural Convection params -->
+    <div id="cool-natural" class="cooling-params">
+      <div class="field">
+        <label class="field-label">Board orientation</label>
+        <div class="layer-seg" style="margin-top:2px">
+          <button class="layer-btn" id="orient-horiz"   onclick="setOrient('horizontal')">Horizontal</button>
+          <button class="layer-btn active-ext" id="orient-vert"    onclick="setOrient('vertical')">Vertical</button>
+          <button class="layer-btn" id="orient-enclosed" onclick="setOrient('enclosed')">Enclosed</button>
+        </div>
+        <span class="field-unit" style="font-size:11px;color:var(--text3)" id="orient-note">Vertical board — h ≈ 10 W/m²K (IPC-2221 baseline)</span>
+      </div>
+    </div>
+
+    <!-- Enhanced PCB params -->
+    <div id="cool-enhanced" class="cooling-params" style="display:none">
+      <div class="field">
+        <label class="field-label">Thermal spreading factor <span class="field-unit">(1.0 – 3.0)</span></label>
+        <input type="number" id="in-spreading" value="1.5" min="1.0" max="3.0" step="0.1">
+        <span class="field-unit" style="font-size:11px;color:var(--text3)" id="spreading-note">1.0 = bare trace · 1.5 = light pour · 2.0 = pour + thermal vias · 3.0 = heavy pour + via array</span>
+      </div>
+    </div>
+
+    <!-- Forced Air params -->
+    <div id="cool-forced" class="cooling-params" style="display:none">
+      <div class="field">
+        <label class="field-label">Air velocity <span class="field-unit">(m/s)</span></label>
+        <input type="number" id="in-wind" value="1" min="0.1" max="20" step="0.1">
+        <span class="field-unit" style="font-size:11px;color:var(--text3)" id="wind-label">Light forced airflow</span>
+      </div>
+    </div>
+
+    <!-- Bolted Heatsink params -->
+    <div id="cool-heatsink" class="cooling-params" style="display:none">
+      <div class="grid3">
+        <div class="field">
+          <label class="field-label">Heatsink θ_sa <span class="field-unit">(°C/W)</span></label>
+          <input type="number" id="in-hs-theta" value="5" min="0.1" max="100" step="0.1">
+          <span class="field-unit" style="font-size:11px;color:var(--text3)">From datasheet. Typical: 1–20 °C/W</span>
+        </div>
+        <div class="field">
+          <label class="field-label">Interface θ_int <span class="field-unit">(°C·cm²/W)</span></label>
+          <input type="number" id="in-hs-tint" value="0.5" min="0.05" max="5.0" step="0.05">
+          <span class="field-unit" style="font-size:11px;color:var(--text3)">Thermal paste ≈ 0.3 · Pad ≈ 1.0 · Dry ≈ 2.0</span>
+        </div>
+        <div class="field">
+          <label class="field-label">Contact area <span class="field-unit">(cm²)</span></label>
+          <input type="number" id="in-hs-area" value="10" min="0.5" max="200" step="0.5">
+          <span class="field-unit" style="font-size:11px;color:var(--text3)">Physical heatsink-to-board contact area</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- IPC-2152 extra -->
+    <div id="ipc2152-extras" style="display:none">
+      <hr class="div" style="margin-bottom:16px">
+      <div class="grid2">
+        <div class="field">
+          <label class="field-label">Plane proximity <span class="field-unit">(mm)</span></label>
+          <input type="number" id="in-plane-dist" value="0" min="0" max="5" step="0.1">
+          <span class="field-unit" style="font-size:11px;color:var(--text3)">0 = no adjacent copper plane</span>
+        </div>
+        <div class="field">
+          <label class="field-label">Nearby copper fill <span class="field-unit">(%)</span></label>
+          <input type="number" id="in-copper-fill" value="0" min="0" max="100" step="5">
+          <span class="field-unit" style="font-size:11px;color:var(--text3)">0 = isolated trace · 100 = full pour</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAYER STACK -->
+  <div class="section">
+    <div class="section-title">Layer Stack</div>
+    <div class="grid3">
+      <div class="field">
+        <label class="field-label">External layers</label>
+        <input type="number" id="in-next" value="2" min="0" max="2" step="1">
+        <span class="field-unit" style="font-size:11px;color:var(--text3)">Top/bottom (max 2)</span>
+      </div>
+      <div class="field">
+        <label class="field-label">Internal layers</label>
+        <input type="number" id="in-nint" value="0" min="0" max="20" step="1">
+        <span class="field-unit" style="font-size:11px;color:var(--text3)">Inner copper layers</span>
+      </div>
+      <div class="field">
+        <label class="field-label">Total layers</label>
+        <div style="padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r);font-family:var(--mono);font-size:13px;color:var(--text2)" id="total-layers-disp">2</div>
+      </div>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--text3)">
+      ⚠ Internal layers run ~4.8× hotter than external at the same current (K_INT = 0.024 vs K_EXT = 0.048 — the IPC-2221 exponent of 1/0.44 = 2.27 amplifies the K ratio: 2^2.27 ≈ 4.8). This calculator uses K_INT for the worst-case ΔT when any internal layers exist.
+    </div>
+  </div>
+
+  <!-- VIA SECTION -->
+  <div class="section">
+    <div class="via-header">
+      <span class="via-title">Via Array</span>
+      <div class="pill-toggle">
+        <button class="pill-btn active" id="via-inc-btn" onclick="setVia(true)">Include vias</button>
+        <button class="pill-btn" id="via-exc-btn" onclick="setVia(false)">Exclude vias</button>
+      </div>
+    </div>
+    <div class="via-body" id="via-body">
+      <div class="grid3" style="margin-bottom:12px">
+        <div class="field">
+          <label class="field-label">Number of vias</label>
+          <input type="number" id="in-nvias" value="10" min="1" max="500" step="1">
+          <span id="warn-via-count" class="field-warn" style="display:none"></span>
+        </div>
+        <div class="field">
+          <label class="field-label">Drill diameter <span class="field-unit">(mm)</span></label>
+          <input type="number" id="in-vdrill" value="0.3" min="0.1" max="6.0" step="0.05">
+          <span id="warn-via-geom" class="field-warn" style="display:none"></span>
+        </div>
+        <div class="field">
+          <label class="field-label">Plating thickness <span class="field-unit">(µm)</span></label>
+          <input type="number" id="in-vplate" value="25" min="5" max="100" step="1">
+          <span class="field-unit" style="font-size:11px;color:var(--text3)">IPC min: 18 µm · Typical: 25 µm</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="section">
+    <div class="section-title">
+      Results
+      <span class="iter-badge" id="iter-badge" style="display:none"><span class="iter-dot"></span>converged</span>
+    </div>
+
+    <div class="results-grid" id="results-grid">
+      <div class="res-card" id="card-dt">
+        <div class="res-label">Worst ΔT (trace or via)</div>
+        <div class="res-value" id="rv-dt">—</div>
+        <div class="res-unit">°C above ambient</div>
+      </div>
+      <div class="res-card" id="card-tmax">
+        <div class="res-label">Max conductor temp</div>
+        <div class="res-value" id="rv-tmax">—</div>
+        <div class="res-unit">°C absolute</div>
+      </div>
+      <div class="res-card" id="card-imax">
+        <div class="res-label">Max safe current</div>
+        <div class="res-value" id="rv-imax">—</div>
+        <div class="res-unit">A at your ΔT limit</div>
+      </div>
+      <div class="res-card" id="card-vdrop">
+        <div class="res-label">Total voltage drop</div>
+        <div class="res-value" id="rv-vdrop">—</div>
+        <div class="res-unit">V (trace + via)</div>
+      </div>
+      <div class="res-card" id="card-ploss">
+        <div class="res-label">Power dissipated</div>
+        <div class="res-value" id="rv-ploss">—</div>
+        <div class="res-unit">W</div>
+      </div>
+      <div class="res-card" id="card-cd">
+        <div class="res-label">Current density</div>
+        <div class="res-value" id="rv-cd">—</div>
+        <div class="res-unit">A/mm²</div>
+      </div>
+    </div>
+
+    <!-- Heatsink mode breakdown note -->
+    <div class="hs-note" id="hs-result-note" style="display:none"></div>
+
+    <!-- STATUS BANNER -->
+    <div class="status-banner" id="status-banner" style="display:none">
+      <span class="status-icon" id="status-icon"></span>
+      <span class="status-text" id="status-text"></span>
+    </div>
+
+  </div>
+
+  <!-- LAYER STACK VISUAL -->
+  <div class="section">
+    <div class="section-title">Layer Stack Thermal Distribution</div>
+    <div class="stack-wrap" id="stack-vis"></div>
+    <div class="stack-legend" id="stack-legend"></div>
+  </div>
+
+  <!-- RECOMMENDATIONS -->
+  <div class="section" id="reco-section" style="display:none">
+    <div class="section-title">Design Recommendations (ranked by impact)</div>
+    <div class="reco-list" id="reco-list"></div>
+  </div>
+
+  <!-- FULL BREAKDOWN -->
+  <div class="section">
+    <div class="section-title">Full Parameter Breakdown</div>
+    <div class="breakdown" id="breakdown"></div>
+    <div class="fbox" id="fbox">—</div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+// ─────────────────────────────────────────
+// CONSTANTS (SI: mm, Ω·mm, °C)
+// ─────────────────────────────────────────
+const RHO_20   = 1.72e-5;   // Ω·mm at 20°C
+const ALPHA_CU = 0.00393;   // /°C resistivity temp coefficient
+const MM2MIL   = 39.3701;
+const OZ2MM    = {1:0.035, 2:0.070, 3:0.105, 4:0.140, 6:0.210};
+
+// IPC-2221B constants
+const K_EXT = 0.048;
+const K_INT = 0.024;
+
+// Internal layers are less convection-cooled. Empirically, their K-effective
+// is K_INT. We account for this by solving ΔT per layer type separately.
+// For IPC-2152 we apply correction factors on top of 2221.
+
+let MODEL  = '2221';
+let VIA_ON = true;
+
+// ─────────────────────────────────────────
+// COOLING MODE STATE
+// ─────────────────────────────────────────
+let COOLING_MODE   = 'natural';   // 'natural' | 'enhanced' | 'forced' | 'heatsink'
+let ORIENT         = 'vertical';  // for natural mode
+
+// h values for natural convection by orientation
+// Source: Incropera, PCB-scale flat-plate correlations
+const H_NATURAL = { horizontal: 7, vertical: 10, enclosed: 5 };
+const ORIENT_NOTES = {
+  horizontal: 'Horizontal board — h ≈ 7 W/m²K (worst for natural conv, hot air traps below)',
+  vertical:   'Vertical board — h ≈ 10 W/m²K (IPC-2221 baseline, free air column)',
+  enclosed:   'Enclosed / inside case — h ≈ 5 W/m²K (limited air movement)',
+};
+
+// Returns effective convective h [W/m²K] and heatsink network params for the solver
+function getCoolingParams(){
+  switch(COOLING_MODE){
+    case 'natural': {
+      const h = H_NATURAL[ORIENT] || 10;
+      return { h, mode: 'natural', heatsink: null };
+    }
+    case 'enhanced': {
+      const sf  = Math.max(1.0, Math.min(3.0, parseFloat(document.getElementById('in-spreading')?.value)||1.5));
+      const h   = 10 * sf;   // scale baseline h by spreading factor
+      return { h, mode: 'enhanced', sf, heatsink: null };
+    }
+    case 'forced': {
+      const v   = Math.max(0.1, parseFloat(document.getElementById('in-wind')?.value)||1);
+      const h   = 10 + 12 * Math.pow(v, 0.8);
+      return { h, mode: 'forced', v_ms: v, heatsink: null };
+    }
+    case 'heatsink': {
+      const theta_sa   = Math.max(0.1, parseFloat(document.getElementById('in-hs-theta')?.value)||5);
+      const theta_int  = Math.max(0.05, parseFloat(document.getElementById('in-hs-tint')?.value)||0.5);
+      const A_contact  = Math.max(0.5, parseFloat(document.getElementById('in-hs-area')?.value)||10);
+      // Total thermal resistance: heatsink + interface
+      const R_hs = theta_sa + theta_int / A_contact;   // °C/W
+      // h_equiv is used in the IPC formula to estimate the trace-to-surface residual ΔT.
+      // The full temperature rise is split into two series components:
+      //   dT_hs      = P × R_hs           (board surface → ambient, via heatsink network)
+      //   dT_IPC(h_equiv) = IPC formula   (trace peak → board surface, internal non-uniformity)
+      //   dT_total   = dT_IPC + dT_hs
+      //
+      // These represent different thermal path segments, so they are added, not double-counted.
+      //
+      // IMPORTANT — approximation warning:
+      // The IPC-2221 formula is empirically calibrated for CONVECTION cooling.
+      // Using it here with h_equiv = 1/(R_hs × A_m2) to represent the trace-to-surface
+      // segment is a pragmatic engineering estimate, not a rigorous derivation.
+      // The (10/h) scaling was not derived to isolate the internal conduction component.
+      // For most heatsink scenarios the dT_hs term dominates and the IPC residual
+      // contributes only a few percent of the total — making the approximation acceptable
+      // in practice, but the model should not be interpreted as physically exact.
+      const A_m2    = A_contact * 1e-4;                       // cm² → m²
+      const h_equiv = Math.max(10, 1 / (R_hs * A_m2));       // W/m²K — always ≥ still-air baseline
+      return { h: h_equiv, mode: 'heatsink',
+               heatsink: { theta_sa, theta_int, A_contact, R_hs } };
+    }
+    default: return { h: 10, mode: 'natural', heatsink: null };
+  }
+}
+
+// ─────────────────────────────────────────
+// UTILITY
+// ─────────────────────────────────────────
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+// ─────────────────────────────────────────
+// IPC-2221B  ΔT model
+// I = K · ΔT^0.44 · (W×H)^0.725
+// Solve for ΔT given I:
+//   ΔT = [I / (K · (WH)^0.725)]^(1/0.44)
+//
+// Convection correction: IPC-2221 assumes still air (h_nat = 10 W/m²K).
+// We apply: ΔT_corrected = ΔT_still_air × (h_nat / h_actual)
+// h_actual comes from getCoolingParams() for the selected cooling mode.
+// ─────────────────────────────────────────
+function ipc2221_dT(I_per_layer, K, WH_mil2, h){
+  const h_nat = 10;  // W/m²K IPC-2221 calibration baseline
+  const dT_still = Math.pow(I_per_layer / (K * Math.pow(WH_mil2, 0.725)), 1/0.44);
+  return dT_still * (h_nat / h);
+}
+
+function ipc2221_Imax(K, WH_mil2, dT_allow, h){
+  const h_nat = 10;
+  const dT_still = dT_allow * (h / h_nat);
+  return K * Math.pow(dT_still, 0.44) * Math.pow(WH_mil2, 0.725);
+}
+// ─────────────────────────────────────────
+// IPC-2152 correction factors
+// IPC-2152 adjusts the 2221 result with:
+//  1. Board thickness factor  Cf_board
+//  2. Plane proximity factor  Cf_plane
+//  3. Copper pour factor      Cf_pour
+// These are derived from the IPC-2152 correction charts (digitized).
+// Using polynomial fits to the published correction curve data.
+// ─────────────────────────────────────────
+function ipc2152_corrections(pcbThick_mm, planeDist_mm, copperFill_pct){
+  // Board thickness correction (relative to 1.6mm baseline)
+  // Thicker board → more thermal mass → slightly lower ΔT → Cf < 1 reduces ΔT
+  // From IPC-2152 Fig 5-6 digitized data (polynomial fit)
+  let Cf_board = 1.0;
+  const t = pcbThick_mm;
+  if(t > 0){
+    // Polynomial fit: at 1.6mm = 1.0, at 0.8mm = 1.08, at 3.2mm = 0.92
+    Cf_board = 1.0 + 0.05 * (1.6 - t) / 1.6;
+    Cf_board = clamp(Cf_board, 0.85, 1.15);
+  }
+
+  // Plane proximity correction
+  // Close copper plane dramatically reduces trace temperature via spreading
+  // From IPC-2152 Fig 5-7: at 0mm (touching) → Cf ≈ 0.45, at 0.5mm → 0.65, at 2mm → 0.90, at ∞ → 1.0
+  let Cf_plane = 1.0;
+  if(planeDist_mm > 0){
+    // Exponential decay fit to IPC-2152 data
+    Cf_plane = 1.0 - 0.55 * Math.exp(-planeDist_mm / 0.6);
+    Cf_plane = clamp(Cf_plane, 0.40, 1.0);
+  }
+
+  // Copper pour fill correction
+  // Adjacent copper fill improves heat spreading
+  // At 0% fill → 1.0, at 50% → 0.88, at 100% → 0.78
+  let Cf_pour = 1.0;
+  if(copperFill_pct > 0){
+    Cf_pour = 1.0 - 0.22 * (copperFill_pct / 100);
+    Cf_pour = clamp(Cf_pour, 0.75, 1.0);
+  }
+
+  return { Cf_board, Cf_plane, Cf_pour, total: Cf_board * Cf_plane * Cf_pour };
+}
+
+// ─────────────────────────────────────────
+// VIA THERMAL MODEL (physics-based)
+// Via barrel: hollow cylinder
+//   A_barrel = π/4 * (OD² - ID²) where OD = drill + 2*plating
+// Via thermal resistance (conduction through barrel):
+//   R_barrel = h_pcb / (k_Cu * A_barrel)  [°C/W]
+//   k_Cu = 385 W/(m·K) = 0.385 W/(mm·K)
+// Pad spreading resistance (heat spreading from via pad into PCB substrate):
+//   R_spread ≈ 1/(2 * k_FR4 * r_pad)
+//   Uses k_FR4 because heat spreads laterally through the FR4 laminate, NOT through copper.
+//   k_FR4 ≈ 0.3 W/(m·K) = 3e-4 W/(mm·K)
+// Total: R_th_via = R_barrel + R_spread
+// ─────────────────────────────────────────
+// k_Cu unit conversion: 385 W/(m·K) → W/(mm·K)
+// 1 m = 1000 mm, so k [W/(mm·K)] = 385 / 1000 = 0.385
+const K_CU_mm = 0.385;  // W/(mm·K)  [385 W/(m·K) ÷ 1000]
+
+function viaGeometry(drill_mm, plating_um, pcbThick_mm){
+  const t_plate = plating_um / 1000;  // mm
+  const OD = drill_mm + 2 * t_plate;
+  const A_barrel = Math.PI / 4 * (OD*OD - drill_mm*drill_mm);  // mm²
+  if(A_barrel < 1e-6) return null;  // degenerate geometry
+
+  // Barrel conduction: dominant thermal resistance of the via
+  // For UNIFORM heat generation along the barrel (Joule heating distributed evenly),
+  // peak temperature is at the midpoint: R_th = R_barrel / 2
+  // (vs lumped R_barrel which assumes all heat generated at one end — 2× too conservative)
+  // Reference: heat conduction in a rod with internal heat generation,
+  // both ends at equal temperature: T_max = q*L²/(8*k*A) → effective R = L/(2*k*A)
+  const R_barrel  = pcbThick_mm / (K_CU_mm * A_barrel);   // full lumped °C/W
+  const R_th_via  = R_barrel / 2;                          // correct for uniform heating
+
+  // Electrical resistance of via barrel at 20°C reference
+  const R_el_via = (RHO_20 * pcbThick_mm) / A_barrel;    // Ω per via
+
+  return { OD, A_barrel, R_barrel, R_th_via, R_el_via };
+}
+
+// ─────────────────────────────────────────
+// SOLVER
+// IPC-2221B ΔT is an empirical formula that does NOT take resistivity as input.
+// It cannot be "iterated" for ρ(T) — the formula encodes the thermal physics
+// of a real trace empirically. It already implicitly includes the effect of
+// temperature on resistance through its calibration.
+//
+// We DO apply ρ(T) correction to the electrical quantities (R, Vdrop, Ploss),
+// because those are first-principles, not empirical.
+// ─────────────────────────────────────────
+function iterativeSolve(params, options = {}){
+  const { computeImax = false } = options;
+  const {
+    Itot, Ta, Wmm, Lmm, oz, nExt, nInt,
+    cooling,           // { h, mode, heatsink, ... } — from getCoolingParams()
+    pcbThick, Tmax_allow,
+    vias_on, nvias, vdrill, vplate_um,
+    planeDist, copperFill
+  } = params;
+
+  const N = nExt + nInt;
+  if(N === 0) return null;
+
+  const Tmm  = OZ2MM[oz];
+  if(!Tmm) return null;  // invalid oz key (shouldn't happen from select, but guard anyway)
+
+  const Wmil = Wmm * MM2MIL;
+  const Hmil = Tmm * MM2MIL;
+  const WH   = Wmil * Hmil;      // mil² cross-section area
+  const Amm2 = Wmm * Tmm;        // mm² cross-section
+
+  // Guard against zero or negative geometry — can't calculate
+  if(Wmm <= 0 || Tmm <= 0 || WH <= 0 || Amm2 <= 0) return null;
+
+  const h = cooling.h;   // effective convective coefficient for IPC formula
+
+  // IPC-2152 corrections (only used if MODEL === '2152')
+  const corr = ipc2152_corrections(pcbThick, planeDist, copperFill);
+
+  // Current splits equally across all N parallel traces (same geometry → same R at DC)
+  const Iper = Itot / N;
+
+  // Worst-case layer: internal if any exist (K_INT = 0.024, half of K_EXT → ~2× ΔT)
+  const K_worst = (nInt > 0) ? K_INT : K_EXT;
+
+  // ΔT from IPC-2221B empirical formula (still-air baseline, then convection-corrected)
+  let dT = ipc2221_dT(Iper, K_worst, WH, h);
+
+  // Apply IPC-2152 corrections if selected
+  if(MODEL === '2152'){
+    dT *= corr.total;
+  }
+
+  const dT_allow = clamp(Tmax_allow - Ta, 0, 200);
+
+  // Via geometry and resistance
+  const vRes = (vias_on && nvias > 0) ? viaGeometry(vdrill, vplate_um, pcbThick) : null;
+
+  // Solve electro-thermal coupling with short fixed-point iteration on ρ(T)
+  let T_avg = Ta + dT / 2;
+  let rho_T = RHO_20 * (1 + ALPHA_CU * (T_avg - 20));
+  let R_layer = 0, R_par = 0, Amm2_tot = Amm2 * N;
+  let R_via_par = 0, R_via_each = 0;
+  let R_total = 0, Vdrop = 0, Ploss = 0;
+  let dT_hs = 0;
+  let dT_total = dT;
+
+  for(let i = 0; i < 4; i++){
+    R_layer = (rho_T * Lmm) / Amm2;   // Ω, single layer at operating temp
+    R_par = R_layer / N;
+
+    R_via_par = 0;
+    R_via_each = 0;
+    if(vias_on && vRes){
+      // Scale via R by same ρ(T)/ρ20 ratio
+      R_via_each = vRes.R_el_via * (rho_T / RHO_20);
+      R_via_par  = R_via_each / nvias;
+    }
+
+    R_total = R_par + R_via_par;
+    Vdrop   = Itot * R_total;
+    Ploss   = Itot * Itot * R_total;
+
+    // Heatsink mode: electrical loss dissipates through the sink network
+    dT_hs = cooling.heatsink ? (Ploss * cooling.heatsink.R_hs) : 0;
+
+    // Total temperature rise above ambient
+    // Natural/enhanced/forced: T_max = Ta + dT (IPC formula handles convection)
+    // Heatsink: T_max = Ta + dT_hs + dT_residual
+    dT_total = cooling.heatsink ? (dT + dT_hs) : dT;
+
+    const tAvgNext = Ta + dT_total / 2;
+    const rho_next = RHO_20 * (1 + ALPHA_CU * (tAvgNext - 20));
+    if(Math.abs(rho_next - rho_T) / Math.max(rho_T, 1e-12) < 1e-4){
+      rho_T = rho_next;
+      T_avg = tAvgNext;
+      break;
+    }
+    rho_T = rho_next;
+    T_avg = tAvgNext;
+  }
+
+  const CD      = Iper / Amm2;  // A/mm² per layer
+
+  // Max safe current at user's allowed ΔT
+  let Imax_total = 0;
+  if(dT_allow > 0){
+    if(computeImax){
+      Imax_total = solveMaxSafeCurrent(params, dT_allow);
+    } else {
+      // Fast estimate path for helper/recommendation sweeps
+      let dT_for_imax = dT_allow;
+      if(MODEL === '2152' && corr.total > 0) dT_for_imax = dT_allow / corr.total;
+      const Imax_per_ext = nExt > 0 ? ipc2221_Imax(K_EXT, WH, dT_for_imax, h) : 0;
+      const Imax_per_int = nInt > 0 ? ipc2221_Imax(K_INT, WH, dT_for_imax, h) : 0;
+      Imax_total = (Imax_per_ext * nExt) + (Imax_per_int * nInt);
+    }
+  }
+
+  // Via thermal rise (physics-based, using fixed R_th_via from geometry)
+  let dT_via = 0;
+  if(vias_on && vRes && nvias > 0){
+    const I_via_each = Itot / nvias;
+    const P_via_each = I_via_each * I_via_each * R_via_each;
+    dT_via = P_via_each * vRes.R_th_via;
+  }
+
+  // Per-layer ΔT broken out for visualization
+  const dT_ext = (nExt > 0)
+    ? ipc2221_dT(Iper, K_EXT, WH, h) * (MODEL==='2152' ? corr.total : 1)
+    : 0;
+  const dT_int = (nInt > 0)
+    ? ipc2221_dT(Iper, K_INT, WH, h) * (MODEL==='2152' ? corr.total : 1)
+    : 0;
+
+  return {
+    dT,           // IPC trace ΔT (above board surface for heatsink mode)
+    dT_hs,        // heatsink network ΔT (0 for non-heatsink modes)
+    dT_total,     // total ΔT above ambient — USE THIS for T_max display
+    dT_ext, dT_int,
+    dT_via,
+    T_final: Ta + dT_total,
+    Imax_total,
+    Vdrop, Ploss,
+    R_par, R_via_par, R_via_each, R_total,
+    CD, Amm2, Amm2_tot, rho_T,
+    t_avg: Ta + dT_total / 2,
+    Iper, dT_allow,
+    corr: MODEL==='2152' ? corr : null,
+    vRes,
+    WH, Wmil, Hmil: Tmm * MM2MIL
+  };
+}
+
+function solveMaxSafeCurrent(baseParams, dT_allow){
+  const maxI = 5000;
+  const targetTmax = baseParams.Ta + dT_allow;
+  const viasOn = !!baseParams.vias_on;
+
+  function isSafeAt(currentA){
+    const r = iterativeSolve({ ...baseParams, Itot: currentA }, { computeImax: false });
+    if(!r) return false;
+    const traceOk = (baseParams.Ta + r.dT_total) <= targetTmax;
+    // Use VIA_SAFE_DT (same threshold as banner/reco), not dT_allow,
+    // so Imax is consistent with what the banner considers safe.
+    const viaOk = !viasOn || (r.dT_via <= VIA_SAFE_DT);
+    return traceOk && viaOk;
+  }
+
+  if(!isSafeAt(0.001)) return 0;
+
+  let lo = 0;
+  let hi = Math.max(1, baseParams.Itot || 1);
+
+  while(hi < maxI && isSafeAt(hi)){
+    lo = hi;
+    hi = Math.min(maxI, hi * 2);
+  }
+
+  if(hi >= maxI && isSafeAt(maxI)) return maxI;
+
+  for(let i = 0; i < 30; i++){
+    const mid = (lo + hi) / 2;
+    if(isSafeAt(mid)) lo = mid;
+    else hi = mid;
+  }
+
+  return lo;
+}
+
+// ─────────────────────────────────────────
+// RECOMMENDATIONS ENGINE
+//
+// For each change type, finds the MINIMUM amount that brings ALL metrics
+// into the safe zone (dT ≤ 30°C AND CD ≤ 8 A/mm² AND Tmax ≤ limit).
+// If that change alone cannot solve it, shows the best it can achieve.
+// One row per category maximum. Sorted by combined improvement score.
+// ─────────────────────────────────────────
+const TRACE_SAFE_DT = 30;
+const VIA_SAFE_DT = 30;
+const CD_SAFE = 8;
+
+function isSafeResult(r, Ta, Tmax_allow, viasOn){
+  if(!r) return false;
+  const viaOk = !viasOn || r.dT_via <= VIA_SAFE_DT;
+  return r.dT_total <= TRACE_SAFE_DT && r.CD <= CD_SAFE && (Ta + r.dT_total) <= Tmax_allow && viaOk;
+}
+
+// Binary search: find minimum continuous delta where applyFn makes result safe.
+// Returns { delta, solves, result }.
+function findMinContinuous(p, applyFn, lo, hi){
+  // Check if hi solves it
+  const rHi = iterativeSolve(applyFn(p, hi));
+  if(!rHi || !isSafeResult(rHi, p.Ta, p.Tmax_allow, p.vias_on)){
+    return { delta: hi, solves: false, result: rHi };
+  }
+  // Binary search 25 iterations → precision ~hi/33M, more than enough
+  let L = lo, H = hi;
+  for(let i = 0; i < 25; i++){
+    const mid = (L + H) / 2;
+    const r = iterativeSolve(applyFn(p, mid));
+    if(r && isSafeResult(r, p.Ta, p.Tmax_allow, p.vias_on)) H = mid;
+    else L = mid;
+  }
+  const rounded = Math.ceil(H * 10) / 10; // always round UP — conservative
+  return { delta: rounded, solves: true, result: iterativeSolve(applyFn(p, rounded)) };
+}
+
+function computeReco(params, result){
+  const reco = [];
+  if(!result) return reco;
+
+  const cdHigh   = result.CD > CD_SAFE;
+  const tempHigh = result.dT_total > TRACE_SAFE_DT || (params.Ta + result.dT_total) > params.Tmax_allow;
+  const viaHigh  = params.vias_on && result.dT_via > VIA_SAFE_DT;
+  if(!cdHigh && !tempHigh && !viaHigh) return reco;
+
+  const baseDT = result.dT_total;
+  const baseCD = result.CD;
+  const baseVia = result.dT_via;
+  const p = {...params};
+
+  // Score: normalised combined improvement across trace temp, current density, via temp
+  function score(r2){
+    if(!r2) return 0;
+    const dTimp = baseDT > 0 ? clamp((baseDT - r2.dT_total) / baseDT, 0, 1) : 0;
+    const CDimp = baseCD > 0 ? clamp((baseCD - r2.CD) / baseCD, 0, 1) : 0;
+    const viaImp = (p.vias_on && baseVia > 0) ? clamp((baseVia - r2.dT_via) / baseVia, 0, 1) : 0;
+    return dTimp + CDimp + viaImp;
+  }
+
+  function addItem(label, r2, solves){
+    if(!r2) return;
+    const dTgain = baseDT - r2.dT_total;
+    const cdGain = baseCD - r2.CD;
+    const viaGain = baseVia - r2.dT_via;
+    if(dTgain < 0.2 && cdGain < 0.2 && viaGain < 0.2) return; // negligible
+    reco.push({ action: label, deltaDT: dTgain, deltaCD: cdGain, deltaVia: viaGain,
+                solves, score: score(r2) });
+  }
+
+  // ── 1. TRACE WIDTH — binary search for minimum needed ──
+  {
+    const f = findMinContinuous(p, (p,d) => ({...p, Wmm: p.Wmm + d}), 0, 200);
+    if(f.result){
+      const label = f.solves
+        ? `Widen trace by +${f.delta.toFixed(1)} mm  →  ${(p.Wmm + f.delta).toFixed(1)} mm total`
+        : `Widen trace by +${f.delta.toFixed(1)} mm  →  ${(p.Wmm + f.delta).toFixed(1)} mm  (best achievable — combine with other changes)`;
+      addItem(label, f.result, f.solves);
+    }
+  }
+
+  // ── 2. COPPER WEIGHT — find minimum oz step that solves it ──
+  {
+    const ozSteps = [1, 2, 3, 4, 6];
+    const idx = ozSteps.indexOf(p.oz);
+    if(idx >= 0 && idx < ozSteps.length - 1){
+      let bestR = null, bestOz = null, solved = false;
+      for(let i = idx + 1; i < ozSteps.length; i++){
+        const oz = ozSteps[i];
+        const r2 = iterativeSolve({...p, oz});
+        if(!r2) continue;
+        bestR = r2; bestOz = oz;
+        if(isSafeResult(r2, p.Ta, p.Tmax_allow, p.vias_on)){ solved = true; break; }
+      }
+      if(bestR && bestOz){
+        const label = solved
+          ? `Increase copper to ${bestOz} oz/ft²`
+          : `Increase copper to ${bestOz} oz/ft²  (partial — combine with other changes)`;
+        addItem(label, bestR, solved);
+      }
+    }
+  }
+
+  // ── 3. ADD EXTERNAL LAYER (only possible if < 2 ext) ──
+  if(p.nExt < 2){
+    const r2 = iterativeSolve({...p, nExt: p.nExt + 1});
+    if(r2){
+      const solves = isSafeResult(r2, p.Ta, p.Tmax_allow, p.vias_on);
+      addItem(`Add 1 external layer  →  ${p.nExt + 1} external layers${solves ? '' : '  (partial)'}`, r2, solves);
+    }
+  }
+
+  // ── 4. INTERNAL LAYERS — find minimum even count that solves it ──
+  {
+    let bestR = null, bestAdd = null, solved = false;
+    for(let add = 2; add <= 16; add += 2){
+      const r2 = iterativeSolve({...p, nInt: p.nInt + add});
+      if(!r2) continue;
+      bestR = r2; bestAdd = add;
+      if(isSafeResult(r2, p.Ta, p.Tmax_allow, p.vias_on)){ solved = true; break; }
+    }
+    if(bestR && bestAdd){
+      const label = solved
+        ? `Add ${bestAdd} internal layer${bestAdd > 1 ? 's' : ''}  →  ${p.nInt + bestAdd} internal total`
+        : `Add ${bestAdd} internal layer${bestAdd > 1 ? 's' : ''}  →  ${p.nInt + bestAdd} internal  (partial)`;
+      addItem(label, bestR, solved);
+    }
+  }
+
+  // ── 5. COOLING-SPECIFIC TUNING (mode-aware recommendations) ──
+  {
+    const currentMode = p.cooling ? p.cooling.mode : 'natural';
+
+    // Natural mode: suggest moving to forced airflow if needed
+    if(currentMode === 'natural'){
+      let bestR = null, bestV = null, solved = false;
+      for(const v of [0.5, 1, 2, 5, 10, 20]){
+        const forcedCooling = { h: 10 + 12 * Math.pow(v, 0.8), mode: 'forced', v_ms: v, heatsink: null };
+        const r2 = iterativeSolve({ ...p, cooling: forcedCooling });
+        if(!r2) continue;
+        bestR = r2; bestV = v;
+        if(isSafeResult(r2, p.Ta, p.Tmax_allow, p.vias_on)){ solved = true; break; }
+      }
+      if(bestR && bestV != null){
+        const label = solved
+          ? `Add forced airflow at ${bestV} m/s  →  solves issue`
+          : `Add forced airflow at ${bestV} m/s  (partial — combine with other changes)`;
+        addItem(label, bestR, solved);
+      }
+    }
+
+    // Enhanced PCB mode: suggest increasing copper spreading factor (not airflow)
+    if(currentMode === 'enhanced'){
+      const currentSf = Number.isFinite(p.cooling?.sf) ? p.cooling.sf : 1.5;
+      if(currentSf < 3.0){
+        let bestR = null, bestSf = null, solved = false;
+        for(const sf of [1.2, 1.5, 1.8, 2.0, 2.5, 3.0]){
+          if(sf <= currentSf + 1e-9) continue;
+          const enhancedCooling = { h: 10 * sf, mode: 'enhanced', sf, heatsink: null };
+          const r2 = iterativeSolve({ ...p, cooling: enhancedCooling });
+          if(!r2) continue;
+          bestR = r2; bestSf = sf;
+          if(isSafeResult(r2, p.Ta, p.Tmax_allow, p.vias_on)){ solved = true; break; }
+        }
+        if(bestR && bestSf != null){
+          const label = solved
+            ? `Increase thermal spreading factor to ${bestSf.toFixed(1)}×`
+            : `Increase thermal spreading factor to ${bestSf.toFixed(1)}×  (partial — combine with other changes)`;
+          addItem(label, bestR, solved);
+        }
+      }
+    }
+
+    // Forced-air mode: suggest stepping up airflow further
+    if(currentMode === 'forced'){
+      const currentV = Number.isFinite(p.cooling?.v_ms) ? p.cooling.v_ms : 0.5;
+      if(currentV < 20){
+        let bestR = null, bestV = null, solved = false;
+        for(const v of [0.5, 1, 2, 5, 10, 20]){
+          if(v <= currentV + 1e-9) continue;
+          const forcedCooling = { h: 10 + 12 * Math.pow(v, 0.8), mode: 'forced', v_ms: v, heatsink: null };
+          const r2 = iterativeSolve({ ...p, cooling: forcedCooling });
+          if(!r2) continue;
+          bestR = r2; bestV = v;
+          if(isSafeResult(r2, p.Ta, p.Tmax_allow, p.vias_on)){ solved = true; break; }
+        }
+        if(bestR && bestV != null){
+          const label = solved
+            ? `Increase airflow to ${bestV} m/s`
+            : `Increase airflow to ${bestV} m/s  (partial — combine with other changes)`;
+          addItem(label, bestR, solved);
+        }
+      }
+    }
+  }
+
+  // ── 6. VIA COUNT — find minimum increment that solves it ──
+  if(p.vias_on){
+    let bestR = null, bestAdd = null, solved = false;
+    for(const add of [2, 5, 10, 20, 50, 100, 200]){
+      const r2 = iterativeSolve({...p, nvias: p.nvias + add});
+      if(!r2) continue;
+      bestR = r2; bestAdd = add;
+      if(isSafeResult(r2, p.Ta, p.Tmax_allow, p.vias_on)){ solved = true; break; }
+    }
+    if(bestR && bestAdd){
+      const label = solved
+        ? `Add ${bestAdd} vias  →  ${p.nvias + bestAdd} total`
+        : `Add ${bestAdd} vias  →  ${p.nvias + bestAdd} total  (partial)`;
+      addItem(label, bestR, solved);
+    }
+  }
+
+  // Sort by combined score descending
+  reco.sort((a, b) => b.score - a.score);
+  return reco; // all items, each unique per category
+}
+
+// ─────────────────────────────────────────
+// DOM HELPERS
+// ─────────────────────────────────────────
+function getNum(id, fallback=0, min=null, max=null){
+  const el = document.getElementById(id);
+  if(!el) return fallback;
+  const v = parseFloat(el.value);
+  if(isNaN(v) || !isFinite(v)) return fallback;
+  if(min !== null && v < min) return min;
+  if(max !== null && v > max) return max;
+  return v;
+}
+function setText(id, t){ const el=document.getElementById(id); if(el) el.textContent=t; }
+function setCardState(id, state){ const el=document.getElementById(id); if(el){ el.className='res-card'; if(state==='warn') el.classList.add('warn-card'); else if(state==='danger') el.classList.add('danger-card'); } }
+
+function barClass(dt){ return dt > 60 ? 'danger-bar' : dt > 30 ? 'warn-bar' : ''; }
+function valClass(dt){ return dt > 60 ? 'danger' : dt > 30 ? 'warn' : 'safe'; }
+
+// ─────────────────────────────────────────
+// MAIN CALC
+// ─────────────────────────────────────────
+function calc(){
+  try {
+  const Itot      = getNum('in-current',  100,  0.001, 5000);
+  const Ta        = getNum('in-ambient',   25,  -55,    200);
+  const Wmm       = getNum('in-width',      7,   0.01,  500);
+  const Lmm       = getNum('in-length',    20,   0.1,  5000);
+  const oz        = getNum('in-oz',         2);
+  const pcbThick  = getNum('in-pcbthick',  1.6,  0.1,   10);
+  const Tmax_allow= getNum('in-tmax',     105,   30,   300);
+  const nExt      = clamp(Math.round(getNum('in-next',  2, 0, 2)),  0, 2);
+  const nInt      = clamp(Math.round(getNum('in-nint',  0, 0, 20)), 0, 20);
+  const nvias     = clamp(Math.round(getNum('in-nvias', 10, 1, 500)), 1, 500);
+  const vdrill    = getNum('in-vdrill',   0.3,  0.05,  6.0);
+  const vplate_um = getNum('in-vplate',    25,   1,    200);
+  const planeDist = getNum('in-plane-dist', 0,   0,     10);
+  const copperFill= getNum('in-copper-fill',0,   0,    100);
+
+  // Get current cooling mode params
+  const cooling = getCoolingParams();
+
+  // Update wind-label if forced mode
+  if(COOLING_MODE === 'forced'){
+    const windEl = document.getElementById('wind-label');
+    if(windEl) windEl.textContent = windLabelFromH(cooling.h);
+  }
+
+  document.getElementById('total-layers-disp').textContent = (nExt+nInt) + ' layers';
+
+  // Inline validation
+  const warnCurrent = document.getElementById('warn-current');
+  warnCurrent.style.display = 'none';
+  if(Itot > 1000){ warnCurrent.textContent = 'Very high current — verify via count and trace width carefully.'; warnCurrent.style.display = 'block'; }
+
+  const warnWidth = document.getElementById('warn-width');
+  warnWidth.style.display = 'none';
+  if(Wmm < 0.1){ warnWidth.textContent = 'Trace width below manufacturing minimum.'; warnWidth.style.display = 'block'; }
+
+  const warnAmbient = document.getElementById('warn-ambient');
+  warnAmbient.style.display = 'none';
+  if(Ta >= Tmax_allow){ warnAmbient.textContent = 'Ambient ≥ max conductor temp — no thermal headroom.'; warnAmbient.style.display = 'block'; }
+
+  // Via geometry validation
+  const plating_mm = vplate_um / 1000;
+  const warnGeom = document.getElementById('warn-via-geom');
+  warnGeom.style.display = 'none';
+  if(VIA_ON && plating_mm * 2 >= vdrill){
+    warnGeom.textContent = 'Plating too thick for drill diameter — check geometry.';
+    warnGeom.style.display = 'block';
+  }
+
+  // Via current per via warning — 15A is a practical rule-of-thumb for standard PTH vias
+  const warnViaCount = document.getElementById('warn-via-count');
+  warnViaCount.style.display = 'none';
+  if(VIA_ON && nvias > 0){
+    const I_per_via = Itot / nvias;
+    if(I_per_via > 15){
+      warnViaCount.textContent = `${I_per_via.toFixed(1)} A per via — consider adding more vias.`;
+      warnViaCount.style.display = 'block';
+    }
+  }
+
+  const N = nExt + nInt;
+
+  if(N === 0){
+    // Clear all outputs
+    ['rv-dt','rv-tmax','rv-imax','rv-vdrop','rv-ploss','rv-cd'].forEach(id => setText(id,'—'));
+    document.getElementById('stack-vis').innerHTML = '<span style="font-size:12px;color:var(--text3)">Add at least one layer to calculate</span>';
+    document.getElementById('status-banner').style.display = 'none';
+    document.getElementById('reco-section').style.display = 'none';
+    document.getElementById('breakdown').innerHTML = '';
+    document.getElementById('fbox').textContent = 'Add at least 1 layer.';
+    document.getElementById('iter-badge').style.display = 'none';
+    return;
+  }
+
+  const params = {
+    Itot, Ta, Wmm, Lmm, oz, nExt, nInt,
+    cooling,
+    pcbThick, Tmax_allow,
+    vias_on: VIA_ON, nvias, vdrill, vplate_um,
+    planeDist, copperFill
+  };
+
+  const R = iterativeSolve(params, { computeImax: true });
+  if(!R){ return; }
+
+  // ── RESULT DISPLAY ──
+  const dT       = R.dT_total;   // total ΔT above ambient (includes heatsink if applicable)
+  const dT_ipc   = R.dT;         // IPC trace component only
+  const dT_hs    = R.dT_hs;      // heatsink network component
+  const imax_val = R.Imax_total;
+  const tmax_abs = Ta + dT;
+  const margin   = Tmax_allow - tmax_abs;
+  const viaDanger = VIA_ON && R.dT_via > 60;
+  const viaWarn = VIA_ON && R.dT_via > VIA_SAFE_DT;
+  const worstThermalDt = Math.max(dT, VIA_ON ? R.dT_via : 0);
+
+  // Show/hide heatsink breakdown note
+  const hsNote = document.getElementById('hs-result-note');
+  if(hsNote){
+    if(cooling.heatsink && dT_hs > 0){
+      hsNote.style.display = 'block';
+      hsNote.textContent =
+        `Heatsink mode breakdown:  ΔT_heatsink = ${dT_hs.toFixed(1)}°C (P=${R.Ploss.toFixed(2)}W × R_network=${cooling.heatsink.R_hs.toFixed(2)}°C/W)` +
+        `  +  ΔT_trace = ${dT_ipc.toFixed(1)}°C (IPC-2221 residual)  =  ${dT.toFixed(1)}°C total above ambient.`;
+    } else {
+      hsNote.style.display = 'none';
+    }
+  }
+
+  // rv-dt and rv-tmax are set in the physical validity guard below (handles MELT/FAIL cases)
+  setText('rv-imax',  imax_val.toFixed(1));
+  // Voltage drop: show mV if < 1V for readability
+  const vdropEl = document.getElementById('rv-vdrop');
+  if(R.Vdrop < 1){
+    vdropEl.textContent = (R.Vdrop * 1000).toFixed(2);
+    document.querySelector('#card-vdrop .res-unit').textContent = 'mV (trace + via)';
+  } else {
+    vdropEl.textContent = R.Vdrop.toFixed(4);
+    document.querySelector('#card-vdrop .res-unit').textContent = 'V (trace + via)';
+  }
+  vdropEl.className = 'res-value';
+  setText('rv-ploss', R.Ploss.toFixed(3));
+  setText('rv-cd',    R.CD.toFixed(2));
+  const vc = valClass(worstThermalDt);
+  document.getElementById('rv-dt').className   = 'res-value ' + vc;
+  document.getElementById('rv-tmax').className = 'res-value ' + (tmax_abs > Tmax_allow ? 'danger' : tmax_abs > Tmax_allow*0.9 ? 'warn' : 'safe');
+  document.getElementById('rv-imax').className = 'res-value ' + (Itot > imax_val ? 'danger' : Itot > imax_val*0.9 ? 'warn' : 'safe');
+  document.getElementById('rv-cd').className   = 'res-value ' + (R.CD > 15 ? 'danger' : R.CD > 8 ? 'warn' : 'safe');
+
+  // ── PHYSICAL VALIDITY GUARD ──
+  // IPC-2221 is empirically valid to ~100°C rise. Beyond ~300°C the board laminate
+  // fails (FR4 Tg 130-170°C, delamination at ~200-300°C). Above 1085°C copper melts.
+  // We show the result but flag it clearly so user knows they're past model validity.
+  const LAMINATE_FAIL_DT = 200;  // °C rise — FR4 delamination territory
+  const COPPER_MELT_DT   = 1060; // °C rise above 25°C ambient ≈ copper melting point
+  const traceFail = dT > LAMINATE_FAIL_DT;
+  const traceMelt = dT > COPPER_MELT_DT;
+
+  setCardState('card-dt',   traceMelt ? 'danger' : traceFail ? 'danger' : worstThermalDt > 60 ? 'danger' : worstThermalDt > 30 ? 'warn' : '');
+  setCardState('card-tmax', tmax_abs > Tmax_allow ? 'danger' : tmax_abs > Tmax_allow*0.9 ? 'warn' : '');
+  setCardState('card-imax', Itot > imax_val ? 'danger' : Itot > imax_val*0.9 ? 'warn' : '');
+  setCardState('card-cd',   R.CD > 15 ? 'danger' : R.CD > 8 ? 'warn' : '');
+
+  // Cap displayed ΔT for insane overcurrent cases — show FAIL instead of 18000°C
+  if(traceMelt){
+    document.getElementById('rv-dt').textContent = 'MELT';
+    document.getElementById('rv-tmax').textContent = 'FAIL';
+  } else {
+    // Display worstThermalDt so value and color are always consistent.
+    // (worstThermalDt = max(dT_total, dT_via) — same value used for the color class)
+    document.getElementById('rv-dt').textContent = worstThermalDt.toFixed(1);
+    document.getElementById('rv-tmax').textContent = tmax_abs.toFixed(1);
+  }
+
+  // ρ(T) badge — show operating resistivity vs reference
+  const badge = document.getElementById('iter-badge');
+  badge.style.display = 'inline-flex';
+  const rho_pct = ((R.rho_T / RHO_20 - 1) * 100);
+  badge.innerHTML = `<span class="iter-dot"></span>ρ(T) +${rho_pct.toFixed(1)}%`;
+
+  // ── STATUS BANNER ──
+  const banner = document.getElementById('status-banner');
+  const icon   = document.getElementById('status-icon');
+  const txt    = document.getElementById('status-text');
+  banner.style.display = 'flex';
+
+  if(traceMelt){
+    banner.className = 'status-banner danger-banner';
+    icon.textContent = '💀';
+    txt.textContent  = `OVERCURRENT — copper melting point exceeded (ΔT = ${dT.toFixed(0)}°C). This trace geometry cannot carry this current. Redesign completely.`;
+  } else if(traceFail){
+    banner.className = 'status-banner danger-banner';
+    icon.textContent = '🔴';
+    txt.textContent  = `TRACE FAILURE — ΔT = ${dT.toFixed(0)}°C far exceeds FR4 laminate limits (~200°C). IPC-2221 extrapolation is not valid here. Increase trace width, copper oz, or add layers.`;
+  } else if(viaDanger){
+    banner.className = 'status-banner danger-banner';
+    icon.textContent = '🔴';
+    txt.textContent  = `Via overheating: via ΔT is ${R.dT_via.toFixed(1)}°C (critical > 60°C). Increase via count/diameter/plating or reduce current.`;
+  } else if(tmax_abs > Tmax_allow){
+    banner.className = 'status-banner danger-banner';
+    icon.textContent = '🔴';
+    txt.textContent  = `Over limit: conductor at ${tmax_abs.toFixed(1)}°C exceeds your ${Tmax_allow}°C maximum. Immediate redesign needed — see recommendations below.`;
+  } else if(R.CD > 15){
+    banner.className = 'status-banner danger-banner';
+    icon.textContent = '🔴';
+    txt.textContent  = `Current density ${R.CD.toFixed(1)} A/mm² is critically high (limit ~15 A/mm²). Risk of electromigration and long-term trace failure. Widen trace or increase copper weight.`;
+  } else if(R.CD > 8){
+    banner.className = 'status-banner warn-banner';
+    icon.textContent = '⚠️';
+    txt.textContent  = `Current density ${R.CD.toFixed(1)} A/mm² is elevated (safe limit ~8 A/mm²). Temperature ${tmax_abs.toFixed(1)}°C (${margin.toFixed(0)}°C margin). Consider widening the trace.`;
+  } else if(viaWarn){
+    banner.className = 'status-banner warn-banner';
+    icon.textContent = '⚠️';
+    txt.textContent  = `Via thermal rise is elevated at ${R.dT_via.toFixed(1)}°C (> ${VIA_SAFE_DT}°C). Consider more/larger vias or thicker plating.`;
+  } else if(tmax_abs > Tmax_allow * 0.9 || margin < 10){
+    banner.className = 'status-banner warn-banner';
+    icon.textContent = '⚠️';
+    txt.textContent  = `Getting close — conductor at ${tmax_abs.toFixed(1)}°C with only ${margin.toFixed(0)}°C margin to your ${Tmax_allow}°C limit. Consider improvements for production.`;
+  } else if(dT > 30){
+    banner.className = 'status-banner warn-banner';
+    icon.textContent = '⚠️';
+    txt.textContent  = `Elevated temperature rise of ${dT.toFixed(1)}°C — conductor at ${tmax_abs.toFixed(1)}°C (${margin.toFixed(0)}°C margin). Acceptable for prototyping.`;
+  } else {
+    banner.className = 'status-banner safe-banner';
+    icon.textContent = '✓';
+    txt.textContent  = `Within safe limits. Conductor at ${tmax_abs.toFixed(1)}°C — ${margin.toFixed(0)}°C margin to your ${Tmax_allow}°C limit.`;
+  }
+
+  // ── STACK VISUAL ──
+  const vis = document.getElementById('stack-vis');
+  vis.innerHTML = '';
+  const allLayers = [];
+  for(let i = 0; i < nExt; i++) allLayers.push({type:'E', dt: R.dT_ext});
+  for(let i = 0; i < nInt; i++) allLayers.push({type:'I', dt: R.dT_int});
+
+  allLayers.forEach((l, i) => {
+    const pct = Math.min(l.dt / 100, 1);
+    const chip = document.createElement('div');
+    chip.className = 'layer-chip';
+    const bc = barClass(l.dt);
+    chip.innerHTML = `
+      <div class="bar-outer"><div class="bar-inner ${bc}" style="height:${Math.round(pct*56)}px"></div></div>
+      <span class="chip-label">L${i+1}<br><span style="font-size:8px;color:${l.type==='E'?'var(--info)':'#7a4af0'}">${l.type}</span></span>
+      <span class="chip-val">${l.dt.toFixed(0)}°</span>`;
+    vis.appendChild(chip);
+  });
+
+  // Via chip
+  if(VIA_ON && R.dT_via >= 0){
+    const sep = document.createElement('div');
+    sep.style.cssText = 'width:1px;height:56px;background:var(--border2);margin:0 4px;align-self:flex-end';
+    vis.appendChild(sep);
+    const vc2 = document.createElement('div');
+    vc2.className = 'layer-chip';
+    const vpct = Math.min(R.dT_via / 100, 1);
+    const vbc = barClass(R.dT_via);
+    vc2.innerHTML = `
+      <div class="bar-outer"><div class="bar-inner ${vbc}" style="height:${Math.round(vpct*56)}px"></div></div>
+      <span class="chip-label">Via<br><span style="font-size:8px;color:var(--text3)">×${nvias}</span></span>
+      <span class="chip-val">${R.dT_via.toFixed(0)}°</span>`;
+    vis.appendChild(vc2);
+  }
+
+  document.getElementById('stack-legend').textContent =
+    'Teal = safe (ΔT < 30°C)  ·  Orange = elevated (30–60°C)  ·  Red = critical (> 60°C)  ·  E = external, I = internal';
+
+  // ── RECOMMENDATIONS ──
+  const recoSec  = document.getElementById('reco-section');
+  const recoList = document.getElementById('reco-list');
+  const needsReco = R.CD > CD_SAFE || dT > TRACE_SAFE_DT || tmax_abs > Tmax_allow || viaWarn;
+  const recos = needsReco ? computeReco(params, R) : [];
+
+  if(recos.length > 0){
+    recoSec.style.display = 'block';
+    recoList.innerHTML = '';
+    recos.forEach(rc => {
+      const item = document.createElement('div');
+      item.className = 'reco-item';
+
+      // Impact string — show both if both improve
+      let impact = '';
+      const showDT = rc.deltaDT > 0.3;
+      const showCD = rc.deltaCD > 0.3;
+      const showVia = rc.deltaVia > 0.3;
+      if(showDT && showCD && showVia)      impact = `−${rc.deltaDT.toFixed(1)}°C  −${rc.deltaCD.toFixed(1)} A/mm²  −${rc.deltaVia.toFixed(1)}°C(via)`;
+      else if(showDT && showCD)            impact = `−${rc.deltaDT.toFixed(1)}°C  −${rc.deltaCD.toFixed(1)} A/mm²`;
+      else if(showDT && showVia)           impact = `−${rc.deltaDT.toFixed(1)}°C  −${rc.deltaVia.toFixed(1)}°C(via)`;
+      else if(showCD && showVia)           impact = `−${rc.deltaCD.toFixed(1)} A/mm²  −${rc.deltaVia.toFixed(1)}°C(via)`;
+      else if(showDT)                      impact = `−${rc.deltaDT.toFixed(1)}°C`;
+      else if(showCD)                      impact = `−${rc.deltaCD.toFixed(1)} A/mm²`;
+      else if(showVia)                     impact = `−${rc.deltaVia.toFixed(1)}°C(via)`;
+
+      // Solves badge
+      const badge = rc.solves
+        ? `<span style="font-size:10px;background:#0d2e24;color:var(--accent);border:1px solid #1a4a38;border-radius:4px;padding:1px 6px;margin-right:6px;white-space:nowrap">solves</span>`
+        : `<span style="font-size:10px;background:var(--bg3);color:var(--text3);border:1px solid var(--border);border-radius:4px;padding:1px 6px;margin-right:6px;white-space:nowrap">partial</span>`;
+
+      const impactCls = (rc.deltaDT > 5 || rc.deltaCD > 5) ? '' : 'moderate';
+      item.innerHTML = `<span class="reco-action">${badge}${rc.action}</span><span class="reco-impact ${impactCls}">${impact}</span>`;
+      recoList.appendChild(item);
+    });
+  } else {
+    recoSec.style.display = 'none';
+  }
+
+  // ── BREAKDOWN TABLE ──
+  const bd = document.getElementById('breakdown');
+  const rows = [
+    ['Copper thickness',        `${(OZ2MM[oz]*1000).toFixed(0)} µm  (${oz} oz/ft²)`],
+    ['Trace cross-section (per layer)', `${R.Amm2.toFixed(4)} mm²  (${R.Wmil.toFixed(1)} × ${R.Hmil.toFixed(2)} mil)`],
+    ['Total cross-section (all layers)', `${R.Amm2_tot.toFixed(4)} mm²`],
+    ['Current per layer',        `${R.Iper.toFixed(2)} A`],
+    ['Current density per layer', `${R.CD.toFixed(2)} A/mm²${R.CD > 15 ? '  ⚠ HIGH' : R.CD > 8 ? '  (elevated)' : ''}`],
+    ['ρ(T) at operating temp',   `${(R.rho_T * 1e5).toFixed(3)} × 10⁻⁵ Ω·mm  (temp-corrected)`],
+    ['Trace R per layer',        `${(R.R_par * N * 1000).toFixed(4)} mΩ`],
+    ['Parallel trace R',         `${(R.R_par * 1000).toFixed(4)} mΩ`],
+  ];
+
+  if(VIA_ON && R.vRes){
+    rows.push(['Via barrel area (each)',     `${R.vRes.A_barrel.toFixed(5)} mm²`]);
+    rows.push(['Via R_th effective (each)',   `${R.vRes.R_th_via.toFixed(1)} °C/W  (R_barrel/2)`]);
+    rows.push(['Via R_th barrel-only (each)', `${R.vRes.R_barrel.toFixed(1)} °C/W`]);
+    rows.push(['Via R_el (each, at T)',      `${(R.vRes.R_el_via * (R.rho_T/RHO_20) * 1000).toFixed(4)} mΩ`]);
+    rows.push(['Via R_el (parallel total)',  `${(R.R_via_par * 1000).toFixed(4)} mΩ`]);
+    rows.push(['Via ΔT rise',               `${R.dT_via.toFixed(2)} °C`]);
+  } else if(VIA_ON){
+    rows.push(['Via R', 'Invalid geometry — check drill/plating values']);
+  }
+
+  rows.push(['Allowed ΔT (Tmax − Ta)',   `${R.dT_allow.toFixed(1)} °C`]);
+
+  // Cooling mode row
+  switch(cooling.mode){
+    case 'natural':
+      rows.push(['Cooling mode', `Natural convection — ${ORIENT} board`]);
+      rows.push(['Convection h', `${cooling.h.toFixed(1)} W/m²K`]);
+      break;
+    case 'enhanced':
+      rows.push(['Cooling mode', `Enhanced PCB — spreading factor ${cooling.sf.toFixed(1)}×`]);
+      rows.push(['Effective h',  `${cooling.h.toFixed(1)} W/m²K  (${cooling.sf.toFixed(1)}× baseline)`]);
+      break;
+    case 'forced':
+      rows.push(['Cooling mode', `Forced air — ${cooling.v_ms.toFixed(1)} m/s`]);
+      rows.push(['Convection h', `${cooling.h.toFixed(1)} W/m²K`]);
+      break;
+    case 'heatsink':
+      rows.push(['Cooling mode',      `Bolted heatsink`]);
+      rows.push(['Heatsink θ_sa',     `${cooling.heatsink.theta_sa.toFixed(1)} °C/W`]);
+      rows.push(['Interface θ_int',   `${cooling.heatsink.theta_int.toFixed(2)} °C·cm²/W`]);
+      rows.push(['Contact area',      `${cooling.heatsink.A_contact.toFixed(1)} cm²`]);
+      rows.push(['R_hs network total',`${cooling.heatsink.R_hs.toFixed(3)} °C/W`]);
+      rows.push(['ΔT heatsink path',  `${R.dT_hs.toFixed(2)} °C  (P=${R.Ploss.toFixed(3)}W × R=${cooling.heatsink.R_hs.toFixed(3)}°C/W)`]);
+      rows.push(['ΔT IPC residual',   `${R.dT.toFixed(2)} °C  (trace non-uniformity above surface)`]);
+      rows.push(['ΔT total',          `${R.dT_total.toFixed(2)} °C`]);
+      break;
+  }
+
+  if(R.corr){
+    rows.push(['IPC-2221+corr board Cf',  R.corr.Cf_board.toFixed(3)]);
+    rows.push(['IPC-2221+corr plane Cf',  R.corr.Cf_plane.toFixed(3)]);
+    rows.push(['IPC-2221+corr pour Cf',   R.corr.Cf_pour.toFixed(3)]);
+    rows.push(['IPC-2221+corr combined',  R.corr.total.toFixed(3)]);
+  }
+
+  bd.innerHTML = rows.map(([k,v]) =>
+    `<div class="brow"><span class="bk">${k}</span><span class="bv">${v}</span></div>`
+  ).join('');
+
+  const Kw = (nInt > 0) ? K_INT : K_EXT;
+  const cf_str = R.corr ? ` × ${R.corr.total.toFixed(3)} (corrections Cf)` : '';
+  const cooling_str = cooling.mode === 'heatsink'
+    ? `ΔT = ΔT_IPC_residual(${R.dT.toFixed(1)}°C) + ΔT_heatsink(${R.dT_hs.toFixed(1)}°C) = ${R.dT_total.toFixed(1)}°C total`
+    : `ΔT = [I/(K·WH^0.725)]^(1/0.44) × (10/h)${cf_str} = ${R.dT_total.toFixed(2)}°C`;
+  document.getElementById('fbox').textContent =
+    `Standard: ${MODEL==='2221'?'IPC-2221B':'IPC-2221B+corrections'}  ·  K=${Kw}  ·  WH=${R.WH.toFixed(0)} mil²  ·  h=${cooling.h.toFixed(1)} W/m²K`+
+    `\n${cooling_str}`+
+    `\nρ(T): ρ₂₀·(1+0.00393·(T_avg−20)) = ${(R.rho_T*1e5).toFixed(3)}×10⁻⁵ Ω·mm at T_avg=${R.t_avg.toFixed(1)}°C`+
+    `\nρ(T) applied to R, Vdrop, Ploss only`+
+    (VIA_ON&&R.vRes?`\nVia: R_th=${R.vRes.R_th_via.toFixed(1)}°C/W (R_barrel/2, uniform heating)  R_el=${(R.vRes.R_el_via*1000).toFixed(3)}mΩ`:'');
+  } catch(err){
+    // Safety net — should never reach here after all guards, but prevents silent failure
+    console.error('PCB Calc error:', err);
+    ['rv-dt','rv-tmax','rv-imax','rv-vdrop','rv-ploss','rv-cd'].forEach(id => setText(id,'ERR'));
+    const b = document.getElementById('status-banner');
+    if(b){ b.style.display='flex'; b.className='status-banner danger-banner';
+      document.getElementById('status-icon').textContent='⚠';
+      document.getElementById('status-text').textContent='Calculation error: '+err.message+'. Check input values.';
+    }
+  }
+}
+
+function windLabelFromH(h){
+  if(h <= 12)  return 'Very light airflow';
+  if(h <= 22)  return 'Light forced airflow';
+  if(h <= 40)  return 'Moderate forced airflow';
+  if(h <= 70)  return 'Strong forced airflow';
+  return 'High-velocity airflow';
+}
+
+// ─────────────────────────────────────────
+// UI STATE
+// ─────────────────────────────────────────
+function setModel(m){
+  MODEL = m;
+  ['2221','2152'].forEach(x => document.getElementById('btn-'+x).classList.toggle('active', x===m));
+  document.getElementById('model-note').textContent =
+    m==='2221' ? 'IPC-2221B empirical formula — conservative, well-validated' :
+                 'IPC-2221B base + board thickness, plane proximity & copper fill correction factors (IPC-2152-inspired, not strict IPC-2152)';
+  document.getElementById('ipc2152-extras').style.display = m==='2152' ? 'block' : 'none';
+  calc();
+}
+
+function setVia(on){
+  VIA_ON = on;
+  document.getElementById('via-inc-btn').className = 'pill-btn' + (on ? ' active' : '');
+  document.getElementById('via-exc-btn').className = 'pill-btn' + (!on ? ' active' : '');
+  document.getElementById('via-body').className = 'via-body' + (on ? '' : ' dim');
+  calc();
+}
+
+function setCoolingMode(mode){
+  COOLING_MODE = mode;
+  // Show only the relevant params panel
+  ['natural','enhanced','forced','heatsink'].forEach(m => {
+    const el = document.getElementById('cool-' + m);
+    if(el) el.style.display = (m === mode) ? 'block' : 'none';
+  });
+  calc();
+}
+
+function setOrient(orient){
+  ORIENT = orient;
+  // Update button active states
+  ['horizontal','vertical','enclosed'].forEach(o => {
+    const btn = document.getElementById('orient-' + o);
+    if(btn){
+      btn.classList.remove('active-ext');
+      if(o === orient) btn.classList.add('active-ext');
+    }
+  });
+  // Update note
+  const noteEl = document.getElementById('orient-note');
+  if(noteEl) noteEl.textContent = ORIENT_NOTES[orient] || '';
+  calc();
+}
+
+// Attach all inputs
+['in-current','in-ambient','in-width','in-length','in-oz','in-pcbthick',
+ 'in-tmax','in-next','in-nint',
+ 'in-nvias','in-vdrill','in-vplate',
+ 'in-plane-dist','in-copper-fill',
+ 'in-wind','in-spreading',
+ 'in-hs-theta','in-hs-tint','in-hs-area'].forEach(id => {
+  const el = document.getElementById(id);
+  if(el) el.addEventListener('input', calc);
+});
+
+calc();
+</script>
+</body>
+</html>

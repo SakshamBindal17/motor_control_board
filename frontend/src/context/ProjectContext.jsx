@@ -589,6 +589,7 @@ export function buildParamsDict(block_state) {
     // Send both value and unit so backend can normalize to SI
     result[param.id] = val
     result[param.id + '__unit'] = cond.unit || ''
+    result[param.id + '__cond_text'] = cond.condition_text || ''
   }
   return result
 }
