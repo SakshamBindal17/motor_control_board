@@ -159,12 +159,14 @@ class ThermalMixin:
 
         # Override via parameters and copper weight from PCB Trace Thermal if available
         if trace_thermal_data and trace_thermal_data.get("has_data"):
-            tt_oz = trace_thermal_data.get("copper_oz")
-            if tt_oz: cu_oz = tt_oz
-            
-            if trace_thermal_data.get("vias_on", True):
-                tt_vias = trace_thermal_data.get("n_vias")
-                tt_drill = trace_thermal_data.get("via_drill_mm")
+            tt_oz = trace_thermal_data.get("copper_oz", trace_thermal_data.get("recommended_copper_oz"))
+            if tt_oz:
+                cu_oz = tt_oz
+
+            vias_enabled = trace_thermal_data.get("vias_on", trace_thermal_data.get("input_vias_on", True))
+            if vias_enabled:
+                tt_vias = trace_thermal_data.get("n_vias", trace_thermal_data.get("input_n_vias"))
+                tt_drill = trace_thermal_data.get("via_drill_mm", trace_thermal_data.get("input_via_drill_mm"))
                 if tt_vias: vias_per_fet = int(tt_vias)
                 if tt_drill: via_drill = float(tt_drill)
 

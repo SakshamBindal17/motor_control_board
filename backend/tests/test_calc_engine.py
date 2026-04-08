@@ -79,10 +79,10 @@ class TestUnitUtils:
 # ── Calculation Engine ────────────────────────────────────────────────────────
 
 class TestCalculationEngine:
-    def test_run_all_returns_18_modules(self, engine):
+    def test_run_all_returns_19_modules(self, engine):
         results = engine.run_all()
         modules = [k for k in results if k not in ("audit_log", "transparency")]
-        assert len(modules) == 18
+        assert len(modules) == 19
 
     def test_mosfet_losses_positive(self, engine):
         ml = engine.calc_mosfet_losses()
@@ -191,6 +191,90 @@ class TestCalculationEngine:
         r1 = engine.calc_thermal()
         r2 = engine.calc_thermal()
         assert r1 is r2
+
+    def test_thermal_uses_pcb_trace_copper_and_via_overrides(self, default_specs):
+        from calc_engine import CalculationEngine
+
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={}, overrides={},
+            pcb_trace_thermal_params={
+                "current_a": 80,
+                "trace_width_mm": 8,
+                "trace_length_mm": 25,
+                "copper_oz": 4,
+                "vias_on": True,
+                "n_vias": 18,
+                "via_drill_mm": 0.45,
+            }
+        )
+
+        th = e.calc_thermal()
+        assert th["copper_oz"] == 4
+        assert th["thermal_vias_per_fet"] == 18
+        assert th["via_drill_mm"] == pytest.approx(0.45)
+        assert th["trace_conduction_loss_w"] > 0
+
+    def test_thermal_keeps_default_vias_when_trace_vias_disabled(self, default_specs):
+        from calc_engine import CalculationEngine
+
+        e = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={}, overrides={},
+            pcb_trace_thermal_params={
+                "current_a": 80,
+                "trace_width_mm": 8,
+                "trace_length_mm": 25,
+                "copper_oz": 2,
+                "vias_on": False,
+                "n_vias": 99,
+                "via_drill_mm": 0.6,
+            }
+        )
+
+        th = e.calc_thermal()
+        assert th["copper_oz"] == 2
+        assert th["thermal_vias_per_fet"] == int(e._dc("thermal.vias_per_fet"))
+        assert th["via_drill_mm"] == pytest.approx(0.3)
+
+    def test_pcb_trace_thermal_normalizes_ipc_2152_aliases(self, default_specs):
+        from calc_engine import CalculationEngine
+
+        e_alias = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={}, overrides={},
+            pcb_trace_thermal_params={
+                "model": "IPC-2152",
+                "current_a": 80,
+                "trace_width_mm": 6,
+                "trace_length_mm": 30,
+                "plane_dist_mm": 0.3,
+                "copper_fill_pct": 60,
+            }
+        )
+        r_alias = e_alias.calc_pcb_trace_thermal()
+
+        e_2221 = CalculationEngine(
+            system_specs=default_specs,
+            mosfet_params={}, driver_params={}, mcu_params={},
+            motor_specs={}, overrides={},
+            pcb_trace_thermal_params={
+                "model": "2221",
+                "current_a": 80,
+                "trace_width_mm": 6,
+                "trace_length_mm": 30,
+                "plane_dist_mm": 0.3,
+                "copper_fill_pct": 60,
+            }
+        )
+        r_2221 = e_2221.calc_pcb_trace_thermal()
+
+        assert r_alias["ipc2152_corrections"] is not None
+        assert r_alias["notes"]["standard"].startswith("IPC-2221B + corrections")
+        assert r_2221["ipc2152_corrections"] is None
 
     def test_protection_dividers(self, engine):
         pd = engine.calc_protection_dividers()

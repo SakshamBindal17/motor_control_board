@@ -32,6 +32,11 @@ export const CD_SAFE       = 8;   // A/mm²
 // ─── Utility ─────────────────────────────────────────────────────────
 export function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+export function normalizeTraceModel(modelValue) {
+  const token = String(modelValue ?? '2221').trim().toLowerCase().replace(/[_\-\s]/g, '');
+  return token.includes('2152') ? '2152' : '2221';
+}
+
 // ─── Cooling Parameters ─────────────────────────────────────────────
 /**
  * Compute effective convective coefficient h and heatsink params.
@@ -156,6 +161,7 @@ export function iterativeSolve(params, options = {}) {
     vias_on, nvias, vdrill, vplate_um,
     planeDist, copperFill, model,
   } = params;
+  const normModel = normalizeTraceModel(model);
 
   const N = nExt + nInt;
   if (N === 0) return null;
@@ -176,7 +182,7 @@ export function iterativeSolve(params, options = {}) {
   const K_worst = (nInt > 0) ? K_INT : K_EXT;
 
   let dT = ipc2221_dT(Iper, K_worst, WH, h);
-  if (model === '2152') dT *= corr.total;
+  if (normModel === '2152') dT *= corr.total;
 
   const dT_allow = clamp(Tmax_allow - Ta, 0, 200);
 
@@ -228,7 +234,7 @@ export function iterativeSolve(params, options = {}) {
       Imax_total = solveMaxSafeCurrent(params, dT_allow);
     } else {
       let dT_for_imax = dT_allow;
-      if (model === '2152' && corr.total > 0) dT_for_imax = dT_allow / corr.total;
+      if (normModel === '2152' && corr.total > 0) dT_for_imax = dT_allow / corr.total;
       const Imax_per_ext = nExt > 0 ? ipc2221_Imax(K_EXT, WH, dT_for_imax, h) : 0;
       const Imax_per_int = nInt > 0 ? ipc2221_Imax(K_INT, WH, dT_for_imax, h) : 0;
       Imax_total = (Imax_per_ext * nExt) + (Imax_per_int * nInt);
@@ -245,10 +251,10 @@ export function iterativeSolve(params, options = {}) {
 
   // Per-layer ΔT for visualization
   const dT_ext = (nExt > 0)
-    ? ipc2221_dT(Iper, K_EXT, WH, h) * (model === '2152' ? corr.total : 1)
+    ? ipc2221_dT(Iper, K_EXT, WH, h) * (normModel === '2152' ? corr.total : 1)
     : 0;
   const dT_int = (nInt > 0)
-    ? ipc2221_dT(Iper, K_INT, WH, h) * (model === '2152' ? corr.total : 1)
+    ? ipc2221_dT(Iper, K_INT, WH, h) * (normModel === '2152' ? corr.total : 1)
     : 0;
 
   return {
@@ -264,7 +270,7 @@ export function iterativeSolve(params, options = {}) {
     CD, Amm2, Amm2_tot: Amm2 * N, rho_T,
     t_avg: Ta + dT_total / 2,
     Iper, dT_allow,
-    corr: model === '2152' ? corr : null,
+    corr: normModel === '2152' ? corr : null,
     vRes,
     WH, Wmil, Hmil: Tmm * MM2MIL,
   };
@@ -598,6 +604,6 @@ export function buildSolverParams(panelParams, systemSpecs = {}) {
     vplate_um:   Math.max(1, panelParams.via_plating_um ?? 25),
     planeDist:   panelParams.plane_dist_mm ?? 0,
     copperFill:  panelParams.copper_fill_pct ?? 0,
-    model:       panelParams.model || '2221',
+    model:       normalizeTraceModel(panelParams.model),
   };
 }

@@ -6,7 +6,7 @@ import { fmtNum } from '../utils.js'
 import {
   iterativeSolve, buildSolverParams, assessStatus,
   computeRecommendations, getCoolingParams, OZ2MM,
-  TRACE_SAFE_DT, VIA_SAFE_DT, CD_SAFE,
+  TRACE_SAFE_DT, VIA_SAFE_DT, CD_SAFE, normalizeTraceModel,
 } from '../utils/thermalTraceCalc.js'
 
 // ─── Field Config ─────────────────────────────────────────────────────
@@ -232,6 +232,7 @@ export default function ThermalTracePanel({ config }) {
 
   // Build solver params with system spec fallbacks
   const solverParams = useMemo(() => buildSolverParams(P, specs), [P, specs])
+  const normalizedModel = useMemo(() => normalizeTraceModel(P.model), [P.model])
 
   // Run calculation
   const result = useMemo(() => iterativeSolve(solverParams), [solverParams])
@@ -332,7 +333,7 @@ export default function ThermalTracePanel({ config }) {
             {MODEL_OPTIONS.map(m => (
               <button
                 key={m.value}
-                className={`btn btn-sm ${P.model === m.value ? 'btn-primary' : 'btn-ghost'}`}
+                className={`btn btn-sm ${normalizedModel === m.value ? 'btn-primary' : 'btn-ghost'}`}
                 onClick={() => setP('model', m.value)}
                 style={{ fontSize: 10, padding: '4px 10px' }}
                 data-tip={m.note}
@@ -512,7 +513,7 @@ export default function ThermalTracePanel({ config }) {
             </div>
 
             {/* IPC-2152 Corrections (only visible in 2152 mode) */}
-            {P.model === '2152' && (
+            {normalizedModel === '2152' && (
               <>
                 <SectionHead icon="📊">IPC-2152 Correction Factors</SectionHead>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>

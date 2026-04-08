@@ -25,6 +25,13 @@ def _clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+def _normalize_model(model_value):
+    """Normalize model input to canonical tokens: '2221' or '2152'."""
+    token = str(model_value if model_value is not None else "2221").strip().lower()
+    token = token.replace("_", "").replace("-", "").replace(" ", "")
+    return "2152" if "2152" in token else "2221"
+
+
 def _get_cooling_params(mode, opts):
     """Compute effective convective coefficient h and heatsink network params."""
     if mode == "natural":
@@ -123,7 +130,7 @@ def _iterative_solve(params):
     vplate_um = params["vplate_um"]
     planeDist = params["planeDist"]
     copperFill = params["copperFill"]
-    model    = params.get("model", "2221")
+    model    = _normalize_model(params.get("model", "2221"))
 
     N = nExt + nInt
     if N == 0:
@@ -246,7 +253,7 @@ class PcbTraceThermalMixin:
         copper_oz  = int(float(p.get("copper_oz", 2)))
         pcb_thick  = float(p.get("pcb_thickness_mm", 1.6))
         tmax_allow = float(p.get("max_conductor_temp_c", 105))
-        model_mode = str(p.get("model", "2221"))
+        model_mode = _normalize_model(p.get("model", "2221"))
         cool_mode  = str(p.get("cooling_mode", "natural"))
         orient     = str(p.get("orientation", "vertical"))
         spread_f   = float(p.get("spreading_factor", 1.5))
@@ -377,11 +384,17 @@ class PcbTraceThermalMixin:
             "input_n_layers":         n_ext + n_int,
             "input_vias_on":          vias_on,
             "input_n_vias":           n_vias if vias_on else 0,
+            "input_via_drill_mm":     round(via_drill, 3) if vias_on else None,
             # Coupling outputs for other modules
             "min_trace_width_mm":     round(trace_w_mm, 1),  # user's actual trace width
             "recommended_copper_oz":  copper_oz,
             "trace_power_loss_w":     round(R["Ploss"], 3),
             "effective_h_w_m2k":      round(cooling["h"], 1),
+            # Backward-compatible aliases consumed by thermal.py
+            "copper_oz":              copper_oz,
+            "vias_on":                vias_on,
+            "n_vias":                 n_vias if vias_on else 0,
+            "via_drill_mm":           round(via_drill, 3) if vias_on else None,
             # Correction factors (if IPC-2152)
             "ipc2152_corrections": R["corr"] if R["corr"] else None,
             # Via details
