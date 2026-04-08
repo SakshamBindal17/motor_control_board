@@ -100,6 +100,34 @@ const INITIAL_STATE = {
     calculations: null,
     comparison_results: null,
     design_constants: {},
+    pcb_trace_thermal: {
+      params: {
+        current_a: null,
+        ambient_c: null,
+        trace_width_mm: 7,
+        trace_length_mm: 20,
+        copper_oz: 2,
+        pcb_thickness_mm: 1.6,
+        max_conductor_temp_c: 105,
+        model: '2221',
+        cooling_mode: 'natural',
+        orientation: 'vertical',
+        spreading_factor: 1.5,
+        air_velocity_ms: 1,
+        hs_theta_sa: 5,
+        hs_theta_int: 0.5,
+        hs_contact_area_cm2: 10,
+        n_external_layers: 2,
+        n_internal_layers: 0,
+        vias_on: true,
+        n_vias: 10,
+        via_drill_mm: 0.3,
+        via_plating_um: 25,
+        plane_dist_mm: 0,
+        copper_fill_pct: 0,
+      },
+      results: null,
+    },
     last_saved: null,
   },
   // UI state
@@ -375,6 +403,33 @@ function reducer(state, action) {
         project: { ...state.project, comparison_results: action.payload },
       }
 
+    case 'SET_PCB_TRACE_PARAMS': {
+      const newParams = { ...state.project.pcb_trace_thermal.params, ...action.payload }
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
+          pcb_trace_thermal: {
+            ...state.project.pcb_trace_thermal,
+            params: newParams,
+          },
+        },
+      }
+    }
+
+    case 'SET_PCB_TRACE_RESULTS':
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          pcb_trace_thermal: {
+            ...state.project.pcb_trace_thermal,
+            results: action.payload,
+          },
+        },
+      }
+
     case 'SET_PROJECT_NAME':
       return {
         ...state,
@@ -403,6 +458,13 @@ function reducer(state, action) {
         // Backward compat: ensure comparison_results exists
         if (restored.project.comparison_results === undefined) {
           restored.project = { ...restored.project, comparison_results: null }
+        }
+        // Backward compat: ensure pcb_trace_thermal exists
+        if (!restored.project.pcb_trace_thermal) {
+          restored.project = {
+            ...restored.project,
+            pcb_trace_thermal: INITIAL_STATE.project.pcb_trace_thermal,
+          }
         }
         return restored
       }
