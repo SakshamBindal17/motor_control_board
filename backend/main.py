@@ -68,6 +68,7 @@ class CalcRequest(BaseModel):
     motor_specs: dict
     passives_overrides: Optional[dict] = None
     design_constants: Optional[dict] = None
+    pcb_trace_thermal_params: Optional[dict] = None
 
 @app.post("/api/calculate")
 async def calculate(req: CalcRequest):
@@ -80,6 +81,7 @@ async def calculate(req: CalcRequest):
             motor_specs=req.motor_specs,
             overrides=req.passives_overrides or {},
             design_constants=req.design_constants or {},
+            pcb_trace_thermal_params=req.pcb_trace_thermal_params or {},
         )
         results = engine.run_all()
         return {"success": True, "data": results}

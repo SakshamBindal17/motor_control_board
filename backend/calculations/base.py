@@ -127,11 +127,13 @@ from calculations.protection import ProtectionMixin
 from calculations.thermal import ThermalMixin
 from calculations.validation import ValidationMixin
 from calculations.waveform import WaveformMixin
+from calculations.pcb_trace_thermal import PcbTraceThermalMixin
 
 
-class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMixin, ThermalMixin, ValidationMixin, WaveformMixin):
+class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMixin, ThermalMixin, ValidationMixin, WaveformMixin, PcbTraceThermalMixin):
     def __init__(self, system_specs, mosfet_params, driver_params,
-                 mcu_params, motor_specs, overrides, design_constants=None):
+                 mcu_params, motor_specs, overrides, design_constants=None,
+                 pcb_trace_thermal_params=None):
         self.sys      = system_specs
         self.mosfet   = mosfet_params
         self.driver   = driver_params
@@ -139,6 +141,7 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         self.motor    = motor_specs
         self.ovr      = overrides or {}
         self.design_constants = design_constants or {}
+        self.pcb_trace_params = pcb_trace_thermal_params or {}
         self.audit_log  = []
         self._module_meta = {}  # {module_name: {"hardcoded": [...], "fallbacks": [...]}}
         self._cached_results = {}  # cache for sub-calcs called by multiple modules
@@ -1089,6 +1092,7 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             "adc_timing":           self.calc_adc_timing(),
             "cross_validation":     self.calc_cross_validation(),
             "waveform":             self.calc_waveform(),
+            "pcb_trace_thermal":    self.calc_pcb_trace_thermal(),
         }
         # Attach logs after calculations have fully populated them
         results["audit_log"] = list(dict.fromkeys(self.audit_log))

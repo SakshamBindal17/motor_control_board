@@ -81,6 +81,20 @@ class ThermalMixin:
 
         p_system_total = p_fet * self.num_fets + p_copper_3ph
 
+        # ── Cross-module coupling: PCB Trace Thermal ──────────────────
+        # If the user has configured trace thermal params, use those results
+        # for more accurate trace width and system loss accounting.
+        p_trace_loss = 0.0
+        trace_thermal_data = None
+        try:
+            if hasattr(self, 'pcb_trace_params') and self.pcb_trace_params:
+                trace_thermal_data = self.calc_pcb_trace_thermal()
+                if trace_thermal_data and trace_thermal_data.get("has_data"):
+                    p_trace_loss = trace_thermal_data.get("trace_power_loss_w", 0)
+                    p_system_total += p_trace_loss
+        except Exception:
+            pass  # Don't fail main thermal calc if PCB trace thermal fails
+
         # ── Driver IC thermal analysis (using extracted rth_ja and thermal_shutdown) ──
         rth_ja_drv = self._get(self.driver, "DRIVER", "rth_ja", None)
         tj_max_drv = self._get(self.driver, "DRIVER", "tj_max", None)
@@ -123,13 +137,42 @@ class ThermalMixin:
         i_trace = self.i_max
         area_mil2 = ((i_trace / (0.048 * (30**0.44))) ** (1/0.725))
         width_mm  = (area_mil2 / (3 * 1.4)) * 0.0254  # 3oz = 3×1.4mil thick, width_mil = area/thickness, ×0.0254 → mm
-        trace_w   = max(3.0, round(width_mm, 1))
+        trace_w_basic = max(3.0, round(width_mm, 1))
+        trace_w = trace_w_basic
+
+        # Override with PCB Trace Thermal tab's user-specified width if available and wider
+        if trace_thermal_data and trace_thermal_data.get("has_data"):
+            tt_width = trace_thermal_data.get("min_trace_width_mm")
+            if tt_width and tt_width > 0 and tt_width > trace_w:
+                trace_w = round(tt_width, 1)
+                self.audit_log.append(
+                    f"[Thermal] Trace width updated from PCB Trace Thermal tab: "
+                    f"{tt_width:.1f}mm (user-specified, wider than IPC-2152 minimum {trace_w_basic}mm)."
+                )
 
         # Copper pour area for MOSFET pad: rule of thumb — 1 in² (645.16 mm²) of 1oz Cu
         # dissipates ~1W with 30°C rise in still-air convection. Results are conservative.
         cu_area_mm2 = p_fet * 645 / 30
         vias_per_fet = int(self._dc("thermal.vias_per_fet"))
-        self._log_hc("thermal", "Thermal vias", f"{vias_per_fet}x 0.3mm per FET", "Heat transfer to bottom copper", "thermal.vias_per_fet")
+        via_drill = 0.3
+        cu_oz = 3
+
+        # Override via parameters and copper weight from PCB Trace Thermal if available
+        if trace_thermal_data and trace_thermal_data.get("has_data"):
+            tt_oz = trace_thermal_data.get("copper_oz")
+            if tt_oz: cu_oz = tt_oz
+            
+            if trace_thermal_data.get("vias_on", True):
+                tt_vias = trace_thermal_data.get("n_vias")
+                tt_drill = trace_thermal_data.get("via_drill_mm")
+                if tt_vias: vias_per_fet = int(tt_vias)
+                if tt_drill: via_drill = float(tt_drill)
+
+            self.audit_log.append(
+                f"[Thermal] PCB layout updated from Trace Thermal tab: {cu_oz}oz Cu, {vias_per_fet}x {via_drill}mm vias."
+            )
+        else:
+            self._log_hc("thermal", "Thermal vias", f"{vias_per_fet}x 0.3mm per FET", "Heat transfer to bottom copper", "thermal.vias_per_fet")
 
         result = {
             "p_per_fet_w":              round(p_fet,          3),
@@ -150,13 +193,15 @@ class ThermalMixin:
             "trace_width_note":         f"IPC-2152 approx: 3oz Cu, 30°C rise, external layer. For >{i_trace:.0f}A use solid copper pours.",
             "copper_area_per_fet_mm2":  round(cu_area_mm2,    0),
             "thermal_vias_per_fet":     vias_per_fet,
-            "via_drill_mm":             0.3,
+            "via_drill_mm":             via_drill,
+            "copper_oz":                cu_oz,
             "motor_copper_loss_w":      round(p_copper_3ph, 1),
+            "trace_conduction_loss_w":  round(p_trace_loss, 3),
             "system_total_loss_w":      round(p_system_total, 1),
             "notes": {
                 "package":   "D2PAK (TO-263-7) — use thermal slug pad with solder mask opening",
-                "vias":      f"{vias_per_fet}× 0.3mm drilled, 0.2mm annular ring thermal vias per MOSFET",
-                "copper_oz": "3oz L1/L6, thermal slug pads open to both sides",
+                "vias":      f"{vias_per_fet}× {via_drill}mm drilled, 0.2mm annular ring thermal vias per MOSFET",
+                "copper_oz": f"{cu_oz}oz L1/L6, thermal slug pads open to both sides",
                 "cooling":   cooling_label,
                 "warning":   f"⚠ CRITICAL: Tj > 150°C — upgrade cooling (current: {cooling_method})" if not safe
                               else f"✓ Thermal design safe ({cooling_method.replace('_', ' ')} cooling)",
@@ -179,6 +224,8 @@ class ThermalMixin:
         th = self.calc_thermal()
         self._current_module = "pcb_guidelines"  # restore after subroutine
         trace_w = th["power_trace_width_mm"]
+        cu_oz = th.get("copper_oz", 3)
+        via_drill = th.get("via_drill_mm", 0.3)
 
         self._log_hc("pcb_guidelines", "Layer stack", "6-layer", "Standard motor controller PCB configuration")
         self._log_hc("pcb_guidelines", "Gate trace width", "0.3 mm", "Minimum for controlled impedance")
@@ -188,19 +235,19 @@ class ThermalMixin:
 
         return {
             "layer_stack": [
-                {"layer":"L1 (Top)",    "copper_oz":3, "purpose":"Power traces, MOSFET pads, gate traces"},
+                {"layer":"L1 (Top)",    "copper_oz":cu_oz, "purpose":"Power traces, MOSFET pads, gate traces"},
                 {"layer":"L2",          "copper_oz":1, "purpose":"Solid GND plane"},
                 {"layer":"L3",          "copper_oz":1, "purpose":"Signal: gate drive, SPI, UART"},
                 {"layer":"L4",          "copper_oz":1, "purpose":"Power planes: 12V, 5V, 3.3V"},
                 {"layer":"L5",          "copper_oz":1, "purpose":"Signal: analog, sensing, encoder"},
-                {"layer":"L6 (Bottom)", "copper_oz":3, "purpose":"Power returns, thermal spreading"},
+                {"layer":"L6 (Bottom)", "copper_oz":cu_oz, "purpose":"Power returns, thermal spreading"},
             ],
             "power_trace_w_mm":        trace_w,
             "gate_trace_w_mm":         0.3,
             "signal_trace_w_mm":       0.15,
             "power_clearance_mm":      1.0,
             "signal_clearance_mm":     0.15,
-            "via_drill_thermal_mm":    0.3,
+            "via_drill_thermal_mm":    via_drill,
             "via_drill_power_mm":      0.4,
             "via_drill_signal_mm":     0.2,
             "half_bridge_loop_nh":     5,
