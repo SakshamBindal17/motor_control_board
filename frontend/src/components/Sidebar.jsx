@@ -33,7 +33,6 @@ export default function Sidebar({ blocks }) {
       borderRight: '1px solid var(--border-1)',
       display: 'flex',
       flexDirection: 'column',
-      overflow: 'auto',
     }}>
       {/* Logo section */}
       <div style={{
@@ -79,7 +78,7 @@ export default function Sidebar({ blocks }) {
       </div>
 
       {/* Block navigation */}
-      <nav style={{ flex: 1, padding: '10px 0' }}>
+      <nav style={{ flex: 1, padding: '10px 0', overflowY: 'auto', minHeight: 0 }}>
         {/* Dashboard & Charts */}
         <div style={{ padding: '0 8px 6px', marginBottom: 4 }}>
           <NavItem
@@ -158,28 +157,6 @@ export default function Sidebar({ blocks }) {
           />
         ))}
       </nav>
-
-      {/* System specs summary */}
-      <div style={{
-        padding: '10px 14px',
-        borderTop: '1px solid var(--border-1)',
-        fontSize: 10,
-      }}>
-        <div style={{ color: 'var(--txt-3)', marginBottom: 6, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase' }}>
-          System Specs
-        </div>
-        {[
-          ['Bus', `${project.system_specs.bus_voltage}V (${project.system_specs.peak_voltage}V pk)`],
-          ['Power', `${(project.system_specs.power/1000).toFixed(1)} kW`],
-          ['I_max', `${project.system_specs.max_phase_current} A`],
-          ['PWM', `${project.system_specs.pwm_freq_hz/1000} kHz`],
-        ].map(([l,v]) => (
-          <div key={l} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-            <span style={{ color: 'var(--txt-3)' }}>{l}</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--txt-2)', fontSize: 10 }}>{v}</span>
-          </div>
-        ))}
-      </div>
 
       {/* API key warning */}
       {!state.settings.api_key && (

@@ -425,7 +425,7 @@ class ValidationMixin:
         # ── 6. MOSFET Vds_max vs system peak voltage (with ringing margin) ──
         vds_max = self._get(self.mosfet, "MOSFET", "vds_max", None)
         coss = self._get(self.mosfet, "MOSFET", "coss", None)
-        l_stray_nh = float(self.ovr.get("stray_inductance_nh", self._dc("snub.stray_l_default")))
+        l_stray_nh = float(self.ovr.get("stray_inductance_nh", 10.0))
         if vds_max is not None:
             if coss is not None and coss > 0:
                 v_overshoot = self.i_max * math.sqrt(l_stray_nh * 1e-9 / coss)

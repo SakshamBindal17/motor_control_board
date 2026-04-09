@@ -98,7 +98,7 @@ class WaveformMixin:
         io_sink_eff = max(0.2, io_sink * drv_derate)
 
         # ── Stray PCB inductance (for ringing calculation) ────────────
-        l_stray_nh = float(self.ovr.get("stray_inductance_nh", self._dc("snub.stray_l_default")))
+        l_stray_nh = float(self.ovr.get("stray_inductance_nh", 10.0))
         l_stray    = l_stray_nh * 1e-9  # H
 
         # ── FIX 1: Vgs_plateau corrected for actual operating current ─

@@ -5,18 +5,15 @@ import { fetchDesignConstants } from '../api.js'
 
 // UI-only metadata (grouping, labels, step sizes) to merge with backend numeric defaults
 const UI_META = {
-  'thermal.rds_derating': { cat: 'Thermal', label: 'Rds(on) thermal derating', step: 0.1 },
   'thermal.rth_cs':       { cat: 'Thermal', label: 'TIM resistance (case-to-PCB)', step: 0.1 },
   'thermal.rth_sa':       { cat: 'Thermal', label: 'PCB-to-ambient Rth', step: 1 },
   'thermal.safe_margin':  { cat: 'Thermal', label: 'Safe margin threshold', step: 5 },
   'thermal.vias_per_fet': { cat: 'Thermal', label: 'Thermal vias per FET', step: 1 },
   'gate.rise_time_target':{ cat: 'Gate Drive', label: 'Rise time target', step: 5 },
-  'gate.rg_off_ratio':    { cat: 'Gate Drive', label: 'Rg_off ratio', step: 0.05 },
   'gate.rg_bootstrap':    { cat: 'Gate Drive', label: 'Bootstrap series R', step: 1 },
   'gate.bootstrap_vf':    { cat: 'Gate Drive', label: 'Bootstrap diode Vf', step: 0.1 },
   'boot.min_cap':         { cat: 'Bootstrap', label: 'Min practical boot cap', step: 10 },
   'boot.safety_margin':   { cat: 'Bootstrap', label: 'Safety margin multiplier', step: 0.5 },
-  'boot.leakage_ua':      { cat: 'Bootstrap', label: 'Leakage current budget', step: 0.5 },
   'input.spwm_mod_index': { cat: 'Input Caps', label: 'SPWM modulation index', step: 0.05 },
   'input.min_bulk_count': { cat: 'Input Caps', label: 'Min bulk cap count', step: 1 },
   'input.bulk_cap_uf':    { cat: 'Input Caps', label: 'Bulk cap size', step: 10 },
@@ -31,7 +28,6 @@ const UI_META = {
   'dt.abs_margin':        { cat: 'Dead Time', label: 'Absolute margin', step: 5 },
   'dt.safety_mult':       { cat: 'Dead Time', label: 'Safety multiplier', step: 0.1 },
   'snub.coss_mult':       { cat: 'Snubber', label: 'Coss multiplier', step: 1 },
-  'snub.stray_l_default': { cat: 'Snubber', label: 'Default stray inductance', step: 1 },
   'emi.cm_choke_uh':      { cat: 'EMI Filter', label: 'CM choke inductance', step: 10 },
 }
 

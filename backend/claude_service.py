@@ -22,7 +22,7 @@ _inflight: dict[str, asyncio.Event] = {}  # key → Event (set when done)
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 
 # Bump this string whenever prompts change — forces cache re-extraction automatically
-PROMPT_VERSION = "v8"
+PROMPT_VERSION = "v10"
 
 def _cache_path(block_type: str, pdf_hash: str) -> str:
     folder = os.path.join(CACHE_DIR, block_type)
@@ -159,6 +159,10 @@ id="tf"
 id="rth_jc"
   Name: Junction-to-Case Thermal Resistance
   Aliases: Rth(j-c) · RθJC · RthJC · θJC · RTH,JC · RTHJC · Thermal Resistance (Junction to Case)
+
+id="rth_ja"
+  Name: Junction-to-Ambient Thermal Resistance
+  Aliases: RθJA · Rth(j-a) · RthJA · θJA · RTH,JA · RTHJA · Thermal Resistance (Junction to Ambient)
 
 id="tj_max"
   Name: Maximum Junction Temperature

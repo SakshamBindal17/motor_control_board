@@ -33,6 +33,7 @@ const EXPECTED_PARAMS = {
     'td_off',         // turn-off delay (dead-time minimum)
     'tf',             // fall time (switching loss)
     'rth_jc',         // thermal: junction temperature estimate
+    'rth_ja',         // thermal: junction-to-ambient baseline
     'tj_max',         // thermal: margin check
     'body_diode_vf',  // body diode forward drop → dead-time conduction loss
     'rg_int',         // internal gate resistance → Rg_ext calculation
@@ -98,6 +99,7 @@ export const CALC_CRITICAL = {
     "qrr",            // reverse recovery loss
     "trr",            // dead-time vs reverse recovery check
     "rth_jc",         // thermal → Tj estimate
+    "rth_ja",         // thermal → Tj estimate for Natural Cooling (No Heatsink)
     "tj_max",         // thermal margin check
     "vgs_th",         // gate resistor (Vdrv - Vth drive headroom)
     "vgs_max",        // gate drive voltage safety validation

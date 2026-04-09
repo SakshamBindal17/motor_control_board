@@ -82,6 +82,7 @@ function BreakdownRow({ label, val, tip }) {
 
 function Field({ label, unit, value, onChange, min, max, step, type, note, disabled, isLinked, onToggleLink, systemValue, tip }) {
   const displayVal = isLinked && value == null ? systemValue : value;
+  const hasError = min != null && displayVal !== '' && parseFloat(displayVal) < min;
 
   return (
     <div data-tip={tip} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -112,8 +113,9 @@ function Field({ label, unit, value, onChange, min, max, step, type, note, disab
           }}
           min={min} step={step || 'any'}
           disabled={disabled}
-          style={{ width: '100%', borderColor: isLinked ? 'var(--green)40' : undefined }}
+          style={{ width: '100%', borderColor: hasError ? 'var(--red)' : isLinked ? 'var(--green)40' : undefined, color: hasError ? 'var(--red)' : undefined }}
         />
+        {hasError && <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 700, whiteSpace: 'nowrap' }}>&lt; {min}</span>}
       </div>
       {note && <span style={{ fontSize: 10, color: 'var(--txt-3)' }}>{note}</span>}
     </div>

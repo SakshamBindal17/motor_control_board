@@ -72,46 +72,88 @@ class PassivesMixin:
         # Ripple current per cap (they share it)
         i_rip_per_cap = 0 if n_caps == 0 else i_ripple_rms / n_caps
 
-        # Film cap (mid-freq 1kHz–1MHz)
-        c_film_uf = 4.7
-        self._log_hc("input_capacitors", "Film cap", "4.7 µF", "Mid-frequency decoupling")
+        # ── Film + MLCC overrides ──────────────────────────────────────────────
+        def _flt(key, default):
+            try: return float(self.ovr.get(key, default))
+            except (TypeError, ValueError): return float(default)
+        def _int(key, default):
+            try: return int(float(self.ovr.get(key, default)))
+            except (TypeError, ValueError): return int(default)
 
-        # MLCC HF decoupling per switch node
-        c_mlcc_nf = 100
-        self._log_hc("input_capacitors", "MLCC per switch node", "100 nF", "High-frequency decoupling")
-
-        # Total capacitor dissipation (at rated ESR)
+        bulk_v_rating  = _int("bulk_v_rating_v",  100)
+        film_qty       = _int("film_qty",           2)
+        film_size_uf   = _flt("film_size_uf",       4.7)
+        film_v_rating  = _int("film_v_rating_v",   100)
+        mlcc_qty       = _int("mlcc_qty",            6)
+        mlcc_size_nf   = _flt("mlcc_size_nf",      100.0)
+        mlcc_esr_mohm  = _flt("mlcc_esr_mohm",       5.0)
+        bulk_esl_nh    = _flt("bulk_esl_nh", 15.0)
+        film_esl_nh    = _flt("film_esl_nh", 5.0)
+        mlcc_esl_nh    = _flt("mlcc_esl_nh", 1.0)
+        
         esr_typ_mohm = self._dc("input.esr_per_cap")
-        self._log_hc("input_capacitors", "Typical ESR per cap", f"{esr_typ_mohm} mΩ", "Electrolytic ESR estimate for thermal calc", "input.esr_per_cap")
-        p_cap_total  = i_ripple_rms**2 * (esr_typ_mohm/1000) / n_caps
-        p_per_cap    = (i_ripple_rms / n_caps) ** 2 * (esr_typ_mohm / 1000)
+        self._log_hc("input_capacitors", "Typical ESR per bulk cap", f"{esr_typ_mohm} mΩ", "Electrolytic ESR estimate for thermal calc", "input.esr_per_cap")
 
-        self.audit_log.append("[DC Bus] Hardcoded standard decoupling: 50mΩ ESR per electrolytic, 4.7µF film, 100nF MLCC.")
+        # ── Parallel Impedance Network Splitting ────────────────────────────────
+        w = 2 * math.pi * max(fsw, 1000)
+        def _z(c_uf, esr_mohm, esl_nh, qty):
+            if qty <= 0 or c_uf <= 0: return complex(1e9, 0)
+            c_f = c_uf * 1e-6 * qty
+            esr_ohm = (esr_mohm * 1e-3) / qty
+            esl_h = (esl_nh * 1e-9) / qty
+            return complex(esr_ohm, w * esl_h - 1 / (w * c_f))
+
+        Z_bulk = _z(bulk_uf, esr_typ_mohm, bulk_esl_nh, n_caps)
+        Z_film = _z(film_size_uf, 5.0, film_esl_nh, film_qty) # 5mΩ typical film ESR
+        Z_mlcc = _z(mlcc_size_nf * 1e-3, mlcc_esr_mohm, mlcc_esl_nh, mlcc_qty)
+
+        Y_total = (1/Z_bulk) + (1/Z_film) + (1/Z_mlcc)
+        Z_eq = 1 / Y_total
+
+        # Split ripple current
+        I_bulk = i_ripple_rms * abs(Z_eq / Z_bulk)
+        I_film = i_ripple_rms * abs(Z_eq / Z_film)
+        I_mlcc = i_ripple_rms * abs(Z_eq / Z_mlcc)
+
+        p_cap_total = (I_bulk**2) * Z_bulk.real
+        p_per_cap   = 0 if n_caps == 0 else p_cap_total / n_caps
+        mlcc_power_loss_w = (I_mlcc**2) * Z_mlcc.real
+
+        mlcc_parallel_esr_mohm = round(mlcc_esr_mohm / mlcc_qty, 3) if mlcc_qty > 0 else mlcc_esr_mohm
+        i_rip_per_cap = 0 if n_caps == 0 else I_bulk / n_caps
+
+        self.audit_log.append(
+            f"[DC Bus] Parallel high-frequency impedance split at {fsw/1000:.0f}kHz: "
+            f"I_bulk={I_bulk:.1f}A, I_film={I_film:.1f}A, I_mlcc={I_mlcc:.1f}A."
+        )
 
         return {
-            "i_dc_a":                   round(i_dc,               2),
-            "i_ripple_rms_a":           round(i_ripple_rms,       2),
-            "ripple_method":            ripple_method,
-            "delta_v_target_v":         delta_v,
-            "c_bulk_required_uf":       round(c_req_uf,           1),
-            "n_bulk_caps":              n_caps,
-            "c_per_bulk_cap_uf":        bulk_uf,
-            "c_total_uf":               c_total,
-            "v_rating_bulk_v":          100,
-            "v_ripple_actual_v":        round(v_ripple_actual,    4),
-            "esr_budget_total_mohm":    round(esr_total_budget_mohm, 1),
-            "esr_budget_per_cap_mohm":  round(esr_per_cap,        1),
-            "i_ripple_per_cap_a":       round(i_rip_per_cap,      2),
-            "cap_dissipation_w":        round(p_cap_total,        3),
-            "cap_dissipation_per_cap_w":round(p_per_cap,          4),
-            "c_film_uf":                c_film_uf,
-            "c_film_v_rating":          100,
-            "c_film_qty":               2,
-            "c_mlcc_nf":                c_mlcc_nf,
-            "c_mlcc_v_rating":          100,
-            "c_mlcc_qty":               6,
-            "c_mlcc_dielectric":        "X7R",
-            "recommended_bulk_part":    "Panasonic EEU-FC2A101 (100µF/100V, 1.94A ripple)",
+            "i_dc_a":                    round(i_dc,               2),
+            "i_ripple_rms_a":            round(i_ripple_rms,       2),
+            "ripple_method":             ripple_method,
+            "delta_v_target_v":          delta_v,
+            "c_bulk_required_uf":        round(c_req_uf,           1),
+            "n_bulk_caps":               n_caps,
+            "c_per_bulk_cap_uf":         bulk_uf,
+            "c_total_uf":                c_total,
+            "v_rating_bulk_v":           bulk_v_rating,
+            "v_ripple_actual_v":         round(v_ripple_actual,    4),
+            "esr_budget_total_mohm":     round(esr_total_budget_mohm, 1),
+            "esr_budget_per_cap_mohm":   round(esr_per_cap,        1),
+            "i_ripple_per_cap_a":        round(i_rip_per_cap,      2),
+            "cap_dissipation_w":         round(p_cap_total,        3),
+            "cap_dissipation_per_cap_w": round(p_per_cap,          4),
+            "c_film_uf":                 film_size_uf,
+            "c_film_v_rating":           film_v_rating,
+            "c_film_qty":                film_qty,
+            "c_mlcc_nf":                 mlcc_size_nf,
+            "c_mlcc_esr_per_cap_mohm":   mlcc_esr_mohm,
+            "c_mlcc_parallel_esr_mohm":  mlcc_parallel_esr_mohm,
+            "c_mlcc_power_loss_w":       mlcc_power_loss_w,
+            "c_mlcc_v_rating":           100,
+            "c_mlcc_qty":                mlcc_qty,
+            "c_mlcc_dielectric":         "X7R",
+            "recommended_bulk_part":     f"Panasonic EEU-FC2A101 ({bulk_uf:.0f}µF/{bulk_v_rating}V, 1.94A ripple)",
             "notes": {
                 "placement_bulk":  "Within 30mm of H-bridge, low-impedance bus bar",
                 "placement_film":  "Within 20mm of each half-bridge section",
@@ -129,7 +171,18 @@ class PassivesMixin:
     def calc_shunt_resistors(self) -> dict:
         self._current_module = "shunt_resistors"
         i_max    = self.i_max
-        csa_gain = self._get(self.driver, "DRIVER", "current_sense_gain", 20) or 20
+
+        # CSA gain: from driver datasheet, then user override, then default 20
+        csa_gain_ds = self._get(self.driver, "DRIVER", "current_sense_gain", None)
+        csa_gain_override_raw = self.ovr.get("csa_gain_override")
+        if csa_gain_override_raw is not None:
+            try:
+                csa_gain = float(csa_gain_override_raw)
+                self.audit_log.append(f"[Current Sensing] CSA gain manually overridden to {csa_gain}.")
+            except (TypeError, ValueError):
+                csa_gain = csa_gain_ds if (csa_gain_ds and csa_gain_ds > 0) else 20
+        else:
+            csa_gain = csa_gain_ds if (csa_gain_ds and csa_gain_ds > 0) else 20
 
         # Try to get ADC reference from MCU datasheet; fall back to design constant
         adc_ref_from_mcu = self._get(self.mcu, "MCU", "adc_ref", None)
@@ -138,7 +191,7 @@ class PassivesMixin:
             self.audit_log.append(f"[Current Sensing] Using ADC reference {adc_ref}V from MCU datasheet.")
         else:
             adc_ref = self._dc("prot.adc_ref")
-            self._log_hc("shunt_resistors", "ADC reference", f"{adc_ref} V", "MCU ADC reference voltage (default — not extracted from MCU datasheet)", "prot.adc_ref")
+            self._log_hc("shunt_resistors", "ADC reference", f"{adc_ref} V", "MCU ADC reference voltage (default)", "prot.adc_ref")
 
         # Target 50% of ADC ref for bidirectional FOC
         v_adc_target = adc_ref / 2.0
@@ -146,10 +199,22 @@ class PassivesMixin:
         self.audit_log.append(f"[Current Sensing] Assumed {adc_ref}V ADC with {v_adc_target}V bias target for bidirectional FOC.")
         r_ideal_mohm = (v_adc_target / (i_max * csa_gain)) * 1000
 
-        # Standard shunt values
-        r1_mohm  = 0.5 if r_ideal_mohm <= 0.75 else 1.0   # single shunt
-        r3_mohm  = 0.5                                      # 3-phase always 0.5
-        self._log_hc("shunt_resistors", "3-phase shunt value", "0.5 mΩ", "Standard low-side current sense resistor")
+        # Shunt value overrides — user can directly set values
+        def _mohm_ovr(key, default_val):
+            try:
+                v = float(self.ovr.get(key, default_val))
+                return v if v > 0 else float(default_val)
+            except (TypeError, ValueError):
+                return float(default_val)
+
+        r1_mohm_auto = 0.5 if r_ideal_mohm <= 0.75 else 1.0
+        r1_mohm = _mohm_ovr("shunt_single_mohm", r1_mohm_auto)
+        r3_mohm = _mohm_ovr("shunt_three_mohm",  0.5)
+
+        if "shunt_single_mohm" not in self.ovr:
+            self._log_hc("shunt_resistors", "Single shunt auto-select", f"{r1_mohm} mΩ", "Snapped to 0.5 or 1.0mΩ standard value based on ADC target")
+        if "shunt_three_mohm" not in self.ovr:
+            self._log_hc("shunt_resistors", "3-phase shunt value", "0.5 mΩ", "Standard low-side current sense resistor")
 
         # Single shunt
         v_sh1_mv   = i_max * r1_mohm * 1e-3 * 1000        # mV at Imax
@@ -162,13 +227,14 @@ class PassivesMixin:
         v_adc3     = v_sh3_mv * 1e-3 * csa_gain
         p_sh3_ea   = (i_max/math.sqrt(2))**2 * r3_mohm * 1e-3  # RMS per phase
 
-        # ADC SNR budget — use extracted MCU ADC resolution, default 12-bit
+        # ADC SNR budget
         adc_bits = self._get(self.mcu, "MCU", "adc_resolution", 12) or 12
         lsb_mv   = (adc_ref * 1000) / (2 ** int(adc_bits))   # mV per LSB
         bits_used = math.log2(v_adc1 * 1000 / lsb_mv) if v_adc1 > 0 else 0
 
         return {
             "csa_gain":            csa_gain,
+            "csa_gain_source":     "manual_override" if csa_gain_override_raw is not None else ("datasheet" if csa_gain_ds else "default"),
             "adc_reference_v":     adc_ref,
             "single_shunt": {
                 "value_mohm":      r1_mohm,
@@ -206,7 +272,7 @@ class PassivesMixin:
     def calc_snubber(self) -> dict:
         self._current_module = "snubber"
         # Parasitic PCB trace inductance (target <5nH, assume 10nH worst case)
-        l_stray_nh  = float(self.ovr.get("stray_inductance_nh", self._dc("snub.stray_l_default")))
+        l_stray_nh  = float(self.ovr.get("stray_inductance_nh", 10.0))
         l_stray     = l_stray_nh * 1e-9
 
         # _get returns SI value (Farads if unit is pF/nF/etc), fallback is raw value.
@@ -232,10 +298,8 @@ class PassivesMixin:
         rs_std      = _nearest_e(rs_crit)
         
         # Log the stray inductance hardcode
-        stray_default = self._dc("snub.stray_l_default")
-        if l_stray_nh == stray_default:
-            self.audit_log.append(f"[Snubber] Stray layout inductance missing. Assumed {stray_default}nH default.")
-            self._log_hc("snubber", "Stray inductance", f"{stray_default} nH", "Assumed PCB loop inductance (worst case)", "snub.stray_l_default")
+        if l_stray_nh == 10.0:
+            self.audit_log.append("[Snubber] Stray layout inductance not specified. Assumed 10nH default.")
         self.audit_log.append("[Snubber] Targeted critical damping factor (ζ = 1) for switching overshoot resistor calculation.")
         if rs_std < 1.0: rs_std = 1.0    # practical minimum
         if rs_std > 100: rs_std = 100.0  # practical maximum
@@ -253,14 +317,37 @@ class PassivesMixin:
         cs_pf_std = float(next((v for v in E12_pF if v >= cs_pf_raw), E12_pF[-1]))
         cs_pf_std = max(100.0, cs_pf_std)
 
-        rs_recommend = max(1.0, min(100.0, round(rs_std, 0)))
-        cs_recommend = cs_pf_std
+        # ── Snubber value overrides ──────────────────────────────────────────────
+        snub_rs_raw  = self.ovr.get("snubber_rs_ohm")
+        snub_cs_raw  = self.ovr.get("snubber_cs_pf")
+        snub_v_mult  = 2.0
+        try: snub_v_mult = float(self.ovr.get("snubber_v_mult", 2.0))
+        except (TypeError, ValueError): pass
 
+        manual_snubber = False
+        try:
+            rs_man = float(snub_rs_raw)
+            cs_man = float(snub_cs_raw)
+            if rs_man > 0 and cs_man > 0:
+                rs_recommend = rs_man
+                cs_recommend = cs_man
+                manual_snubber = True
+                self.audit_log.append(
+                    f"[Snubber] Manual override: Rs={rs_man}Ω, Cs={cs_man:.0f}pF entered by user."
+                )
+        except (TypeError, ValueError):
+            pass
+
+        if not manual_snubber:
+            rs_recommend = max(1.0, min(100.0, round(rs_std, 0)))
+            cs_recommend = cs_pf_std
+
+        cap_v_rating = int(self.v_peak * snub_v_mult)
         # Dynamic snubber cap label
         if cs_recommend >= 1000:
-            cs_label = f"{cs_recommend/1000:.0f}nF / {int(self.v_peak * 2)}V X7R MLCC"
+            cs_label = f"{cs_recommend/1000:.0f}nF / {cap_v_rating}V X7R MLCC"
         else:
-            cs_label = f"{cs_recommend:.0f}pF / {int(self.v_peak * 2)}V X7R MLCC"
+            cs_label = f"{cs_recommend:.0f}pF / {cap_v_rating}V X7R MLCC"
 
         # Snubber power dissipation (per MOSFET)
         p_snubber = 0.5 * (cs_recommend * 1e-12) * (self.v_peak**2) * self.fsw
@@ -270,36 +357,36 @@ class PassivesMixin:
         qoss = self._get(self.mosfet, "MOSFET", "qoss", None)  # C (SI)
         qoss_info = {}
         if qoss is not None:
-            # Energy stored in Coss: E_oss ≈ Qoss × Vds / 2
-            e_oss_uj = qoss * self.v_peak / 2 * 1e6  # µJ
-            # Snubber cap stored energy: E_snub = 0.5 × Cs × V²
+            e_oss_uj  = qoss * self.v_peak / 2 * 1e6  # µJ
             e_snub_uj = 0.5 * (cs_recommend * 1e-12) * (self.v_peak ** 2) * 1e6  # µJ
             qoss_info = {
-                "qoss_nC":           round(qoss * 1e9, 0),
-                "e_oss_uj":          round(e_oss_uj, 2),
-                "e_snubber_uj":      round(e_snub_uj, 2),
-                "snubber_absorbs_oss": e_snub_uj >= e_oss_uj,
+                "qoss_nC":              round(qoss * 1e9, 0),
+                "e_oss_uj":             round(e_oss_uj, 2),
+                "e_snubber_uj":         round(e_snub_uj, 2),
+                "snubber_absorbs_oss":  e_snub_uj >= e_oss_uj,
             }
             self.audit_log.append(f"[Snubber] Qoss={qoss*1e9:.0f}nC from datasheet. E_oss={e_oss_uj:.1f}µJ, E_snub={e_snub_uj:.1f}µJ.")
 
         result = {
-            "num_fets":                 self.num_fets,
-            "stray_inductance_nh":      l_stray_nh,
-            "coss_pf":                  coss_pf,
-            "resonant_freq_mhz":        round(f_res_mhz,   1),
-            "voltage_overshoot_v":      round(v_overshoot,  1),
-            "v_sw_peak_v":              round(v_sw_peak,    1),
-            "rs_critical_ohm":          round(rs_crit,      2),
-            "rs_recommended_ohm":       rs_recommend,
-            "cs_recommended_pf":        cs_recommend,
-            "cs_recommended_label":     cs_label,
-            "p_per_snubber_w":          round(p_snubber,    4),
-            "p_total_all_snubbers_w":    round(p_snubber_total, 3),
-            "p_total_6_snubbers_w":      round(p_snubber_total, 3),  # backward compat
-            "rs_power_rating":          "0.1W minimum (0402)",
+            "num_fets":                   self.num_fets,
+            "stray_inductance_nh":        l_stray_nh,
+            "coss_pf":                    coss_pf,
+            "resonant_freq_mhz":          round(f_res_mhz,    1),
+            "voltage_overshoot_v":        round(v_overshoot,   1),
+            "v_sw_peak_v":                round(v_sw_peak,     1),
+            "rs_critical_ohm":            round(rs_crit,       2),
+            "rs_recommended_ohm":         rs_recommend,
+            "cs_recommended_pf":          cs_recommend,
+            "cs_recommended_label":       cs_label,
+            "snubber_cap_v_rating":       cap_v_rating,
+            "manual_snubber_values":      manual_snubber,
+            "p_per_snubber_w":            round(p_snubber,     4),
+            "p_total_all_snubbers_w":     round(p_snubber_total, 3),
+            "p_total_6_snubbers_w":       round(p_snubber_total, 3),  # backward compat
+            "rs_power_rating":            "0.1W minimum (0402)",
             "notes": {
                 "rs_placement":   "Place Cs physically closest to MOSFET D-S pins",
-                "v_rating":       f"Snubber cap voltage rating: {int(self.v_peak * 2)}V minimum (2×Vpeak)",
+                "v_rating":       f"Snubber cap voltage rating: {cap_v_rating}V minimum ({snub_v_mult:.1f}×Vpeak)",
                 "reduce_stray":   "Reducing PCB stray inductance is more effective than snubbers",
                 "pcb_technique":  "Use mirrored top/bottom copper pours for low-inductance half-bridge",
             },

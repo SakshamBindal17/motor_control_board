@@ -39,6 +39,11 @@ class ThermalMixin:
 
         tier_rth, tier_desc = tier
 
+        mosfet_rth_ja = self._get(self.mosfet, "MOSFET", "rth_ja", None)
+        if cooling_method == "natural" and mosfet_rth_ja is not None:
+            tier_rth = max(1.0, mosfet_rth_ja - rth_jc - rth_cs)
+            tier_desc = f"Datasheet Rth_JA ({mosfet_rth_ja}°C/W) (PCB baseline)"
+
         if cooling_method == "custom" or tier_rth is None:
             # "custom" mode: use user's design constant directly
             rth_sa = self._dc("thermal.rth_sa")
@@ -229,11 +234,48 @@ class ThermalMixin:
         cu_oz = th.get("copper_oz", 3)
         via_drill = th.get("via_drill_mm", 0.3)
 
+        # Configurable PCB guidelines
+        gate_trace_w_mm   = float(self.ovr.get("gate_trace_w_mm",   0.3))
+        power_clearance_mm= float(self.ovr.get("power_clearance_mm", 1.0))
+
         self._log_hc("pcb_guidelines", "Layer stack", "6-layer", "Standard motor controller PCB configuration")
-        self._log_hc("pcb_guidelines", "Gate trace width", "0.3 mm", "Minimum for controlled impedance")
+        if gate_trace_w_mm == 0.3:
+            self._log_hc("pcb_guidelines", "Gate trace width", "0.3 mm", "Minimum for controlled impedance")
         self._log_hc("pcb_guidelines", "Signal trace width", "0.15 mm", "Standard signal routing")
-        self._log_hc("pcb_guidelines", "Power clearance", "1.0 mm", "High voltage spacing")
-        self._log_hc("pcb_guidelines", "Half-bridge loop target", "< 5 nH", "Low inductance switching loop")
+        if power_clearance_mm == 1.0:
+            self._log_hc("pcb_guidelines", "Power clearance", "1.0 mm", "High voltage spacing")
+
+        # ── Bridge loop inductance (calculated, not hardcoded) ──────────────────
+        # Uses PCB trace geometry from trace thermal params (linked to Passives tab)
+        # Formula: L ≈ (µ₀/π) × l × [ln(4l/(w+h)) + 0.5]  [nH, mm]
+        # where µ₀/π = 0.4 nH/mm, h = typical L1-L2 prepreg thickness (0.15mm for 6L PCB)
+        # This models the partial inductance of the power loop trace.
+        # Reference: Bahl & Trivedi microstrip inductance, TI app note SLVA670.
+        loop_inductance_nh = None
+        loop_status = "unknown"
+        L_LOOP_TARGET = 5.0  # nH — standard half-bridge design target
+
+        if hasattr(self, 'pcb_trace_params') and self.pcb_trace_params:
+            trace_l_mm = float(self.pcb_trace_params.get("trace_length_mm", 0) or 0)
+            trace_w_mm = float(self.pcb_trace_params.get("trace_width_mm",  0) or 0)
+            if trace_l_mm > 0 and trace_w_mm > 0:
+                h_mm     = 0.15  # typical L1-L2 prepreg for 6-layer PCB
+                ln_arg   = max(4.0 * trace_l_mm / (trace_w_mm + h_mm), 1.01)
+                l_nH     = 0.4 * trace_l_mm * (math.log(ln_arg) + 0.5)
+                loop_inductance_nh = round(l_nH, 1)
+                if loop_inductance_nh <= L_LOOP_TARGET:
+                    loop_status = "OK"
+                elif loop_inductance_nh <= 10.0:
+                    loop_status = "WARNING"
+                else:
+                    loop_status = "CRITICAL"
+                self.audit_log.append(
+                    f"[PCB] Half-bridge loop inductance: {loop_inductance_nh:.1f}nH "
+                    f"(trace {trace_l_mm:.0f}mm × {trace_w_mm:.1f}mm, prepreg h=0.15mm). "
+                    f"Target <{L_LOOP_TARGET}nH — status: {loop_status}."
+                )
+        if loop_inductance_nh is None:
+            self._log_hc("pcb_guidelines", "Half-bridge loop target", f"< {L_LOOP_TARGET} nH", "Low inductance switching loop — enter trace dims in Passives tab to calculate")
 
         return {
             "layer_stack": [
@@ -244,16 +286,18 @@ class ThermalMixin:
                 {"layer":"L5",          "copper_oz":1, "purpose":"Signal: analog, sensing, encoder"},
                 {"layer":"L6 (Bottom)", "copper_oz":cu_oz, "purpose":"Power returns, thermal spreading"},
             ],
-            "power_trace_w_mm":        trace_w,
-            "gate_trace_w_mm":         0.3,
-            "signal_trace_w_mm":       0.15,
-            "power_clearance_mm":      1.0,
-            "signal_clearance_mm":     0.15,
-            "via_drill_thermal_mm":    via_drill,
-            "via_drill_power_mm":      0.4,
-            "via_drill_signal_mm":     0.2,
-            "half_bridge_loop_nh":     5,
-            "shunt_kelvin_trace":      "Route sense traces INSIDE power trace pair (Kelvin connection)",
+            "power_trace_w_mm":              trace_w,
+            "gate_trace_w_mm":               gate_trace_w_mm,
+            "signal_trace_w_mm":             0.15,
+            "power_clearance_mm":            power_clearance_mm,
+            "signal_clearance_mm":           0.15,
+            "via_drill_thermal_mm":          via_drill,
+            "via_drill_power_mm":            0.4,
+            "via_drill_signal_mm":           0.2,
+            "half_bridge_loop_target_nh":    L_LOOP_TARGET,
+            "half_bridge_loop_calculated_nh": loop_inductance_nh,
+            "half_bridge_loop_status":       loop_status,
+            "shunt_kelvin_trace":            "Route sense traces INSIDE power trace pair (Kelvin connection)",
             "notes": {
                 "analog_gnd":    "AGND star point at ADC VREF, single bridge to PGND",
                 "gate_loop":     "Gate drive loop < 50mm² to minimize Lgate parasitic",
@@ -273,34 +317,44 @@ class ThermalMixin:
         i_dc    = 0 if self.v_bus == 0 else self.power / self.v_bus
         fsw  = self.fsw
 
-        # Common mode choke: attenuation target -40dB at fsw
-        # Typical values for 20-40kHz: 100–470µH CM inductance
-        lcm_uh    = self._dc("emi.cm_choke_uh")
-        r_dc_choke= 5   # mΩ typical
-        self._log_hc("emi_filter", "CM choke", f"{lcm_uh} µH", "Baseline common-mode inductance", "emi.cm_choke_uh")
-        self._log_hc("emi_filter", "CM choke DCR", "5 mΩ", "Typical DC resistance")
-        p_choke   = (i_dc**2) * r_dc_choke * 1e-3
+        # EMI component overrides
+        def _flt(key, default):
+            try: return float(self.ovr.get(key, default))
+            except (TypeError, ValueError): return float(default)
 
-        # X capacitor (bus differential): 0.1µF at motor cable entry
-        cx_nf     = 100
-        self._log_hc("emi_filter", "X cap", "100 nF / 100V", "Differential mode filtering")
+        lcm_uh           = self._dc("emi.cm_choke_uh")
+        emi_choke_dcr_mohm = _flt("emi_choke_dcr_mohm", 5.0)
+        emi_x_cap_nf     = _flt("emi_x_cap_nf",  100.0)
+        emi_x_cap_v      = _flt("emi_x_cap_v",   100.0)
+        emi_y_cap_nf     = _flt("emi_y_cap_nf",    4.7)
+        emi_y_cap_v      = _flt("emi_y_cap_v",   100.0)
 
-        # Y capacitor (CM to chassis): 4.7nF max (leakage limits)
-        cy_nf     = 4.7
-        self._log_hc("emi_filter", "Y cap", "4.7 nF max", "Common-mode to chassis (safety limit)")
-        
-        self.audit_log.append("[EMI] Hardcoded baseline CM choke (330µH), X-cap (100nF), and Y-cap (4.7nF) for conducted emissions filtering.")
+        r_dc_choke = emi_choke_dcr_mohm  # mΩ
+        if emi_choke_dcr_mohm == 5.0:
+            self._log_hc("emi_filter", "CM choke DCR", "5 mΩ", "Typical DC resistance")
+        if emi_x_cap_nf == 100.0:
+            self._log_hc("emi_filter", "X cap", "100 nF / 100V", "Differential mode filtering")
+        if emi_y_cap_nf == 4.7:
+            self._log_hc("emi_filter", "Y cap", "4.7 nF max", "Common-mode to chassis (safety limit)")
+
+        p_choke = (i_dc**2) * r_dc_choke * 1e-3
+
+        self.audit_log.append(
+            f"[EMI] CM choke {lcm_uh}µH / DCR={emi_choke_dcr_mohm}mΩ, "
+            f"X-cap {emi_x_cap_nf:.0f}nF/{emi_x_cap_v:.0f}V, "
+            f"Y-cap {emi_y_cap_nf:.1f}nF/{emi_y_cap_v:.0f}V."
+        )
 
         return {
             "cm_choke_uh":          lcm_uh,
             "cm_choke_current_a":   round(i_dc * 1.2, 1),
-            "cm_choke_r_dc_mohm":   r_dc_choke,
+            "cm_choke_r_dc_mohm":   emi_choke_dcr_mohm,
             "cm_choke_power_w":     round(p_choke, 2),
             "cm_choke_part":        "Wurth 744235 or TDK ACM series, rated for DC current",
-            "x_cap_nf":             cx_nf,
-            "x_cap_v_rating":       100,
-            "y_cap_nf":             cy_nf,
-            "y_cap_v_rating":       100,
+            "x_cap_nf":             emi_x_cap_nf,
+            "x_cap_v_rating":       emi_x_cap_v,
+            "y_cap_nf":             emi_y_cap_nf,
+            "y_cap_v_rating":       emi_y_cap_v,
             "notes": {
                 "cm_choke_place": "At power input connector, before bulk caps",
                 "motor_output":   "Additional RC filter on motor phase outputs reduces bearing currents",

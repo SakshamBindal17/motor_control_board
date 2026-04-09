@@ -193,7 +193,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
         <Header />
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           <Sidebar blocks={BLOCK_CONFIGS} />

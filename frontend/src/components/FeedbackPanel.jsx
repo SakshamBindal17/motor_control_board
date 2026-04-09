@@ -72,7 +72,7 @@ export default function FeedbackPanel({ config }) {
                   `V_shunt @ Imax = ${shunts.single_shunt.v_shunt_mv} mV`,
                   `V_ADC = ${shunts.single_shunt.v_adc_v} V`,
                   `Location: ${shunts.single_shunt.location}`,
-                ] : ['Run calculations first']}
+                ] : ['Waiting for system parameters...']}
               />
               <div style={{ height: 1, background: 'var(--border-1)' }} />
               <ModeRow mode="3-Phase Shunts" color="#22c55e"
@@ -81,7 +81,7 @@ export default function FeedbackPanel({ config }) {
                   `V_shunt @ Imax = ${shunts.three_shunt.v_shunt_mv} mV`,
                   `V_ADC = ${shunts.three_shunt.v_adc_v} V each`,
                   `Location: ${shunts.three_shunt.location}`,
-                ] : ['Run calculations first']}
+                ] : ['Waiting for system parameters...']}
               />
             </div>
           </div>

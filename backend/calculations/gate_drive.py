@@ -77,29 +77,63 @@ class GateDriveMixin:
         vgs_pl_eff = vgs_pl if (vgs_pl is not None and vgs_th + 0.1 < vgs_pl < vdrv - 0.1) else (vgs_th + 1.0)
         vgs_pl_eff = max(vgs_th + 0.2, min(vgs_pl_eff, vdrv - 0.5))
 
-        if use_miller_basis:
-            rg_total_from_time = (vdrv - vgs_pl_eff) / (qgd / t_rise)
-            rg_drv_min         = (vdrv - vgs_pl_eff) / io_src
-            sizing_basis = "miller_charge"
+        # ── Check for manual Rg overrides from system_specs ─────────────────
+        def _parse_rg(raw):
+            try:
+                v = float(raw)
+                return v if v > 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        rg_on_manual  = _parse_rg((self.sys or {}).get("gate_rg_on_ohm", ""))
+        rg_off_manual = _parse_rg((self.sys or {}).get("gate_rg_off_ohm", ""))
+        manual_input  = rg_on_manual is not None and rg_off_manual is not None
+
+        if manual_input:
+            sizing_basis = "manual_override"
+            rg_on_std    = rg_on_manual
+            rg_on_raw    = rg_on_manual
+            rg_off_std   = rg_off_manual
+            rg_off_raw   = rg_off_manual
+            vgs_pl_eff   = vgs_pl if (vgs_pl is not None and vgs_th + 0.1 < vgs_pl < vdrv - 0.1) else (vgs_th + 1.0)
+            vgs_pl_eff   = max(vgs_th + 0.2, min(vgs_pl_eff, vdrv - 0.5))
+            self.audit_log.append(f"[Gate Drive] Manual override: Rg_on={rg_on_std}Ω, Rg_off={rg_off_std}Ω entered by user. Physics-based Rg sizing bypassed.")
         else:
-            rg_total_from_time = (vdrv - vgs_th) / (qg / t_rise)
-            rg_drv_min         = (vdrv - vgs_th) / io_src
-            sizing_basis = "total_qg_fallback"
+            if use_miller_basis:
+                rg_total_from_time = (vdrv - vgs_pl_eff) / (qgd / t_rise)
+                rg_drv_min         = (vdrv - vgs_pl_eff) / io_src
+                sizing_basis = "miller_charge"
+            else:
+                rg_total_from_time = (vdrv - vgs_th) / (qg / t_rise)
+                rg_drv_min         = (vdrv - vgs_th) / io_src
+                sizing_basis = "total_qg_fallback"
 
-        rg_total_on        = max(rg_total_from_time, rg_drv_min)
-        rg_on_raw          = max(rg_total_on - rg_int, 0.1)  # external Rg = total - internal
-        rg_on_std          = _nearest_e(rg_on_raw)
+            rg_total_on        = max(rg_total_from_time, rg_drv_min)
+            rg_on_raw          = max(rg_total_on - rg_int, 0.1)  # external Rg = total - internal
+            rg_on_std          = _nearest_e(rg_on_raw)
+            if rg_int > 0:
+                self.audit_log.append(f"[Gate Drive] Accounted for Rg_int={rg_int:.1f}Ω from MOSFET datasheet. Rg_ext = Rg_total - Rg_int.")
 
-        if rg_int > 0:
-            self.audit_log.append(f"[Gate Drive] Accounted for Rg_int={rg_int:.1f}Ω from MOSFET datasheet. Rg_ext = Rg_total - Rg_int.")
+            # Auto-size Rg_off using Miller shoot-through prevention (Cgd/Cgs ratio)
+            crss = self._get(self.mosfet, "MOSFET", "crss", None)
+            ciss = self._get(self.mosfet, "MOSFET", "ciss", None)
+            cgs  = ciss - crss if ciss and crss and ciss > crss else None
 
-        rg_off_ratio = self._dc("gate.rg_off_ratio")
-        rg_off_raw  = rg_on_std * rg_off_ratio
-        self._log_hc("gate_resistors", "Rg_off ratio", f"{rg_off_ratio}x Rg_on", "Faster turn-off to reduce cross-conduction", "gate.rg_off_ratio")
-        rg_off_std  = _nearest_e(rg_off_raw)
-        rg_off_min  = (vgs_pl_eff / io_snk) if use_miller_basis else (vdrv / io_snk)
-        if rg_off_std < rg_off_min:
-            rg_off_std = _nearest_e(rg_off_min)
+            if crss and cgs:
+                # Shoot-through criteria: Rg_off_total < Vth / (Cgd * dV/dt)
+                # Standard physical heuristic limit: Rg_off < (Cgs / Cgd) * Rgon
+                miller_ratio_limit = (cgs / crss) * rg_on_std * 0.7  # 30% margin
+                rg_off_raw = min(rg_on_std * 0.9, miller_ratio_limit)
+                self.audit_log.append(f"[Gate Drive] Sized Rg_off ({rg_off_raw:.1f}Ω) dynamically using Miller ratio Cgs/Cgd ({cgs*1e12:.0f}pF/{crss*1e12:.0f}pF) to prevent dV/dt shoot-through.")
+            else:
+                rg_off_ratio = 0.5
+                rg_off_raw  = rg_on_std * rg_off_ratio
+                self.audit_log.append("[Gate Drive] Miller capacitances missing. Assumed Rg_off = 0.5 × Rg_on ratio.")
+            
+            rg_off_std  = _nearest_e(rg_off_raw)
+            rg_off_min  = (vgs_pl_eff / io_snk) if use_miller_basis else (vdrv / io_snk)
+            if rg_off_std < rg_off_min:
+                rg_off_std = _nearest_e(rg_off_min)
 
         rg_boot = self._dc("gate.rg_bootstrap")
         self.audit_log.append(f"[Gate Drive] Bootstrap gate resistor (Rg_boot) = {rg_boot}Ω.")
@@ -222,9 +256,20 @@ class GateDriveMixin:
         t_min_on_ns = 3 * tau_boot * 1e9       # 3τ to charge to ~95%
 
         # Bootstrap leakage budget
-        # Assuming gate leakage 1µA and driver quiescent ~2µA
-        i_leakage_ua = self._dc("boot.leakage_ua")
-        self._log_hc("bootstrap_cap", "Leakage current budget", f"{i_leakage_ua} µA", "Gate 1µA + driver quiescent 2µA", "boot.leakage_ua")
+        # Try extracting Idd(quiescent) from driver datasheet, plus physical gate leakage (~1µA)
+        # Driver quiescent current is often the primary leakage path for the bootstrap cap
+        idd_q_raw = self._get(self.driver, "DRIVER", "idd_quiescent", None)
+        if hasattr(self, 'audit_log') and getattr(self, 'audit_log', None) is not None:
+            pass # safe
+            
+        if idd_q_raw is not None and idd_q_raw > 0:
+            driver_ua = idd_q_raw * 1e6  # convert from A to µA
+            i_leakage_ua = driver_ua + 1.0  # +1µA for MOSFET gate limit
+            self.audit_log.append(f"[Bootstrap] Computed leakage ({i_leakage_ua:.1f}µA) using driver quiescent current ({driver_ua:.1f}µA) + 1µA FET gate leakage.")
+        else:
+            i_leakage_ua = 3.0
+            self.audit_log.append("[Bootstrap] WARNING: Driver Quiescent Current missing. Assumed 3µA standard default for bootstrap leakage.")
+
         # Time until droop = C_boot × ΔV / I_leak
         t_hold_ms = (c_std_nf * 1e-9 * droop / (i_leakage_ua * 1e-6)) * 1000
 

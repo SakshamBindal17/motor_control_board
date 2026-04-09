@@ -25,13 +25,11 @@ DESIGN_CONSTANTS = {
     "thermal.vias_per_fet":    (16,   "pcs",  "Thermal",     "Thermal vias per FET",         "0.3mm vias under thermal pad"),
     # Gate Drive
     "gate.rise_time_target":   (40,   "ns",   "Gate Drive",  "Rise time target",             "Default target for Rg_on sizing"),
-    "gate.rg_off_ratio":       (0.47, "x",    "Gate Drive",  "Rg_off ratio",                 "Rg_off as fraction of Rg_on (faster turn-off)"),
     "gate.rg_bootstrap":       (10.0, "Ω",    "Gate Drive",  "Bootstrap series R",           "Limits bootstrap diode charging current"),
     "gate.bootstrap_vf":       (1.0,  "V",    "Gate Drive",  "Bootstrap diode Vf",           "Default for integrated boot diode (~1V). Set to 0.5V if using external Schottky."),
     # Bootstrap
     "boot.min_cap":            (100,  "nF",   "Bootstrap",   "Min practical boot cap",       "Floor for bootstrap capacitor value"),
     "boot.safety_margin":      (2.0,  "x",    "Bootstrap",   "Safety margin multiplier",     "Applied before E12 snap"),
-    "boot.leakage_ua":         (115,  "µA",   "Bootstrap",   "Leakage current budget",       "Gate 1µA + driver quiescent ~110µA + FET leakage ~4µA"),
     # Input Capacitors
     "input.spwm_mod_index":    (0.9,  "",     "Input Caps",  "SPWM modulation index",        "3-phase SPWM approx when Lph unavailable"),
     "input.min_bulk_count":    (4,    "pcs",  "Input Caps",  "Min bulk cap count",           "Minimum parallel caps for ESR distribution"),
@@ -56,7 +54,7 @@ DESIGN_CONSTANTS = {
     "waveform.driver_temp_derate_per_c":    (0.001, "1/C",  "Waveform",    "Driver current temp derate",    "Per-degree reduction of effective gate-driver source/sink current above 25C"),
     # Snubber
     "snub.coss_mult":          (3,    "x",    "Snubber",     "Coss multiplier",              "Snubber cap = N × Coss for overdamped response"),
-    "snub.stray_l_default":    (10,   "nH",   "Snubber",     "Default stray inductance",     "Assumed PCB power loop inductance"),
+
     # EMI Filter
     "emi.cm_choke_uh":         (330,  "µH",   "EMI Filter",  "CM choke inductance",          "Common-mode choke baseline value"),
 }
@@ -189,12 +187,10 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         "thermal.safe_margin":   (1,    100),
         "thermal.vias_per_fet":  (0,    100),
         "gate.rise_time_target": (5,    500),
-        "gate.rg_off_ratio":     (0.1,  2.0),
         "gate.rg_bootstrap":     (0.1,  100),
         "gate.bootstrap_vf":     (0.1,  2.0),
         "boot.min_cap":          (10,   10000),
         "boot.safety_margin":    (1.0,  10.0),
-        "boot.leakage_ua":       (1,    10000),
         "input.spwm_mod_index":  (0.1,  1.0),
         "input.min_bulk_count":  (1,    64),
         "input.bulk_cap_uf":     (1,    10000),
@@ -207,7 +203,7 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         "waveform.qrr_temp_coeff":              (0.0, 0.02),
         "waveform.driver_temp_derate_per_c":    (0.0, 0.01),
         "snub.coss_mult":        (1,    20),
-        "snub.stray_l_default":  (1,    500),
+
         "emi.cm_choke_uh":       (1,    10000),
         "prot.adc_ref":          (1.0,  5.0),
         "prot.ovp_margin":       (1.0,  2.0),
@@ -251,6 +247,14 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         if tier is None:
             tier = ThermalMixin.COOLING_TIERS["natural"]
         tier_rth, _ = tier
+
+        if cooling == "natural":
+            mosfet_rth_ja = self._get(self.mosfet, "MOSFET", "rth_ja", None)
+            if mosfet_rth_ja is not None:
+                rth_jc = self._get(self.mosfet, "MOSFET", "rth_jc", 0.5)
+                rth_cs = self._dc("thermal.rth_cs")
+                return max(1.0, mosfet_rth_ja - rth_jc - rth_cs)
+
         if cooling == "custom" or tier_rth is None:
             return self._dc("thermal.rth_sa")
         return tier_rth
@@ -623,7 +627,13 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         vdrv     = self.v_drv
         r_boot   = self._dc("gate.rg_bootstrap")
         vf_diode = self._dc("gate.bootstrap_vf")
-        i_leak   = self._dc("boot.leakage_ua")
+        
+        # Pull dynamic leakage from driver
+        idd_q_raw = self._get(self.driver, "DRIVER", "idd_quiescent", None)
+        if idd_q_raw is not None and idd_q_raw > 0:
+            i_leak = (idd_q_raw * 1e6) + 1.0
+        else:
+            i_leak = 3.0
 
         c_boot_f = c_std_nf * 1e-9
 
@@ -963,7 +973,7 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
 
     # ── Snubber: Target Overshoot → Cs, Rs ─────────────────────────
     def _rev_snub_overshoot(self, target_v: float) -> dict:
-        l_stray_nh = float(self.ovr.get("stray_inductance_nh", self._dc("snub.stray_l_default")))
+        l_stray_nh = float(self.ovr.get("stray_inductance_nh", 10.0))
         l_stray    = l_stray_nh * 1e-9
         coss       = self._get(self.mosfet, "MOSFET", "coss", 200e-12)
         i_max      = self.i_max

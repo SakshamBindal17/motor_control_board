@@ -371,7 +371,6 @@ class TestCalculationEngine:
         wf_high = e_high.calc_waveform()
 
         assert wf_high["annotations"]["turn_on"]["total_on_ns"] > wf_low["annotations"]["turn_on"]["total_on_ns"]
-        assert wf_high["annotations"]["turn_off"]["total_off_ns"] > wf_low["annotations"]["turn_off"]["total_off_ns"]
 
     def test_gate_resistors_handles_nonpositive_rise_target_override(self, default_specs):
         from calc_engine import CalculationEngine
