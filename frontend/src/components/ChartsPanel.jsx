@@ -39,8 +39,8 @@ function computeLossVsFreq(mosfetParams, systemSpecs) {
     const pRr = qrr * vBus * f
     // Coss energy loss: P_coss = 0.5 × Qoss × Vbus × fsw
     const pCoss = 0.5 * qoss * vBus * f
-    // Body diode conduction during dead time: P_body = Vf × I_peak × (2/π) × dt × fsw
-    const pBody = bodyVf * iMax * (2 / Math.PI) * (dtNs * 1e-9) * f
+    // Body diode conduction during dead time (2 occurrences per PWM cycle): P_body = Vf × I_avg_diode × 2 × dt × fsw
+    const pBody = bodyVf * iMax * (2 / Math.PI) * (2 * dtNs * 1e-9) * f
     const pTotal = pCond + pSw + pGate + pRr + pCoss + pBody
     points.push({
       freq: f / 1000,
@@ -96,7 +96,7 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
     const bodyVf = mosfetParams.body_diode_vf_si || 0.7
     const dtNs = systemSpecs.dead_time_ns || 200
     const pCossFixed = 0.5 * qoss * vBus * fsw
-    const pBodyFixed = bodyVf * designIMax * (2 / Math.PI) * (dtNs * 1e-9) * fsw
+    const pBodyFixed = bodyVf * designIMax * (2 / Math.PI) * (2 * dtNs * 1e-9) * fsw
 
     // Available thermal budget
     const tBudget = tjMax - tAmb - (pGateFixed + pRrFixed + pCossFixed + pBodyFixed) * rthTotal
@@ -146,6 +146,10 @@ function computeEfficiencyVsLoad(mosfetParams, systemSpecs) {
   const tr = mosfetParams.tr_si || 30e-9
   const tf = mosfetParams.tf_si || 20e-9
   const qrr = mosfetParams.qrr_si || 44e-9
+  const qoss = mosfetParams.qoss_si || 0
+  const bodyVf = mosfetParams.body_diode_vf_si || 0.7
+  const dtNs = systemSpecs.dead_time_ns || 200
+
   const vBus = systemSpecs.bus_voltage || 48
   const pRated = systemSpecs.power || 3000
   const vDrv = systemSpecs.gate_drive_voltage || 12
@@ -169,7 +173,9 @@ function computeEfficiencyVsLoad(mosfetParams, systemSpecs) {
     const pSw = vBus * iPeak * (tr + tf) * fsw / Math.PI * numFets
     const pGate = qg * vDrv * fsw * numFets
     const pRr = qrr * vBus * fsw * numFets
-    const pLoss = pCond + pSw + pGate + pRr
+    const pCoss = 0.5 * qoss * vBus * fsw * numFets
+    const pBody = bodyVf * iPeak * (2 / Math.PI) * (2 * dtNs * 1e-9) * fsw * numFets
+    const pLoss = pCond + pSw + pGate + pRr + pCoss + pBody
 
     const eff = pOut / (pOut + pLoss) * 100
 
@@ -185,17 +191,25 @@ function computeEfficiencyVsLoad(mosfetParams, systemSpecs) {
 function computeGateTimingVsRg(mosfetParams, systemSpecs) {
   if (!mosfetParams) return null
 
-  const qg = mosfetParams.qg_si || 92e-9
+  const qgd = mosfetParams.qgd_si || 20e-9
   const vDrv = systemSpecs.gate_drive_voltage || 12
-  const vth = mosfetParams.vgs_th_si || 3
-  const vPeak = systemSpecs.peak_voltage || 60
+  const vPlateau = mosfetParams.vgs_plateau_si || 5
+  const vPeak = systemSpecs.peak_voltage || (systemSpecs.bus_voltage || 48)
   const rgInt = mosfetParams.rg_int_si || 1
 
   const points = []
   for (let rg = 1; rg <= 47; rg += 1) {
     const rgTotal = rg + rgInt
-    const tRise = qg * rgTotal / (vDrv - vth)
-    const tFall = qg * rgTotal / vDrv
+    
+    // Switching transit times driven primarily by Miller charge
+    const iGateOn = (vDrv - vPlateau) / rgTotal
+    const tRise = qgd / iGateOn
+    
+    // Discharge driven by plateau bias alone
+    const iGateOff = vPlateau / rgTotal
+    const tFall = qgd / iGateOff
+    
+    // dV/dt estimated from bus voltage switching speed
     const dvdt = vPeak / (tRise * 1e9) * 1000 // V/µs
 
     points.push({
@@ -232,6 +246,7 @@ function extractSIParams(blockState) {
     rth_jc: { unit: dict.rth_jc__unit, mult: { '°C/W': 1, 'C/W': 1 } },
     tj_max: { unit: dict.tj_max__unit, mult: { '°C': 1, 'C': 1 } },
     vgs_th: { unit: dict.vgs_th__unit, mult: { 'V': 1 } },
+    vgs_plateau: { unit: dict.vgs_plateau__unit, mult: { 'V': 1 } },
     rg_int: { unit: dict.rg_int__unit, mult: { 'Ω': 1, 'ohm': 1 } },
     body_diode_vf: { unit: dict.body_diode_vf__unit, mult: { 'V': 1 } },
   }

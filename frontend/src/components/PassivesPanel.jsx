@@ -82,9 +82,14 @@ function OvrField({ label, unit, value, onChange, onReset, defaultVal, mandatory
       <div style={{ display:'flex', alignItems:'center', gap:4 }}>
         <div style={{ flex:1, position:'relative', minWidth:0 }}>
           <input
-            type="number" step={step ?? 'any'} min={min}
+            type="number" step={step ?? 'any'} min={min != null ? min : 0}
             value={value ?? ''}
             placeholder={defaultVal != null ? `${defaultVal}` : '—'}
+            onKeyDown={e => {
+              if (e.key === '-' || e.key === 'e' || e.key === 'E' || e.key === '+') {
+                e.preventDefault();
+              }
+            }}
             onChange={e => onChange(e.target.value)}
             style={{
               width:'100%', boxSizing:'border-box',

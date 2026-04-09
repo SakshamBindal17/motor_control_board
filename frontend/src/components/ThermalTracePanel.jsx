@@ -106,12 +106,17 @@ function Field({ label, unit, value, onChange, min, max, step, type, note, disab
         <input
           type="number"
           className="inp inp-mono inp-sm"
-          value={displayVal === '' ? '' : Number(displayVal)}
+          value={displayVal}
+          onKeyDown={e => {
+            if (e.key === '-' || e.key === 'e' || e.key === 'E' || e.key === '+') {
+              e.preventDefault();
+            }
+          }}
           onChange={e => {
             if (isLinked && onToggleLink) onToggleLink()
             onChange(e.target.value)
           }}
-          min={min} step={step || 'any'}
+          min={min != null ? min : 0} step={step || 'any'}
           disabled={disabled}
           style={{ width: '100%', borderColor: hasError ? 'var(--red)' : isLinked ? 'var(--green)40' : undefined, color: hasError ? 'var(--red)' : undefined }}
         />
@@ -191,7 +196,7 @@ export default function ThermalTracePanel({ config }) {
   const setP = useCallback((key, val) => {
     let parsed = val
     if (typeof val === 'string') {
-      if (val === '') parsed = null
+      if (val === '') parsed = ''
       else {
         const n = parseFloat(val)
         parsed = Number.isFinite(n) ? n : val

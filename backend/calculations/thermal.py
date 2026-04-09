@@ -235,8 +235,11 @@ class ThermalMixin:
         via_drill = th.get("via_drill_mm", 0.3)
 
         # Configurable PCB guidelines
-        gate_trace_w_mm   = float(self.ovr.get("gate_trace_w_mm",   0.3))
-        power_clearance_mm= float(self.ovr.get("power_clearance_mm", 1.0))
+        try: gate_trace_w_mm = float(self.ovr.get("gate_trace_w_mm", 0.3))
+        except (TypeError, ValueError): gate_trace_w_mm = 0.3
+        
+        try: power_clearance_mm = float(self.ovr.get("power_clearance_mm", 1.0))
+        except (TypeError, ValueError): power_clearance_mm = 1.0
 
         self._log_hc("pcb_guidelines", "Layer stack", "6-layer", "Standard motor controller PCB configuration")
         if gate_trace_w_mm == 0.3:

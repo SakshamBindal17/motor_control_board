@@ -272,7 +272,10 @@ class PassivesMixin:
     def calc_snubber(self) -> dict:
         self._current_module = "snubber"
         # Parasitic PCB trace inductance (target <5nH, assume 10nH worst case)
-        l_stray_nh  = float(self.ovr.get("stray_inductance_nh", 10.0))
+        try:
+            l_stray_nh = float(self.ovr.get("stray_inductance_nh", 10.0))
+        except (TypeError, ValueError):
+            l_stray_nh = 10.0
         l_stray     = l_stray_nh * 1e-9
 
         # _get returns SI value (Farads if unit is pF/nF/etc), fallback is raw value.
