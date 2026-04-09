@@ -82,6 +82,8 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
   // 3-phase SPWM per-switch RMS (Mohan textbook): sqrt(1/8 + M/(3π))
   const M = 0.9
   const kRms = Math.sqrt(1/8 + M / (3 * Math.PI))
+  
+  const designIMax = systemSpecs.max_phase_current || 80
 
   const points = []
   for (let tAmb = -20; tAmb <= 105; tAmb += 5) {
@@ -94,7 +96,7 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
     const bodyVf = mosfetParams.body_diode_vf_si || 0.7
     const dtNs = systemSpecs.dead_time_ns || 200
     const pCossFixed = 0.5 * qoss * vBus * fsw
-    const pBodyFixed = bodyVf * iMax * (2 / Math.PI) * (dtNs * 1e-9) * fsw
+    const pBodyFixed = bodyVf * designIMax * (2 / Math.PI) * (dtNs * 1e-9) * fsw
 
     // Available thermal budget
     const tBudget = tjMax - tAmb - (pGateFixed + pRrFixed + pCossFixed + pBodyFixed) * rthTotal
@@ -105,14 +107,14 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
 
     // Iterative solve with Tj-dependent Rds_on
     // Rds(Tj) ≈ Rds(25°C) × (Tj/300)^2.2 (better fit for modern MOSFETs)
-    let iMax = 80 // start from design current, not 200
+    let currentAllowed = designIMax // start from design current
     let tj = tAmb + 50 // initial Tj guess
     for (let iter = 0; iter < 50; iter++) {
-      const iRms = iMax * kRms
+      const iRms = currentAllowed * kRms
       // Rds(Tj) model: polynomial fit more accurate than linear 0.004/°C
       const rdsHot = rds * Math.pow((tj + 273.15) / 300, 2.1)
       const pCond = iRms * iRms * rdsHot
-      const pSw = pSwPerAmp * iMax
+      const pSw = pSwPerAmp * currentAllowed
       const pTotal = pCond + pSw + pGateFixed + pRrFixed + pCossFixed + pBodyFixed
       const tjNew = tAmb + pTotal * rthTotal
 
@@ -120,9 +122,9 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
       tj = 0.5 * tj + 0.5 * tjNew
 
       if (tjNew > tjMax) {
-        iMax *= 0.95
+        currentAllowed *= 0.95
       } else if (tjNew < tjMax - 1) {
-        iMax *= 1.01
+        currentAllowed *= 1.01
       } else {
         break
       }
@@ -130,7 +132,7 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
 
     points.push({
       ambient: tAmb,
-      maxCurrent: +Math.max(0, iMax).toFixed(1),
+      maxCurrent: +Math.max(0, currentAllowed).toFixed(1),
     })
   }
   return points
