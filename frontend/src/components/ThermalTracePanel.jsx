@@ -331,9 +331,9 @@ export default function ThermalTracePanel({ config }) {
             display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
           }}>🔥</div>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>PCB Trace Thermal Analysis</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>PCB Trace Thermal &amp; Power Loop Impedance</div>
             <div style={{ fontSize: 11, color: 'var(--txt-3)' }}>
-              IPC-2221B / IPC-2152 · Current capacity, ΔT, voltage drop, via thermal · Auto-synced with system specs
+              IPC-2221B / IPC-2152 · Current capacity, ΔT, voltage drop, via thermal · Bus bar support · Loop inductance
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -402,6 +402,42 @@ export default function ThermalTracePanel({ config }) {
                 onChange={v => setP('max_conductor_temp_c', v)} min={60} max={250} step={5}
                 note="FR4 Tg = 130–180°C"
               />
+              {/* Bus Bar Area — overrides IPC trace width × copper weight area */}
+              <div style={{ gridColumn:'1/-1' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+                  <span style={{ fontSize:11, fontWeight:600, color:'var(--txt-2)' }}>Bus Bar Area</span>
+                  <span style={{ fontSize:9, fontWeight:700, padding:'1px 6px', borderRadius:4,
+                    background:'rgba(100,181,246,.15)', border:'1px solid rgba(100,181,246,.35)',
+                    color:'#64b5f6', letterSpacing:'.03em' }}>OPTIONAL</span>
+                  <span style={{ fontSize:9, color:'var(--txt-4)' }}>
+                    — overrides IPC trace area (width × Cu weight)
+                  </span>
+                </div>
+                <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                  <input
+                    type="number" className="inp inp-mono"
+                    placeholder="blank = use trace width × Cu weight"
+                    value={P.busbar_area_mm2 ?? ''}
+                    min={0.01} step={0.5}
+                    onChange={e => setP('busbar_area_mm2', e.target.value === '' ? null : parseFloat(e.target.value))}
+                    style={{ flex:1 }}
+                  />
+                  <span style={{ fontSize:11, color:'var(--txt-3)', fontFamily:'var(--font-mono)', flexShrink:0 }}>mm²</span>
+                  {P.busbar_area_mm2 != null && (
+                    <button
+                      onClick={() => setP('busbar_area_mm2', null)}
+                      style={{ fontSize:10, padding:'3px 8px', borderRadius:4, cursor:'pointer',
+                        background:'rgba(255,68,68,.1)', border:'1px solid rgba(255,68,68,.3)', color:'var(--red)' }}>
+                      × Clear
+                    </button>
+                  )}
+                </div>
+                {P.busbar_area_mm2 != null && P.busbar_area_mm2 > 0 && (
+                  <div style={{ fontSize:10, color:'#64b5f6', marginTop:3 }}>
+                    ⚡ Bus bar mode: cross-section = {P.busbar_area_mm2} mm² — e.g. a {(P.busbar_area_mm2 / 3).toFixed(1)}mm × 3mm copper strap
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -725,6 +761,120 @@ export default function ThermalTracePanel({ config }) {
           </div>
         )}
 
+
+        {/* ── PCB Power Loop Impedance (moved from Passives tab) ── */}
+        {(() => {
+          const C        = state.project.calculations
+          const pcbg     = C?.pcb_guidelines || {}
+          const traceP   = state.project.pcb_trace_thermal?.params || {}
+          const ovr      = state.project.blocks.passives?.overrides || {}
+          const loopNh   = pcbg?.half_bridge_loop_calculated_nh
+          const loopSt   = pcbg?.half_bridge_loop_status || 'unknown'
+          const loopColor = loopSt === 'OK' ? 'var(--green)' : loopSt === 'WARNING' ? '#ffab40' : loopSt === 'CRITICAL' ? 'var(--red)' : 'var(--txt-4)'
+          const tLayers  = (traceP.n_external_layers || 2) + (traceP.n_internal_layers || 0)
+
+          function setTrace(k, v) {
+            const n = parseFloat(v)
+            dispatch({ type:'SET_PCB_TRACE_PARAMS', payload:{ [k]: Number.isFinite(n) ? n : undefined } })
+          }
+          function setOvrLocal(k, v) {
+            const n = parseFloat(v)
+            dispatch({ type:'SET_PASSIVES_OVERRIDE', payload:{ key:k, value: Number.isFinite(n) ? n : undefined } })
+          }
+
+          return (
+            <div className="card" style={{ padding:'14px 16px' }}>
+              {/* Header */}
+              <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12 }}>
+                <div style={{ width:34, height:34, borderRadius:9, flexShrink:0,
+                  background:'rgba(100,181,246,.12)', border:'1px solid rgba(100,181,246,.3)',
+                  display:'flex', alignItems:'center', justifyContent:'center', fontSize:17 }}>🖥️</div>
+                <div>
+                  <div style={{ fontWeight:700, fontSize:13, color:'#64b5f6' }}>PCB Power Loop Impedance</div>
+                  <div style={{ fontSize:10, color:'var(--txt-3)' }}>
+                    Half-bridge commutation loop inductance · PCB layout guidelines
+                  </div>
+                </div>
+              </div>
+
+              {/* Inputs grid */}
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:12 }}>
+                {[
+                  { label:'Power Trace Width', unit:'mm', val: traceP.trace_width_mm ?? '', onChg: v => setTrace('trace_width_mm', v), ph:'e.g. 7' },
+                  { label:'Power Trace Length', unit:'mm', val: traceP.trace_length_mm ?? '', onChg: v => setTrace('trace_length_mm', v), ph:'one-way, mm' },
+                  { label:'PCB Layers', unit:'layers', val: tLayers > 0 ? tLayers : '', onChg: v => {
+                    const n = Math.max(1, Math.round(parseFloat(v) || 2))
+                    dispatch({ type:'SET_PCB_TRACE_PARAMS', payload:{ n_external_layers: Math.min(n,2), n_internal_layers: Math.max(0, n-2) } })
+                  }, ph:'2' },
+                  { label:'Gate Trace Width', unit:'mm', val: ovr.gate_trace_w_mm ?? '', onChg: v => setOvrLocal('gate_trace_w_mm', v), ph:'0.3' },
+                  { label:'Power Clearance', unit:'mm', val: ovr.power_clearance_mm ?? '', onChg: v => setOvrLocal('power_clearance_mm', v), ph:'1.0' },
+                ].map(f => (
+                  <div key={f.label}>
+                    <div style={{ fontSize:10, fontWeight:600, color:'var(--txt-3)', marginBottom:3 }}>
+                      {f.label} <span style={{ fontFamily:'var(--font-mono)', color:'var(--txt-4)' }}>[{f.unit}]</span>
+                    </div>
+                    <input
+                      type="number" className="inp inp-mono"
+                      value={f.val} placeholder={f.ph}
+                      onChange={e => f.onChg(e.target.value)}
+                      style={{ width:'100%', fontSize:12, padding:'5px 8px' }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Loop inductance result */}
+              <div style={{
+                padding:'10px 14px', borderRadius:8,
+                background: loopNh != null ? `${loopColor}0e` : 'var(--bg-2)',
+                border:`1px solid ${loopNh != null ? loopColor + '55' : 'var(--border-1)'}`,
+                marginBottom:10,
+              }}>
+                <div style={{ fontSize:10, color:'var(--txt-3)', marginBottom:4 }}>
+                  Half-Bridge Power Loop Inductance
+                </div>
+                <div style={{ display:'flex', alignItems:'baseline', gap:8 }}>
+                  <span style={{ fontSize:22, fontWeight:800, fontFamily:'var(--font-mono)', color: loopNh != null ? loopColor : 'var(--txt-4)' }}>
+                    {loopNh != null ? `${+(loopNh / 1000).toFixed(4)}` : '—'}
+                  </span>
+                  <span style={{ fontSize:13, color:'var(--txt-3)' }}>µH</span>
+                  {loopNh != null && (
+                    <span style={{ marginLeft:'auto', fontSize:11, fontWeight:700, color: loopColor }}>
+                      {loopSt === 'OK' ? '✓ GOOD' : loopSt === 'WARNING' ? '⚠ WARNING' : '✗ CRITICAL'}
+                    </span>
+                  )}
+                </div>
+                {loopNh != null && (
+                  <div style={{ fontSize:10, color:'var(--txt-4)', marginTop:4 }}>
+                    Target &lt; 0.005 µH · Current: {fmtNum(loopNh/1000, 4)} µH · Formula: L ≈ 0.4 × l × [ln(4l/(w+t)) + 0.5] nH
+                  </div>
+                )}
+                {loopNh == null && (
+                  <div style={{ fontSize:10, color:'var(--txt-4)', marginTop:4 }}>
+                    Enter trace width and length above to calculate loop inductance.
+                  </div>
+                )}
+              </div>
+
+              {/* Guidelines grid */}
+              {C && (
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
+                  {[
+                    { label:'Power trace width', val: pcbg.power_trace_w_mm != null ? `${fmtNum(pcbg.power_trace_w_mm,2)} mm` : '—' },
+                    { label:'Gate trace width',  val: pcbg.gate_trace_w_mm  != null ? `${fmtNum(pcbg.gate_trace_w_mm,2)} mm`  : '—' },
+                    { label:'Power clearance',   val: pcbg.power_clearance_mm != null ? `${fmtNum(pcbg.power_clearance_mm,1)} mm` : '—' },
+                  ].map(r => (
+                    <div key={r.label} style={{ background:'var(--bg-3)', borderRadius:7,
+                      padding:'8px 10px', border:'1px solid var(--border-1)' }}>
+                      <div style={{ fontSize:9.5, color:'var(--txt-3)', fontWeight:600, textTransform:'uppercase', letterSpacing:'.04em', marginBottom:3 }}>{r.label}</div>
+                      <div style={{ fontSize:14, fontWeight:700, fontFamily:'var(--font-mono)', color:'var(--txt-1)' }}>{r.val}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* ── No-data placeholder ── */}
         {!result && (

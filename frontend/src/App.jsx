@@ -161,12 +161,12 @@ export const BLOCK_CONFIGS = {
   },
   pcb_thermal: {
     key: 'pcb_thermal',
-    label: 'PCB Thermal',
-    fullLabel: 'PCB Trace Thermal Analysis',
+    label: 'PCB Thermal & Impedance',
+    fullLabel: 'PCB Trace Thermal & Power Loop Impedance',
     icon: '🔥',
     color: '#f0a04a',
     type: 'pcb_thermal',
-    desc: 'IPC-2221B/2152 trace & via thermal — current capacity, ΔT, voltage drop, recommendations',
+    desc: 'IPC-2221B/2152 trace & via thermal — current capacity, ΔT, voltage drop, recommendations. Also: half-bridge power loop inductance and PCB layout guidelines.',
   },
 }
 

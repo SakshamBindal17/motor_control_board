@@ -172,9 +172,13 @@ export function iterativeSolve(params, options = {}) {
   const Wmil = Wmm * MM2MIL;
   const Hmil = Tmm * MM2MIL;
   const WH   = Wmil * Hmil;
-  const Amm2 = Wmm * Tmm;
+  // If a bus bar area is explicitly provided, override IPC trace area
+  const busbarA = (params.busbar_area_mm2 != null && params.busbar_area_mm2 > 0)
+    ? params.busbar_area_mm2
+    : null;
+  const Amm2 = busbarA != null ? busbarA : (Wmm * Tmm);
 
-  if (Wmm <= 0 || Tmm <= 0 || WH <= 0 || Amm2 <= 0) return null;
+  if ((busbarA == null && (Wmm <= 0 || Tmm <= 0 || WH <= 0 || Amm2 <= 0)) || Amm2 <= 0) return null;
 
   const h = cooling.h;
   const corr = ipc2152_corrections(pcbThick, planeDist, copperFill);
@@ -273,6 +277,7 @@ export function iterativeSolve(params, options = {}) {
     corr: normModel === '2152' ? corr : null,
     vRes,
     WH, Wmil, Hmil: Tmm * MM2MIL,
+    is_busbar: busbarA != null,
   };
 }
 
@@ -605,5 +610,9 @@ export function buildSolverParams(panelParams, systemSpecs = {}) {
     planeDist:   panelParams.plane_dist_mm ?? 0,
     copperFill:  panelParams.copper_fill_pct ?? 0,
     model:       normalizeTraceModel(panelParams.model),
+    // Bus bar: if provided (mm²), overrides IPC trace area for R/loss/CD calculations
+    busbar_area_mm2: (panelParams.busbar_area_mm2 != null && panelParams.busbar_area_mm2 > 0)
+      ? panelParams.busbar_area_mm2
+      : null,
   };
 }

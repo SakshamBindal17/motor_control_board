@@ -250,8 +250,8 @@ class ThermalMixin:
 
         # ── Bridge loop inductance (calculated, not hardcoded) ──────────────────
         # Uses PCB trace geometry from trace thermal params (linked to Passives tab)
-        # Formula: L ≈ (µ₀/π) × l × [ln(4l/(w+h)) + 0.5]  [nH, mm]
-        # where µ₀/π = 0.4 nH/mm, h = typical L1-L2 prepreg thickness (0.15mm for 6L PCB)
+        # Formula: L ≈ (µ₀/π) × l × [ln(4l/(w+t)) + 0.5]  [nH, mm]
+        # where µ₀/π = 0.4 nH/mm, t = trace thickness derived from copper weight.
         # This models the partial inductance of the power loop trace.
         # Reference: Bahl & Trivedi microstrip inductance, TI app note SLVA670.
         loop_inductance_nh = None
@@ -261,8 +261,9 @@ class ThermalMixin:
         if hasattr(self, 'pcb_trace_params') and self.pcb_trace_params:
             trace_l_mm = float(self.pcb_trace_params.get("trace_length_mm", 0) or 0)
             trace_w_mm = float(self.pcb_trace_params.get("trace_width_mm",  0) or 0)
+            cu_oz_val  = float(self.pcb_trace_params.get("copper_oz", cu_oz) or cu_oz)
             if trace_l_mm > 0 and trace_w_mm > 0:
-                h_mm     = 0.15  # typical L1-L2 prepreg for 6-layer PCB
+                h_mm     = cu_oz_val * 0.035  # trace thickness (1 oz = 35 µm)
                 ln_arg   = max(4.0 * trace_l_mm / (trace_w_mm + h_mm), 1.01)
                 l_nH     = 0.4 * trace_l_mm * (math.log(ln_arg) + 0.5)
                 loop_inductance_nh = round(l_nH, 1)
@@ -274,7 +275,7 @@ class ThermalMixin:
                     loop_status = "CRITICAL"
                 self.audit_log.append(
                     f"[PCB] Half-bridge loop inductance: {loop_inductance_nh:.1f}nH "
-                    f"(trace {trace_l_mm:.0f}mm × {trace_w_mm:.1f}mm, prepreg h=0.15mm). "
+                    f"(trace {trace_l_mm:.0f}mm × {trace_w_mm:.1f}mm, {cu_oz_val}oz Cu). "
                     f"Target <{L_LOOP_TARGET}nH — status: {loop_status}."
                 )
         if loop_inductance_nh is None:

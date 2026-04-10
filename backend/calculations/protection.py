@@ -105,14 +105,17 @@ class ProtectionMixin:
 
         return {
             "ovp": {
-                "trip_voltage_v":       v_ovp_trip,
-                "r1_kohm":              round(r1_ovp / 1e3, 0),
-                "r2_kohm":              round(r2_ovp_std / 1e3, 2),
-                "r2_standard_kohm":     round(r2_ovp_std / 1e3, 2),
-                "actual_trip_v":        round(v_trip_ovp_actual, 2),
-                "divider_current_ua":   round(i_divider_ovp_ua,  2),
-                "comparator":           "LM393 / internal MCU comparator",
-                "response":             "Hardware → disable PWM gate signals within 1µs",
+                "trip_voltage_v":           v_ovp_trip,
+                "r1_kohm":                  round(r1_ovp / 1e3, 0),
+                "r2_kohm":                  round(r2_ovp_std / 1e3, 2),
+                "r2_standard_kohm":         round(r2_ovp_std / 1e3, 2),
+                "actual_trip_v":            round(v_trip_ovp_actual, 2),
+                "divider_current_ua":        round(i_divider_ovp_ua,  2),
+                "v_bus_monitored":           self.v_peak,
+                "v_adc_ref":                v_ref,
+                "divider_ratio":            round(self.v_peak / v_ref, 2) if v_ref > 0 else None,
+                "comparator":               "LM393 / internal MCU comparator",
+                "response":                 "Hardware → disable PWM gate signals within 1µs",
             },
             "uvp": {
                 "trip_voltage_v":       v_uvp_trip,

@@ -251,6 +251,10 @@ export default function PassivesPanel() {
     const n = parseFloat(v)
     dispatch({ type:'SET_PASSIVES_OVERRIDE', payload:{ key:k, value: Number.isFinite(n) ? n : undefined } })
   }
+  function setOvrStr(k, v) {
+    // For string-valued overrides (e.g. shunt_topology) — no numeric conversion
+    dispatch({ type:'SET_PASSIVES_OVERRIDE', payload:{ key:k, value: v } })
+  }
   function resetOvr(k) {
     dispatch({ type:'SET_PASSIVES_OVERRIDE', payload:{ key:k, value: undefined } })
   }
@@ -271,8 +275,8 @@ export default function PassivesPanel() {
   const gateOvrCnt  = [specs.rg_on_override, specs.rg_off_override].filter(v => v != null && v !== '').length
               + cnt(['gate_rise_time_ns','deadtime_override_ns'])
   const capsOvrCnt  = cnt(['delta_v_ripple','bulk_v_rating_v','mlcc_qty','mlcc_size_nf','mlcc_esr_mohm','film_qty','film_size_uf','film_v_rating_v'])
-  const bootOvrCnt  = cnt(['bootstrap_droop_v','cboot_v_rating_v','cboot_qty'])
-  const shuntOvrCnt = cnt(['shunt_single_mohm','shunt_three_mohm','csa_gain_override','stray_inductance_nh','snubber_rs_ohm','snubber_cs_pf','snubber_v_mult'])
+  const bootOvrCnt  = cnt(['bootstrap_droop_v','cboot_v_rating_v'])
+  const shuntOvrCnt = cnt(['shunt_topology','csa_gain_override','shunt_single_mohm','shunt_three_mohm','stray_inductance_nh','snubber_rs_ohm','snubber_cs_pf','snubber_v_mult'])
   const protOvrCnt  = cnt(['prot_r1_kohm','ntc_r25_kohm','ntc_b_coeff','ntc_pullup_kohm'])
   const emiOvrCnt   = cnt(['emi_choke_dcr_mohm','emi_x_cap_nf','emi_x_cap_v','emi_y_cap_nf','emi_y_cap_v'])
   const pcbOvrCnt   = (traceP.trace_width_mm != null ? 1 : 0) + (traceP.trace_length_mm != null ? 1 : 0)
@@ -482,9 +486,9 @@ export default function PassivesPanel() {
             value={ovr.bulk_v_rating_v ?? ''} defaultVal={100}
             onChange={v => setOvr('bulk_v_rating_v', v)} onReset={() => resetOvr('bulk_v_rating_v')}
             note="e.g. 63V, 100V" />
-          <OvrField label="Bulk ESL/cap" unit="nH" min={0.1}
-            value={ovr.bulk_esl_nh ?? ''} defaultVal={15}
-            onChange={v => setOvr('bulk_esl_nh', v)} onReset={() => resetOvr('bulk_esl_nh')} />
+          <OvrField label="Bulk ESL/cap" unit="µH" min={0.0001} step={0.001}
+            value={ovr.bulk_esl_nh != null ? +(ovr.bulk_esl_nh / 1000).toFixed(4) : ''} defaultVal={0.015}
+            onChange={v => setOvr('bulk_esl_nh', v !== '' ? +(parseFloat(v) * 1000).toFixed(4) : '')} onReset={() => resetOvr('bulk_esl_nh')} />
           {/* MLCC sub-header */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#1e90ff', letterSpacing:'.5px',
@@ -494,16 +498,16 @@ export default function PassivesPanel() {
           <OvrField label="MLCC Count" unit="pcs" step={1}
             value={ovr.mlcc_qty ?? ''} defaultVal={6}
             onChange={v => setOvr('mlcc_qty', v)} onReset={() => resetOvr('mlcc_qty')} />
-          <OvrField label="MLCC Size" unit="nF"
-            value={ovr.mlcc_size_nf ?? ''} defaultVal={100}
-            onChange={v => setOvr('mlcc_size_nf', v)} onReset={() => resetOvr('mlcc_size_nf')}
-            note="X7R recommended" />
+          <OvrField label="MLCC Size" unit="µF" step={0.001}
+            value={ovr.mlcc_size_nf != null ? +(ovr.mlcc_size_nf / 1000).toFixed(4) : ''} defaultVal={0.1}
+            onChange={v => setOvr('mlcc_size_nf', v !== '' ? +(parseFloat(v) * 1000).toFixed(2) : '')} onReset={() => resetOvr('mlcc_size_nf')}
+            note="X7R recommended (100nF = 0.1µF)" />
           <OvrField label="MLCC ESR/cap" unit="mΩ" min={0.1}
             value={ovr.mlcc_esr_mohm ?? ''} defaultVal={5}
             onChange={v => setOvr('mlcc_esr_mohm', v)} onReset={() => resetOvr('mlcc_esr_mohm')} />
-          <OvrField label="MLCC ESL/cap" unit="nH" min={0.1}
-            value={ovr.mlcc_esl_nh ?? ''} defaultVal={1}
-            onChange={v => setOvr('mlcc_esl_nh', v)} onReset={() => resetOvr('mlcc_esl_nh')} />
+          <OvrField label="MLCC ESL/cap" unit="µH" min={0.0001} step={0.0001}
+            value={ovr.mlcc_esl_nh != null ? +(ovr.mlcc_esl_nh / 1000).toFixed(4) : ''} defaultVal={0.001}
+            onChange={v => setOvr('mlcc_esl_nh', v !== '' ? +(parseFloat(v) * 1000).toFixed(4) : '')} onReset={() => resetOvr('mlcc_esl_nh')} />
           {/* Film sub-header */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#1e90ff', letterSpacing:'.5px',
@@ -516,9 +520,9 @@ export default function PassivesPanel() {
           <OvrField label="Film Size" unit="µF" min={0.1}
             value={ovr.film_size_uf ?? ''} defaultVal={4.7}
             onChange={v => setOvr('film_size_uf', v)} onReset={() => resetOvr('film_size_uf')} />
-          <OvrField label="Film ESL/cap" unit="nH" min={0.1}
-            value={ovr.film_esl_nh ?? ''} defaultVal={5}
-            onChange={v => setOvr('film_esl_nh', v)} onReset={() => resetOvr('film_esl_nh')} />
+          <OvrField label="Film ESL/cap" unit="µH" min={0.0001} step={0.001}
+            value={ovr.film_esl_nh != null ? +(ovr.film_esl_nh / 1000).toFixed(4) : ''} defaultVal={0.005}
+            onChange={v => setOvr('film_esl_nh', v !== '' ? +(parseFloat(v) * 1000).toFixed(4) : '')} onReset={() => resetOvr('film_esl_nh')} />
           <OvrField label="Film V-Rating" unit="V"
             value={ovr.film_v_rating_v ?? ''} defaultVal={100}
             onChange={v => setOvr('film_v_rating_v', v)} onReset={() => resetOvr('film_v_rating_v')} />
@@ -539,7 +543,7 @@ export default function PassivesPanel() {
           <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
             letterSpacing:'.5px', textTransform:'uppercase' }}>MLCC</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
-            <Row label="Count × Size" value={`${fv(icap.c_mlcc_qty)}× ${fv(icap.c_mlcc_nf)}nF`}
+            <Row label="Count × Size" value={`${fv(icap.c_mlcc_qty)}× ${fv(icap.c_mlcc_nf != null ? +(icap.c_mlcc_nf / 1000).toFixed(4) : null)}µF`}
               src={ovr.mlcc_qty != null || ovr.mlcc_size_nf != null ? 'ovr' : 'auto'} />
             <Row label="‖ ESR" value={fmtNum(icap.c_mlcc_parallel_esr_mohm, 2)} unit="mΩ" bold src="auto"
               tip="ESR_parallel = ESR_single / N — N MLCCs in parallel" />
@@ -575,10 +579,6 @@ export default function PassivesPanel() {
             value={ovr.cboot_v_rating_v ?? ''} defaultVal={25}
             onChange={v => setOvr('cboot_v_rating_v', v)} onReset={() => resetOvr('cboot_v_rating_v')}
             note="≥ 2× Vdrv for derating" />
-          <OvrField label="C_boot Qty" unit="pcs" step={1}
-            value={ovr.cboot_qty ?? ''} defaultVal={3}
-            onChange={v => setOvr('cboot_qty', v)} onReset={() => resetOvr('cboot_qty')}
-            note="1 per HS gate (3-phase = 3)" />
           {/* Reverse calculator */}
           <div style={{ ...fullSpan, paddingTop:4, borderTop:'1px solid rgba(255,255,255,.06)' }}>
             <div style={{ fontSize:10, fontWeight:700, color:'#00d4e8', letterSpacing:'.5px',
@@ -610,15 +610,17 @@ export default function PassivesPanel() {
         </>}
         results={<>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
-            <Row label="C_boot required" value={fmtNum(bcap.c_boot_calculated_nf, 1)} unit="nF" src="auto"
-              tip="C_boot = Q_boot / ΔV_droop  where Q_boot = Qgs + I_bias×t_on" />
-            <Row label="C_boot chosen" value={fmtNum(bcap.c_boot_recommended_nf, 0)} unit="nF" bold
+            <Row label="C_boot required (per phase)" value={fmtNum(bcap.c_boot_calculated_nf, 1)} unit="nF" src="auto"
+              tip="C_boot = Qg / ΔV_droop — calculated for ONE capacitor. Install 1 per high-side switch." />
+            <Row label="C_boot ×10 (recommended)" value={fmtNum(bcap.c_boot_calculated_nf != null ? bcap.c_boot_calculated_nf * 10 : null, 0)} unit="nF" bold src="auto"
+              tip="10× C_boot_required — standard design practice for reliable bootstrap refresh under worst-case leakage" />
+            <Row label="C_boot chosen (per phase)" value={fmtNum(bcap.c_boot_recommended_nf, 0)} unit="nF" bold
               src={ovr.bootstrap_droop_v != null ? 'ovr' : 'auto'}
-              tip="Rounded to next E12 value above required" />
+              tip="Rounded to next E12 value above required. You install this value × number of phases." />
             <Row label="V-rating" value={fv(bcap.c_boot_v_rating_v)} unit="V"
               src={ovr.cboot_v_rating_v != null ? 'ovr' : 'auto'} />
-            <Row label="Quantity" value={fv(bcap.c_boot_qty)} unit="pcs"
-              src={ovr.cboot_qty != null ? 'ovr' : 'auto'} />
+            <Row label="Quantity" value={fv(bcap.c_boot_qty)} unit={`pcs (1 per HS switch)`} src="auto"
+              tip="Fixed by topology: 1 bootstrap cap per high-side MOSFET. Cannot be changed by the user." />
             <Row label="V_boot" value={fmtNum(bcap.v_bootstrap_v, 2)} unit="V" src="auto"
               tip="V_boot = Vcc - Vd_boot - Vf (diode forward drop)" />
             <Row label="Min HS on-time" value={fmtNum(bcap.min_hs_on_time_ns, 1)} unit="ns" bold src="auto"
@@ -640,29 +642,81 @@ export default function PassivesPanel() {
         overrideCount={shuntOvrCnt}
         stale={stale} noResults={!C}
         inputs={<>
+          {/* ── Topology selector ── */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#ffab00', letterSpacing:'.5px',
-              textTransform:'uppercase', marginBottom:4 }}>Current Shunts</div>
+              textTransform:'uppercase', marginBottom:6 }}>Sensing Topology</div>
+            <div style={{ display:'flex', gap:6 }}>
+              {[
+                { key:'three_phase', label:'3-Phase Shunt', icon:'⚡',
+                  tip:'One shunt per phase (U/V/W). Best for FOC. Unidirectional sensing per phase.' },
+                { key:'single',      label:'Single Shunt',  icon:'📍',
+                  tip:'One shunt on DC bus return. Bidirectional sensing. Requires precise ADC timing.' },
+              ].map(t => {
+                const isActive = (ovr.shunt_topology ?? 'three_phase') === t.key
+                return (
+                  <button key={t.key}
+                    onClick={() => setOvrStr('shunt_topology', t.key)}
+                    title={t.tip}
+                    style={{
+                      flex: 1,
+                      padding: '6px 10px',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      borderRadius: 6,
+                      border: `1px solid ${isActive ? '#ffab00' : 'var(--border-1)'}`,
+                      background: isActive ? '#ffab0022' : 'var(--bg-3)',
+                      color: isActive ? '#ffab00' : 'var(--txt-3)',
+                      cursor: 'pointer',
+                      boxShadow: isActive ? '0 0 8px #ffab0040' : 'none',
+                      transition: 'all .15s',
+                      outline: 'none',
+                    }}>
+                    {t.icon} {t.label}
+                  </button>
+                )
+              })}
+            </div>
+            {/* topology info chip */}
+            <div style={{ marginTop:6, fontSize:10, color:'var(--txt-3)', lineHeight:1.5 }}>
+              {(ovr.shunt_topology ?? 'three_phase') === 'three_phase'
+                ? '3 × shunt resistors (one per phase). ADC target = 80 % of Vref (unidirectional).'
+                : '1 × shunt on DC bus return. ADC target = 50 % of Vref (bidirectional, mid-rail = 0 A).'}
+            </div>
           </div>
-          <OvrField label="Single Shunt" unit="mΩ"
-            value={ovr.shunt_single_mohm ?? ''}
-            onChange={v => setOvr('shunt_single_mohm', v)} onReset={() => resetOvr('shunt_single_mohm')}
-            note="Blank = auto from ADC span" />
-          <OvrField label="3-phase Shunt" unit="mΩ"
-            value={ovr.shunt_three_mohm ?? ''} defaultVal={0.5}
-            onChange={v => setOvr('shunt_three_mohm', v)} onReset={() => resetOvr('shunt_three_mohm')} />
+
+          {/* ── Common: CSA Gain ── */}
+          <div style={fullSpan}>
+            <div style={{ fontSize:10, fontWeight:700, color:'#ffab00', letterSpacing:'.5px',
+              textTransform:'uppercase', marginBottom:4, borderTop:'1px solid rgba(255,255,255,.06)',
+              paddingTop:6 }}>Current Sense Amplifier</div>
+          </div>
           <OvrField label="CSA Gain"
             value={ovr.csa_gain_override ?? ''}
             onChange={v => setOvr('csa_gain_override', v)} onReset={() => resetOvr('csa_gain_override')}
             note="Blank = from driver datasheet" />
+
+          {/* ── Topology-specific shunt override ── */}
+          {(ovr.shunt_topology ?? 'three_phase') === 'single' ? (
+            <OvrField label="Single Shunt" unit="mΩ"
+              value={ovr.shunt_single_mohm ?? ''}
+              onChange={v => setOvr('shunt_single_mohm', v)} onReset={() => resetOvr('shunt_single_mohm')}
+              note="Blank = auto from ADC span @ Imax" />
+          ) : (
+            <OvrField label="3-phase Shunt" unit="mΩ"
+              value={ovr.shunt_three_mohm ?? ''} defaultVal={0.5}
+              onChange={v => setOvr('shunt_three_mohm', v)} onReset={() => resetOvr('shunt_three_mohm')} />
+          )}
+
+          {/* ── RC Snubber inputs (unchanged) ── */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#ffab00', letterSpacing:'.5px',
               textTransform:'uppercase', marginBottom:4, paddingTop:4,
               borderTop:'1px solid rgba(255,255,255,.06)' }}>RC Snubber</div>
           </div>
-          <OvrField label="Stray L (Loop)" unit="nH" min={0.1}
-            value={ovr.stray_inductance_nh ?? ''} defaultVal={10}
-            onChange={v => setOvr('stray_inductance_nh', v)} onReset={() => resetOvr('stray_inductance_nh')}
+          <OvrField label="Stray L (Loop)" unit="µH" min={0.0001} step={0.001}
+            value={ovr.stray_inductance_nh != null ? +(ovr.stray_inductance_nh / 1000).toFixed(4) : ''} defaultVal={0.010}
+            onChange={v => setOvr('stray_inductance_nh', v !== '' ? +(parseFloat(v) * 1000).toFixed(4) : '')} onReset={() => resetOvr('stray_inductance_nh')}
             note="Physical layout parasitic loop inductance" />
           <OvrField label="Rs Override" unit="Ω" min={0.1}
             value={ovr.snubber_rs_ohm ?? ''}
@@ -676,23 +730,62 @@ export default function PassivesPanel() {
             onChange={v => setOvr('snubber_v_mult', v)} onReset={() => resetOvr('snubber_v_mult')} />
         </>}
         results={<>
-          <div style={{ fontSize:10, fontWeight:700, color:'var(--txt-3)', letterSpacing:'.5px',
-            textTransform:'uppercase', marginBottom:4 }}>Shunts</div>
+          {/* ── Topology badge ── */}
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+            <div style={{ fontSize:10, fontWeight:700, color:'var(--txt-3)', letterSpacing:'.5px',
+              textTransform:'uppercase' }}>Sensing</div>
+            <div style={{
+              fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:4,
+              background: shunt.topology_mode === 'single' ? '#ffab0020' : '#1e90ff20',
+              border: `1px solid ${shunt.topology_mode === 'single' ? '#ffab0050' : '#1e90ff50'}`,
+              color: shunt.topology_mode === 'single' ? '#ffab00' : '#1e90ff',
+            }}>
+              {shunt.topology_mode === 'single' ? '📍 Single Shunt' : '⚡ 3-Phase Shunt'}
+            </div>
+          </div>
+
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="CSA gain" value={fv(shunt.csa_gain)}
               src={ovr.csa_gain_override != null ? 'ovr' : 'auto'}
               tip="Current sense amplifier gain from driver datasheet (or override)" />
-            <Row label="Single shunt" value={fmtNum(shunt.single_shunt?.value_mohm, 2)} unit="mΩ" bold
-              src={ovr.shunt_single_mohm != null ? 'ovr' : 'auto'}
-              tip="R_shunt = V_fullscale / (CSA_gain × I_max)" />
-            <Row label="  V_shunt@Imax" value={fmtNum(shunt.single_shunt?.v_shunt_mv, 2)} unit="mV" src="auto" />
-            <Row label="  ADC voltage" value={fmtNum(shunt.single_shunt?.v_adc_v, 3)} unit="V" src="auto"
-              tip="V_ADC = V_shunt × CSA_gain — should be ≤ ADC reference" />
-            <Row label="3-ph shunt" value={fmtNum(shunt.three_shunt?.value_mohm, 2)} unit="mΩ" bold
-              src={ovr.shunt_three_mohm != null ? 'ovr' : 'auto'} />
-            <Row label="  Total power" value={fmtNum(shunt.three_shunt?.total_3_shunt_power_w, 3)} unit="W" src="auto"
-              tip="P = 3 × I_rms² × R_shunt" />
+            <Row label="ADC reference" value={fmtNum(shunt.adc_reference_v, 1)} unit="V" src="auto" />
+            <Row label="ADC target" value={fmtNum(shunt.active?.v_adc_target_v, 2)} unit="V" src="auto"
+              tip={shunt.topology_mode === 'single'
+                ? '50% of ADC ref — mid-rail = 0A for bidirectional sensing'
+                : '80% of ADC ref — maximises range for unidirectional sensing'} />
+            <Row label="Ideal R_shunt" value={fmtNum(shunt.ideal_r_mohm, 3)} unit="mΩ" src="auto"
+              tip="R = V_ADC_target / (CSA_gain × I_max)" />
           </div>
+
+          {/* ── Active topology specific ── */}
+          <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
+            letterSpacing:'.5px', textTransform:'uppercase' }}>
+            {shunt.topology_mode === 'single' ? 'Single Shunt (×1)' : '3-Phase Shunts (×3)'}
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
+            <Row label="Value" value={fmtNum(shunt.active?.value_mohm, 2)} unit="mΩ" bold
+              src={(shunt.topology_mode === 'single' ? ovr.shunt_single_mohm : ovr.shunt_three_mohm) != null ? 'ovr' : 'auto'}
+              tip="R_shunt = V_ADC_target / (CSA_gain × I_max)" />
+            <Row label="Qty" value={fv(shunt.active?.quantity)} unit="pcs" src="auto"
+              tip={shunt.topology_mode === 'single' ? '1 shunt on DC bus return' : '1 per phase (U, V, W)'} />
+            <Row label="V_shunt @ Imax" value={fmtNum(shunt.active?.v_shunt_mv, 2)} unit="mV" src="auto" />
+            <Row label="V_ADC @ Imax" value={fmtNum(shunt.active?.v_adc_v, 3)} unit="V" src="auto"
+              tip="V_ADC = V_shunt × CSA_gain" />
+            <Row label="ADC utilisation" value={fmtNum(shunt.active?.adc_utilisation_pct, 1)} unit="%" src="auto"
+              tip="% of ADC full-scale used. Target < 90% for headroom." />
+            <Row label="ADC bits used" value={fmtNum(shunt.active?.adc_bits_used, 1)} unit="bits" src="auto"
+              tip="Effective resolution used by shunt + CSA signal" />
+            {shunt.topology_mode === 'single' ? (
+              <Row label="Power (DC)" value={fmtNum(shunt.active?.power_dc_w, 3)} unit="W" src="auto"
+                tip="P = I²·R at DC Imax" />
+            ) : (
+              <Row label="Total power" value={fmtNum(shunt.active?.total_power_w, 3)} unit="W" src="auto"
+                tip="P = 3 × I_rms² × R_shunt" />
+            )}
+            <Row label="Location" value={shunt.active?.location} src="auto" />
+          </div>
+
+          {/* ── Snubber ── */}
           <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
             letterSpacing:'.5px', textTransform:'uppercase' }}>Snubber</div>
           {snub.manual_snubber_values && (
@@ -702,7 +795,7 @@ export default function PassivesPanel() {
             </div>
           )}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
-            <Row label="Stray L" value={fmtNum(snub.stray_inductance_nh, 1)} unit="nH"
+            <Row label="Stray L" value={fmtNum(snub.stray_inductance_nh != null ? snub.stray_inductance_nh / 1000 : null, 4)} unit="µH"
               src={ovr.stray_inductance_nh != null ? 'ovr' : 'auto'} />
             <Row label="Overshoot" value={fmtNum(snub.voltage_overshoot_v, 1)} unit="V" src="auto"
               tip="V_over = I_peak × √(L_stray/Cs) — resonant overshoot" />
@@ -731,18 +824,32 @@ export default function PassivesPanel() {
         overrideCount={protOvrCnt}
         stale={stale} noResults={!C}
         inputs={<>
+          {/* ── Voltage Divider ── */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#00e676', letterSpacing:'.5px',
-              textTransform:'uppercase', marginBottom:4 }}>Voltage Divider</div>
+              textTransform:'uppercase', marginBottom:4 }}>Bus Voltage Monitor Divider</div>
+            {/* Mini circuit diagram — uses specs (always available, no calc needed) */}
+            <div style={{ fontSize:10, fontFamily:'var(--font-mono)', color:'var(--txt-4)',
+              background:'var(--bg-3)', borderRadius:5, padding:'5px 8px', lineHeight:1.8 }}>
+              +{specs.bus_voltage ?? '??'}V Bus (V_peak for OVP sizing)<br/>
+              {'  '}│<br/>
+              {'  '}[R1 — top resistor, you set this]<br/>
+              {'  '}│◄── Comparator input (= V_ADC_ref when tripping)<br/>
+              {'  '}[R2 — auto-calculated by tool]<br/>
+              {'  '}│<br/>
+              {'  '}GND
+            </div>
           </div>
-          <OvrField label="OVP/UVP R1" unit="kΩ"
+          <OvrField label="Divider R1 (Top)" unit="kΩ"
             value={ovr.prot_r1_kohm ?? ''} defaultVal={100}
             onChange={v => setOvr('prot_r1_kohm', v)} onReset={() => resetOvr('prot_r1_kohm')}
-            note="Top resistor — drives R2 calc" />
+            note="R2 auto-calculated from bus voltage & ADC ref" />
+
+          {/* ── NTC Thermistor ── */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#00e676', letterSpacing:'.5px',
               textTransform:'uppercase', marginBottom:4, paddingTop:4,
-              borderTop:'1px solid rgba(255,255,255,.06)' }}>NTC Thermistor</div>
+              borderTop:'1px solid rgba(255,255,255,.06)' }}>NTC Thermistor (OTP Sensor)</div>
           </div>
           <OvrField label="R at 25°C" unit="kΩ"
             value={ovr.ntc_r25_kohm ?? ''} defaultVal={10}
@@ -751,33 +858,98 @@ export default function PassivesPanel() {
             value={ovr.ntc_b_coeff ?? ''} defaultVal={3950}
             onChange={v => setOvr('ntc_b_coeff', v)} onReset={() => resetOvr('ntc_b_coeff')}
             note="e.g. 3950 (Murata NCP15)" />
-          <OvrField label="Pullup" unit="kΩ"
+          <OvrField label="Pullup Resistor" unit="kΩ"
             value={ovr.ntc_pullup_kohm ?? ''} defaultVal={10}
             onChange={v => setOvr('ntc_pullup_kohm', v)} onReset={() => resetOvr('ntc_pullup_kohm')} />
         </>}
         results={<>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
-            <Row label="OVP trip" value={fmtNum(prot.ovp?.trip_voltage_v, 1)} unit="V" bold src="auto"
-              tip="V_ovp = Vref × (R1+R2)/R2 — comparator threshold" />
-            <Row label="OVP R1/R2" value={`${fv(prot.ovp?.r1_kohm)}k / ${fv(prot.ovp?.r2_standard_kohm)}kΩ`}
-              src={ovr.prot_r1_kohm != null ? 'ovr' : 'auto'} />
-            <Row label="UVP trip" value={fmtNum(prot.uvp?.trip_voltage_v, 1)} unit="V" bold src="auto" />
-            <Row label="OCP hardware" value={fmtNum(prot.ocp?.hw_threshold_a, 0)} unit="A" src="auto"
-              tip="I_ocp = V_ref / (R_shunt × CSA_gain)" />
+          {/* ── Bus → ADC Scaling ── */}
+          <div style={{ fontSize:10, fontWeight:700, color:'var(--txt-3)', letterSpacing:'.5px',
+            textTransform:'uppercase', marginBottom:4 }}>Bus → ADC Scaling</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px', marginBottom:6 }}>
+            <Row label="Bus nominal (V_bus)" value={fmtNum(specs.bus_voltage, 1)} unit="V" src="auto"
+              tip="Nominal DC bus voltage from system specs" />
+            <Row label="Bus peak (V_peak)" value={fmtNum(prot.ovp?.v_bus_monitored, 1)} unit="V" src="auto"
+              tip="Peak bus voltage used for OVP trip sizing — includes regen overshoot margin" />
+            <Row label="ADC reference (V_ref)" value={fmtNum(prot.ovp?.v_adc_ref, 2)} unit="V" src="auto"
+              tip="MCU ADC full-scale reference from datasheet (or fallback). Divider output must not exceed this." />
+            <Row label="Divider ratio" value={fmtNum(prot.ovp?.divider_ratio, 2)} unit=":1" bold src="auto"
+              tip="V_peak ÷ V_ADC_ref — the resistor divider must attenuate by this factor" />
           </div>
-          <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
-            letterSpacing:'.5px', textTransform:'uppercase' }}>NTC / OTP</div>
+
+          {/* Ratio visual bar */}
+          {prot.ovp?.divider_ratio != null && (
+            <div style={{ marginBottom:8, padding:'6px 10px', borderRadius:6,
+              background:'rgba(0,230,118,0.06)', border:'1px solid rgba(0,230,118,0.2)' }}>
+              <div style={{ fontSize:10, color:'var(--txt-3)', marginBottom:4 }}>
+                Divider attenuation: <strong style={{color:'#00e676'}}>
+                  V_peak {fmtNum(prot.ovp?.v_bus_monitored,1)}V ÷ V_ADC_ref {fmtNum(prot.ovp?.v_adc_ref,2)}V = {fmtNum(prot.ovp?.divider_ratio,2)}:1
+                </strong>
+              </div>
+              <div style={{ fontSize:10, color:'var(--txt-4)' }}>
+                R2 = R1 × V_ADC / (V_trip − V_ADC) — R1 set by you, R2 auto-calculated
+              </div>
+            </div>
+          )}
+
+          {/* ── OVP ── */}
+          <div style={{ fontSize:10, fontWeight:700, color:'var(--txt-3)', letterSpacing:'.5px',
+            textTransform:'uppercase', marginBottom:4 }}>Over-Voltage Protection (OVP)</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px', marginBottom:6 }}>
+            <Row label="Trip voltage" value={fmtNum(prot.ovp?.trip_voltage_v, 1)} unit="V" bold src="auto"
+              tip="Bus voltage at which OVP comparator fires and kills PWM" />
+            <Row label="Actual trip" value={fmtNum(prot.ovp?.actual_trip_v, 1)} unit="V" src="auto"
+              tip="Recalculated from standard E24 R2 value — may differ slightly from target" />
+            <Row label="R1 (top)" value={fmtNum(prot.ovp?.r1_kohm, 0)} unit="kΩ" src={ovr.prot_r1_kohm != null ? 'ovr' : 'auto'} />
+            <Row label="R2 (bottom)" value={fmtNum(prot.ovp?.r2_standard_kohm, 2)} unit="kΩ" bold src="auto"
+              tip="R2 = R1 × V_ADC_ref / (V_OVP_trip − V_ADC_ref), snapped to E24" />
+            <Row label="Divider current" value={fmtNum(prot.ovp?.divider_current_ua, 1)} unit="µA" src="auto"
+              tip="Quiescent current through R1+R2 at bus voltage — keep < 100µA" />
+          </div>
+
+          {/* ── UVP ── */}
+          <div style={{ fontSize:10, fontWeight:700, color:'var(--txt-3)', letterSpacing:'.5px',
+            textTransform:'uppercase', marginBottom:4 }}>Under-Voltage Protection (UVP)</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px', marginBottom:6 }}>
+            <Row label="Trip voltage" value={fmtNum(prot.uvp?.trip_voltage_v, 1)} unit="V" bold src="auto"
+              tip="Bus voltage at which UVP fires — below this the bridge is disabled" />
+            <Row label="Hysteresis" value={fmtNum(prot.uvp?.hysteresis_voltage_v, 1)} unit="V" src="auto"
+              tip="Bus must recover above this level to re-enable the gate driver" />
+            <Row label="R1 (top, shared)" value={fmtNum(prot.uvp?.r1_kohm, 0)} unit="kΩ" src={ovr.prot_r1_kohm != null ? 'ovr' : 'auto'}
+              tip="Same R1 as OVP divider — only R2 differs to set a lower threshold" />
+            <Row label="R2 (bottom)" value={fmtNum(prot.uvp?.r2_standard_kohm, 2)} unit="kΩ" bold src="auto"
+              tip="R2_uvp = R1 × V_ADC_ref / (V_UVP_trip − V_ADC_ref), snapped to E24" />
+          </div>
+
+          {/* ── OCP ── */}
+          <div style={{ fontSize:10, fontWeight:700, color:'var(--txt-3)', letterSpacing:'.5px',
+            textTransform:'uppercase', marginBottom:4 }}>Over-Current Protection (OCP)</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px', marginBottom:6 }}>
+            <Row label="Hardware trip" value={fmtNum(prot.ocp?.hw_threshold_a, 0)} unit="A" bold src="auto"
+              tip="I_ocp_hw = 1.5× I_max — driver IC latches off within 1µs via current sense pin" />
+            <Row label="Software trip" value={fmtNum(prot.ocp?.sw_threshold_a, 0)} unit="A" src="auto"
+              tip="I_ocp_sw = 1.25× I_max — MCU firmware interrupt disables PWM within ~10µs" />
+          </div>
+
+          {/* ── NTC / OTP ── */}
+          <div style={{ fontSize:10, fontWeight:700, color:'var(--txt-3)', letterSpacing:'.5px',
+            textTransform:'uppercase', marginBottom:4 }}>NTC Thermistor / Over-Temp Protection</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
-            <Row label="NTC R25" value={fmtNum(prot.otp?.ntc_value_at_25c_kohm, 0)} unit="kΩ"
+            <Row label="Warning threshold" value={fmtNum(prot.otp?.warning_temp_c, 0)} unit="°C" src="auto" />
+            <Row label="Shutdown threshold" value={fmtNum(prot.otp?.shutdown_temp_c, 0)} unit="°C" src="auto" />
+            <Row label={`V_NTC @ ${fv(prot.otp?.warning_temp_c)}°C (warn)`} value={fmtNum(prot.otp?.v_ntc_at_80c_v, 3)} unit="V" bold src="auto"
+              tip="Steinhart-Hart: 1/T = 1/T₀ + (1/B)×ln(R/R₀) — NTC voltage at warning temp" />
+            <Row label={`V_NTC @ ${fv(prot.otp?.shutdown_temp_c)}°C (shut)`} value={fmtNum(prot.otp?.v_ntc_at_100c_v, 3)} unit="V" bold src="auto"
+              tip="MCU ADC reads this voltage — firmware shuts down gate drive when crossed" />
+            <Row label="NTC R₂₅" value={fmtNum(prot.otp?.ntc_value_at_25c_kohm, 0)} unit="kΩ"
               src={ovr.ntc_r25_kohm != null ? 'ovr' : 'auto'} />
             <Row label="B-coeff" value={fv(prot.otp?.ntc_b_coefficient)}
               src={ovr.ntc_b_coeff != null ? 'ovr' : 'auto'} />
-            <Row label="V_NTC @ warn" value={fmtNum(prot.otp?.v_ntc_at_80c_v, 3)} unit="V" bold src="auto"
-              tip="Steinhart-Hart: 1/T = 1/T0 + (1/B)×ln(R/R0)" />
-            <Row label="V_NTC @ shutdn" value={fmtNum(prot.otp?.v_ntc_at_100c_v, 3)} unit="V" bold src="auto" />
           </div>
-          <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
-            letterSpacing:'.5px', textTransform:'uppercase' }}>PSU Bypass</div>
+
+          {/* ── PSU Bypass (moved here, clearly labelled) ── */}
+          <div style={{ margin:'8px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
+            letterSpacing:'.5px', textTransform:'uppercase' }}>PSU Bypass Caps</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="Gate drv bulk" value={`${fv(psby.vcc_gate_driver?.bulk_cap_uf)}µF/${fv(psby.vcc_gate_driver?.bulk_v_rating)}V`} src="auto" />
             <Row label="Gate drv bypass" value={`${fv(psby.vcc_gate_driver?.bypass_cap_nf)}nF ×2`} src="auto" />
@@ -836,90 +1008,42 @@ export default function PassivesPanel() {
 
 
       {/* ══════════════════════════════════════════════════════ */}
-      {/* SECTION 7 — PCB Power Trace                          */}
+      {/* SECTION 7 — PCB Power Trace (moved to PCB Thermal)   */}
       {/* ══════════════════════════════════════════════════════ */}
-      <Section
-        id="pcb" icon="🖥️" title="PCB Power Trace" color="#64b5f6"
-        tier="recommended"
-        open={open.pcb} onToggle={tog}
-        overrideCount={pcbOvrCnt}
-        stale={stale} noResults={!C}
-        inputs={<>
-          <div style={fullSpan}>
-            {/* Clickable navigation to PCB Thermal tab */}
-            <button
-              onClick={() => navigateTo('pcb_thermal')}
-              style={{
-                width:'100%', display:'flex', alignItems:'center', justifyContent:'space-between',
-                fontSize:10.5, color:'#64b5f6', lineHeight:1.5, cursor:'pointer',
-                padding:'5px 9px', background:'rgba(100,181,246,.08)', borderRadius:6,
-                border:'1px solid rgba(100,181,246,.3)', marginBottom:2,
-                fontWeight:500, textAlign:'left',
-              }}
-            >
-              <span>🔗 Fields shared with <strong>PCB Trace Thermal</strong> tab. Changes sync both ways.</span>
-              <span style={{ fontSize:10, background:'rgba(100,181,246,.2)', borderRadius:4,
-                padding:'2px 7px', fontWeight:700, flexShrink:0, marginLeft:8 }}>
-                Open →
-              </span>
-            </button>
+      <div style={{
+        margin:'12px 0 4px',
+        border:'1px solid rgba(100,181,246,.25)',
+        borderRadius:10,
+        background:'rgba(100,181,246,.04)',
+        padding:'16px 18px',
+        display:'flex', alignItems:'flex-start', gap:14,
+      }}>
+        <span style={{ fontSize:28, flexShrink:0 }}>🖥️</span>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:'#64b5f6', marginBottom:4 }}>
+            PCB Power Trace &amp; Loop Impedance
           </div>
-          <OvrField label="Power Trace Width" unit="mm" linked
-            value={traceP.trace_width_mm ?? ''}
-            onChange={v => setTrace('trace_width_mm', v)}
-            onReset={() => setTrace('trace_width_mm', undefined)}
-            note="Used for IPC-2152 and loop L calc" />
-          <OvrField label="Power Trace Length" unit="mm" linked
-            value={traceP.trace_length_mm ?? ''}
-            onChange={v => setTrace('trace_length_mm', v)}
-            onReset={() => setTrace('trace_length_mm', undefined)}
-            note="One-way bus→switch node length" />
-          <OvrField label="Total PCB Layers" unit="layers" linked step={1}
-            value={totalLayers > 0 ? totalLayers : ''}
-            onChange={v => setTotalLayers(v)} defaultVal={2}
-            onReset={() => setTotalLayers(2)} />
-          <OvrField label="Gate Trace Width" unit="mm"
-            value={ovr.gate_trace_w_mm ?? ''} defaultVal={0.3}
-            onChange={v => setOvr('gate_trace_w_mm', v)} onReset={() => resetOvr('gate_trace_w_mm')} />
-          <OvrField label="Power Clearance" unit="mm"
-            value={ovr.power_clearance_mm ?? ''} defaultVal={1.0}
-            onChange={v => setOvr('power_clearance_mm', v)} onReset={() => resetOvr('power_clearance_mm')} />
-        </>}
-        results={<>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
-            <Row label="Power trace width" value={fmtNum(pcbg.power_trace_w_mm, 2)} unit="mm" bold />
-            <Row label="Gate trace width" value={fmtNum(pcbg.gate_trace_w_mm, 2)} unit="mm" />
-            <Row label="Power clearance" value={fmtNum(pcbg.power_clearance_mm, 1)} unit="mm" />
+          <div style={{ fontSize:11, color:'var(--txt-3)', lineHeight:1.6, marginBottom:10 }}>
+            This section has been moved to the <strong style={{color:'#f0a04a'}}>PCB Thermal &amp; Impedance</strong> tab
+            for a cleaner organisation. You can configure trace width, trace length, layer count,
+            gate trace width, power clearance, and view the half-bridge loop inductance calculation there.
           </div>
-          {/* Bridge loop inductance result */}
-          <div style={{
-            marginTop:8, padding:'8px 10px', borderRadius:7,
-            background: loopNh != null ? `${loopColor}0e` : 'var(--bg-2)',
-            border:`1px solid ${loopNh != null ? loopColor + '55' : 'var(--border-1)'}`,
-          }}>
-            <div style={{ fontSize:10, color:'var(--txt-3)', marginBottom:3 }}>
-              Half-Bridge Loop Inductance
-            </div>
-            <div style={{ fontSize:18, fontWeight:800, fontFamily:'var(--font-mono)',
-              color: loopNh != null ? loopColor : 'var(--txt-4)' }}>
-              {loopNh != null ? `${loopNh} nH` : 'Enter trace dims →'}
-            </div>
-            {loopNh != null && (
-              <div style={{ display:'flex', justifyContent:'space-between', marginTop:4 }}>
-                <span style={{ fontSize:10, color:'var(--txt-4)' }}>Target &lt; 5 nH</span>
-                <span style={{ fontSize:10.5, fontWeight:700, color: loopColor }}>
-                  {loopSt === 'OK' ? '✓ GOOD' : loopSt === 'WARNING' ? '⚠ WARNING' : '✗ CRITICAL'}
-                </span>
-              </div>
-            )}
-            {loopNh == null && (
-              <div style={{ fontSize:10, color:'var(--txt-4)', marginTop:3 }}>
-                Formula: L ≈ 0.4 × l × [ln(4l/(w+h)) + 0.5] nH
-              </div>
-            )}
-          </div>
-        </>}
-      />
+          <button
+            onClick={() => navigateTo('pcb_thermal')}
+            style={{
+              display:'inline-flex', alignItems:'center', gap:7,
+              padding:'7px 14px', borderRadius:6, cursor:'pointer',
+              fontSize:11, fontWeight:700,
+              background:'rgba(240,160,74,.15)',
+              border:'1px solid rgba(240,160,74,.4)',
+              color:'#f0a04a',
+              transition:'all .15s',
+            }}
+          >
+            🔥 Open PCB Thermal &amp; Impedance tab →
+          </button>
+        </div>
+      </div>
 
 
 

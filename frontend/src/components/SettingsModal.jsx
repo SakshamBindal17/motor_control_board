@@ -46,13 +46,33 @@ export default function SettingsModal() {
   ]
 
   const SYS_FIELDS = [
-    { key: 'bus_voltage', label: 'Bus Voltage (Nominal)', unit: 'V' },
-    { key: 'peak_voltage', label: 'Bus Voltage (Peak)', unit: 'V' },
-    { key: 'power', label: 'Power', unit: 'W' },
-    { key: 'max_phase_current', label: 'Max Phase Current', unit: 'A' },
-    { key: 'pwm_freq_hz', label: 'PWM Frequency', unit: 'Hz' },
-    { key: 'ambient_temp_c', label: 'Ambient Temperature', unit: '°C' },
-    { key: 'gate_drive_voltage', label: 'Gate Drive Voltage', unit: 'V' },
+    {
+      key: 'bus_voltage',
+      label: 'Bus Voltage (Nominal)',
+      unit: 'V',
+      note: 'DC supply rail voltage. Used for: current sizing, UVP threshold, cap ripple, gate drive ratio.',
+    },
+    {
+      key: 'peak_voltage',
+      label: 'Bus Voltage (Peak)',
+      unit: 'V',
+      note: 'Maximum possible bus voltage including regen overshoot. Used for: OVP trip, TVS selection, MOSFET Vds rating. Must be > Nominal.',
+    },
+    {
+      key: 'power',
+      label: 'Output Power',
+      unit: 'W',
+      note: 'Mechanical output power ≈ V_bus_nominal × I_max_phase (informational — not used in passive sizing calculations directly).',
+    },
+    {
+      key: 'max_phase_current',
+      label: 'Max Phase Current (I_max)',
+      unit: 'A',
+      note: 'Peak phase current at full load. Drives: shunt sizing, capacitor ripple, MOSFET conduction loss, OCP trip threshold.',
+    },
+    { key: 'pwm_freq_hz',        label: 'PWM Frequency',      unit: 'Hz',  note: 'Switching frequency. Higher = smaller caps/inductors, more switching loss.' },
+    { key: 'ambient_temp_c',     label: 'Ambient Temperature', unit: '°C', note: 'Worst-case ambient for thermal calculations.' },
+    { key: 'gate_drive_voltage', label: 'Gate Drive Voltage',  unit: 'V',  note: 'Gate driver VCC. Determines Vgs swing and bootstrap capacitor size.' },
   ]
 
   const parallelPerSwitch = Number.isFinite(parseInt(localSpecs.mosfets_parallel_per_switch, 10))
@@ -170,6 +190,11 @@ export default function SettingsModal() {
                     onChange={e => updateSpec(f.key, e.target.value)}
                     placeholder={String(localSpecs[f.key] ?? '')}
                   />
+                  {f.note && (
+                    <p style={{ fontSize: 10, color: 'var(--txt-4)', margin: '3px 0 0', lineHeight: 1.4 }}>
+                      {f.note}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

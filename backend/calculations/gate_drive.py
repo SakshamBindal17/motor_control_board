@@ -278,7 +278,7 @@ class GateDriveMixin:
             "c_boot_recommended_nf":    c_std_nf,
             "c_boot_v_rating_v":        25,
             "c_boot_dielectric":        "X7R MLCC",
-            "c_boot_qty":               3,
+            "c_boot_qty":               int(self.num_fets // 2),  # 1 per high-side switch; fixed by topology
             "v_bootstrap_v":            round(v_boot,       2),
             "bootstrap_diode":          "B0540W (40V/500mA Schottky)",
             "r_boot_series_ohm":        r_boot,
