@@ -66,6 +66,8 @@ CRITICAL RULES:
 5. Different vendors use different names for the same parameter — use the alias list to identify each one
 6. ESSENTIAL parameters: extract every one that appears in the datasheet
 7. GOOD-TO-HAVE parameters: extract only if present — omit entirely if not found, do NOT invent values
+8. ESCAPE ALL QUOTES: If you include a quote inside a string value (like a note), you MUST escape it (e.g. \"See \\"Notes\\"\"). Never use unescaped double quotes.
+9. NO TRAILING COMMAS: Ensure the JSON is strictly valid, with no trailing commas before } or ].
 
 JSON FORMAT:
 {
@@ -223,6 +225,8 @@ CRITICAL RULES:
 5. Different vendors use different names for the same parameter — use the alias list to identify each one
 6. ESSENTIAL parameters: extract every one that appears in the datasheet
 7. GOOD-TO-HAVE parameters: extract only if present — omit entirely if not found, do NOT invent values
+8. ESCAPE ALL QUOTES: If you include a quote inside a string value (like a note), you MUST escape it (e.g. \"See \\"Notes\\"\"). Never use unescaped double quotes.
+9. NO TRAILING COMMAS: Ensure the JSON is strictly valid, with no trailing commas before } or ].
 
 JSON FORMAT:
 {
@@ -361,6 +365,8 @@ CRITICAL RULES:
 5. Different vendors use different names for the same parameter — use the alias list to identify each one
 6. ESSENTIAL parameters: extract every one that appears in the datasheet
 7. GOOD-TO-HAVE parameters: extract only if present — omit entirely if not found, do NOT invent values
+8. ESCAPE ALL QUOTES: If you include a quote inside a string value (like a note), you MUST escape it (e.g. \"See \\"Notes\\"\"). Never use unescaped double quotes.
+9. NO TRAILING COMMAS: Ensure the JSON is strictly valid, with no trailing commas before } or ].
 
 JSON FORMAT:
 {
@@ -549,15 +555,21 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
         raw = re.sub(r"```\s*$",          "", raw, flags=re.MULTILINE).strip()
 
         # Parse JSON
+        # Clean trailing commas from arrays and objects before parsing
+        raw = re.sub(r',\s*([\]}])', r'\1', raw)
+        
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as root_e:
             match = re.search(r'\{.*\}', raw, re.DOTALL)
             if match:
-                data = json.loads(match.group())
+                try:
+                    data = json.loads(match.group())
+                except json.JSONDecodeError as inner_e:
+                    raise ValueError(f"Claude returned malformed JSON: {inner_e}")
             else:
                 raise ValueError(
-                    f"Claude returned non-JSON.\nFirst 400 chars:\n{raw[:400]}"
+                    f"Claude returned non-JSON.\nFirst 400 chars:\n{raw[:400]}\nParse Error: {root_e}"
                 )
 
         # Post-process: set selected value and override slot
