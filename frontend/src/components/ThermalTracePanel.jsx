@@ -768,9 +768,25 @@ export default function ThermalTracePanel({ config }) {
           const pcbg     = C?.pcb_guidelines || {}
           const traceP   = state.project.pcb_trace_thermal?.params || {}
           const ovr      = state.project.blocks.passives?.overrides || {}
-          const loopNh   = pcbg?.half_bridge_loop_calculated_nh
-          const loopSt   = pcbg?.half_bridge_loop_status || 'unknown'
-          const loopColor = loopSt === 'OK' ? 'var(--green)' : loopSt === 'WARNING' ? '#ffab40' : loopSt === 'CRITICAL' ? 'var(--red)' : 'var(--txt-4)'
+          
+          // Compute Loop Inductance instantly on the frontend
+          let loopNh = null
+          let loopSt = 'unknown'
+          let loopColor = 'var(--txt-4)'
+          const l_mm = parseFloat(traceP.trace_length_mm) || 0
+          const w_mm = parseFloat(traceP.trace_width_mm) || 0
+          const cu_oz = parseFloat(traceP.copper_oz ?? 2)
+          
+          if (l_mm > 0 && w_mm > 0) {
+            const h_mm = cu_oz * 0.035
+            const ln_arg = Math.max(4.0 * l_mm / (w_mm + h_mm), 1.01)
+            loopNh = 0.4 * l_mm * (Math.log(ln_arg) + 0.5)
+            
+            if (loopNh <= 5.0) { loopSt = 'OK'; loopColor = 'var(--green)' }
+            else if (loopNh <= 10.0) { loopSt = 'WARNING'; loopColor = '#ffab40' }
+            else { loopSt = 'CRITICAL'; loopColor = 'var(--red)' }
+          }
+
           const tLayers  = (traceP.n_external_layers || 2) + (traceP.n_internal_layers || 0)
 
           function setTrace(k, v) {
@@ -835,9 +851,9 @@ export default function ThermalTracePanel({ config }) {
                 </div>
                 <div style={{ display:'flex', alignItems:'baseline', gap:8 }}>
                   <span style={{ fontSize:22, fontWeight:800, fontFamily:'var(--font-mono)', color: loopNh != null ? loopColor : 'var(--txt-4)' }}>
-                    {loopNh != null ? `${+(loopNh / 1000).toFixed(4)}` : '—'}
+                    {loopNh != null ? `${+(loopNh).toFixed(2)}` : '—'}
                   </span>
-                  <span style={{ fontSize:13, color:'var(--txt-3)' }}>µH</span>
+                  <span style={{ fontSize:13, color:'var(--txt-3)' }}>nH</span>
                   {loopNh != null && (
                     <span style={{ marginLeft:'auto', fontSize:11, fontWeight:700, color: loopColor }}>
                       {loopSt === 'OK' ? '✓ GOOD' : loopSt === 'WARNING' ? '⚠ WARNING' : '✗ CRITICAL'}
@@ -846,7 +862,7 @@ export default function ThermalTracePanel({ config }) {
                 </div>
                 {loopNh != null && (
                   <div style={{ fontSize:10, color:'var(--txt-4)', marginTop:4 }}>
-                    Target &lt; 0.005 µH · Current: {fmtNum(loopNh/1000, 4)} µH · Formula: L ≈ 0.4 × l × [ln(4l/(w+t)) + 0.5] nH
+                    Target &lt; 5.0 nH · Current: {fmtNum(loopNh, 2)} nH · Formula: L ≈ 0.4 × l × [ln(4l/(w+t)) + 0.5] nH
                   </div>
                 )}
                 {loopNh == null && (
