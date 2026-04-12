@@ -1,6 +1,6 @@
 """Motor Controller Hardware Design — Protection Calculations"""
 import math
-from calculations.base import _nearest_e, E24
+from calculations.base import _nearest_e, E24, E12
 
 
 class ProtectionMixin:
@@ -30,7 +30,8 @@ class ProtectionMixin:
             try: return float(self.ovr.get(key, default))
             except (TypeError, ValueError): return float(default)
 
-        prot_r1_kohm   = _flt("prot_r1_kohm",   100.0)  # top divider resistor
+        prot_r1_kohm   = _flt("prot_r1_kohm",   100.0)  # top divider resistor (user sets)
+        prot_r2_kohm   = self.ovr.get("prot_r2_kohm")    # bottom resistor (optional override)
         ntc_r25_kohm   = _flt("ntc_r25_kohm",    10.0)  # NTC resistance @ 25°C
         ntc_b_coeff    = _flt("ntc_b_coeff",    3950.0)  # NTC B-coefficient
         ntc_pullup_kohm= _flt("ntc_pullup_kohm",  10.0)  # NTC pullup resistor
@@ -54,15 +55,45 @@ class ProtectionMixin:
         self._log_hc("protection_dividers", "TVS power rating", "600 W", "SMBJ/P6KE style for bus clamping")
 
         # ── OVP R2 calculation ──────────────────────────────────────────────────
-        r2_ovp     = r1_ovp * r_ratio_ovp
-        r2_ovp_std = max(1e3, _nearest_e(r2_ovp / 1e3, E24) * 1e3)
-        if r2_ovp < 1e3:
+        r2_user_ohm = None
+        if prot_r2_kohm is not None:
+            try:
+                r2_user_ohm = float(prot_r2_kohm) * 1e3
+            except (TypeError, ValueError):
+                r2_user_ohm = None
+
+        if r2_user_ohm is not None:
+            # Back-calculate mode: physical R2 on board → compute actual trip voltage
+            # V_trip = V_ref × (R1 + R2) / R2
+            r2_ovp_std = r2_user_ohm
+            r2_ovp     = r2_user_ohm
+            v_trip_ovp_actual = v_ref * (r1_ovp + r2_ovp_std) / r2_ovp_std
             self.audit_log.append(
-                f"[Protection] WARNING: OVP divider is degenerate — V_trip ({v_ovp_trip}V) is too close to "
-                f"V_ref ({v_ref}V). R2 clamped to 1kΩ minimum. Verify system voltages."
+                f"[Protection] OVP R2 user={r2_user_ohm/1e3:.2f}kΩ. "
+                f"Back-calc trip = {v_trip_ovp_actual:.2f}V via V_ref×(R1+R2)/R2."
             )
-        v_trip_ovp_actual = v_ref * (r1_ovp + r2_ovp_std) / r2_ovp_std
-        i_divider_ovp_ua  = (self.v_peak / (r1_ovp + r2_ovp_std)) * 1e6
+        else:
+            # Auto mode: R2 = R1 × V_ref / (V_trip - V_ref), snap to nearest E24
+            r2_ovp     = r1_ovp * r_ratio_ovp
+            r2_ovp_std = max(1e3, _nearest_e(r2_ovp / 1e3, E24) * 1e3)
+            if r2_ovp < 1e3:
+                self.audit_log.append(
+                    f"[Protection] WARNING: OVP divider degenerate - V_trip ({v_ovp_trip}V) too close to V_ref ({v_ref}V). Clamped."
+                )
+            v_trip_ovp_actual = v_ref * (r1_ovp + r2_ovp_std) / r2_ovp_std
+
+        r2_is_override   = r2_user_ohm is not None
+        i_divider_ovp_ua = (self.v_peak / (r1_ovp + r2_ovp_std)) * 1e6
+
+        # TVS Diode Sizing (Bus Clamping)
+        v_rwm_suggested = round(v_ovp_trip * 1.05, 1)
+        v_clamp_typ = round(v_rwm_suggested * 1.6, 1)
+
+        # RC Filter Capacitor Sizing (Target Fc = 2kHz to reject 20kHz PWM)
+        r_eq_ovp = (r1_ovp * r2_ovp_std) / (r1_ovp + r2_ovp_std) if (r1_ovp + r2_ovp_std) > 0 else 0
+        c_ideal_ovp_nf = 1e9 / (2 * math.pi * r_eq_ovp * 2000) if r_eq_ovp > 0 else 0
+        c_filter_ovp_nf = _nearest_e(c_ideal_ovp_nf, E12) if c_ideal_ovp_nf > 0 else 0
+        f_cutoff_ovp_hz = round(1e9 / (2 * math.pi * r_eq_ovp * c_filter_ovp_nf), 0) if (r_eq_ovp * c_filter_ovp_nf) > 0 else 0
 
         # ── UVP ─────────────────────────────────────────────────────────────────
         uvp_trip_frac = self._dc("prot.uvp_trip")
@@ -72,14 +103,26 @@ class ProtectionMixin:
         self._log_hc("protection_dividers", "UVP hysteresis", f"{round((uvp_trip_frac+0.04)*100)}% of Vbus", "Re-enable threshold")
         v_uvp_diff  = v_uvp_trip - v_ref
         r_ratio_uvp = 0 if v_uvp_diff <= 0 else v_ref / v_uvp_diff
-        r2_uvp      = r1_uvp * r_ratio_uvp
-        r2_uvp_std  = max(1e3, _nearest_e(r2_uvp / 1e3, E24) * 1e3)
-        if r2_uvp < 1e3:
-            self.audit_log.append(
-                f"[Protection] WARNING: UVP divider is degenerate — V_trip ({v_uvp_trip}V) is too close to "
-                f"V_ref ({v_ref}V). R2 clamped to 1kΩ minimum."
-            )
+
+        if r2_user_ohm is not None:
+            # Shared physical divider: same R2 used for UVP too
+            r2_uvp_std = r2_user_ohm
+            r2_uvp     = r2_user_ohm
+        else:
+            r2_uvp      = r1_uvp * r_ratio_uvp
+            r2_uvp_std  = max(1e3, _nearest_e(r2_uvp / 1e3, E24) * 1e3)
+            if r2_uvp < 1e3:
+                self.audit_log.append(
+                    f"[Protection] WARNING: UVP divider degenerate - V_trip ({v_uvp_trip}V) too close to V_ref ({v_ref}V). Clamped."
+                )
+        v_trip_uvp_actual = v_ref * (r1_uvp + r2_uvp_std) / r2_uvp_std
         i_divider_uvp_ua = (self.v_bus / (r1_uvp + r2_uvp_std)) * 1e6
+
+        # RC Filter Capacitor Sizing
+        r_eq_uvp = (r1_uvp * r2_uvp_std) / (r1_uvp + r2_uvp_std) if (r1_uvp + r2_uvp_std) > 0 else 0
+        c_ideal_uvp_nf = 1e9 / (2 * math.pi * r_eq_uvp * 2000) if r_eq_uvp > 0 else 0
+        c_filter_uvp_nf = _nearest_e(c_ideal_uvp_nf, E12) if c_ideal_uvp_nf > 0 else 0
+        f_cutoff_uvp_hz = round(1e9 / (2 * math.pi * r_eq_uvp * c_filter_uvp_nf), 0) if (r_eq_uvp * c_filter_uvp_nf) > 0 else 0
 
         # ── OCP threshold (shunt-based) ─────────────────────────────────────────
         ocp_hw_mult = self._dc("prot.ocp_hw")
@@ -109,8 +152,13 @@ class ProtectionMixin:
                 "r1_kohm":                  round(r1_ovp / 1e3, 0),
                 "r2_kohm":                  round(r2_ovp_std / 1e3, 2),
                 "r2_standard_kohm":         round(r2_ovp_std / 1e3, 2),
+                "r2_is_override":           r2_is_override,
                 "actual_trip_v":            round(v_trip_ovp_actual, 2),
                 "divider_current_ua":        round(i_divider_ovp_ua,  2),
+                "c_filter_nf":              round(c_filter_ovp_nf, 1),
+                "f_cutoff_hz":              f_cutoff_ovp_hz,
+                "tvs_v_rwm_suggested":      v_rwm_suggested,
+                "tvs_v_clamp_typ":          v_clamp_typ,
                 "v_bus_monitored":           self.v_peak,
                 "v_adc_ref":                v_ref,
                 "divider_ratio":            round(self.v_peak / v_ref, 2) if v_ref > 0 else None,
@@ -123,7 +171,11 @@ class ProtectionMixin:
                 "r1_kohm":              round(r1_uvp / 1e3, 0),
                 "r2_kohm":              round(r2_uvp / 1e3, 2),
                 "r2_standard_kohm":     round(r2_uvp_std / 1e3, 2),
+                "r2_is_override":       r2_is_override,
+                "actual_trip_v":        round(v_trip_uvp_actual, 2),
                 "divider_current_ua":   round(i_divider_uvp_ua,  2),
+                "c_filter_nf":          round(c_filter_uvp_nf, 1),
+                "f_cutoff_hz":          f_cutoff_uvp_hz,
                 "response":             "Disable gate drive, wait for recovery above hysteresis level",
             },
             "ocp": {

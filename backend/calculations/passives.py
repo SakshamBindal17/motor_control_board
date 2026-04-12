@@ -1,6 +1,6 @@
 """Motor Controller Hardware Design — Passives Calculations"""
 import math
-from calculations.base import _nearest_e
+from calculations.base import _nearest_e, E12
 
 
 class PassivesMixin:
@@ -362,31 +362,30 @@ class PassivesMixin:
         v_overshoot = self.i_max * math.sqrt(l_stray / max(coss, 1e-15))
         v_sw_peak   = self.v_peak + v_overshoot
 
-        # Snubber resistor: critical damping Rs = sqrt(L/Cs) where Cs = snubber cap
-        coss_mult_for_rs = int(self._dc("snub.coss_mult"))
-        cs_for_rs   = max(coss * coss_mult_for_rs, 1e-15)
+        # Snubber capacitor sizing: Cs ≈ N × Coss (read multiplier once)
+        coss_mult = int(self._dc("snub.coss_mult"))
+        self._log_hc("snubber", "Snubber cap formula", f"{coss_mult}× Coss", "Overdamped RC snubber design rule", "snub.coss_mult")
+        self._log_hc("snubber", "Rs practical limits", "1–100 Ω", "Physical resistor sizing constraints")
+        cs_pf_raw = coss_pf * coss_mult if coss_pf > 0 else 1000.0
+        cs_pf_std = _nearest_e(cs_pf_raw, E12)
+        cs_pf_std = max(100.0, cs_pf_std)
+
+        # Snubber resistor: Rs = sqrt(L_stray / Cs_snubber)
+        # This damps the Cs–L_stray loop (overdamped relative to the natural
+        # Coss–L resonance because Cs > Coss).
+        cs_for_rs   = max(cs_pf_std * 1e-12, 1e-15)
         rs_crit     = math.sqrt(l_stray / cs_for_rs)
         rs_std      = _nearest_e(rs_crit)
-        
+
         # Log the stray inductance hardcode
         if l_stray_nh == 10.0:
             self.audit_log.append("[Snubber] Stray layout inductance not specified. Assumed 10nH default.")
-        self.audit_log.append("[Snubber] Targeted critical damping factor (ζ = 1) for switching overshoot resistor calculation.")
+        self.audit_log.append(
+            f"[Snubber] Rs = √(L_stray / Cs) = √({l_stray_nh}nH / {cs_pf_std:.0f}pF) "
+            f"= {rs_crit:.2f}Ω → overdamped relative to natural Coss–L resonance."
+        )
         if rs_std < 1.0: rs_std = 1.0    # practical minimum
         if rs_std > 100: rs_std = 100.0  # practical maximum
-
-        coss_mult = int(self._dc("snub.coss_mult"))
-        self._log_hc("snubber", "Snubber cap formula", f"{coss_mult}x Coss", "Overdamped RC snubber design rule", "snub.coss_mult")
-        self._log_hc("snubber", "Rs practical limits", "1-100 Ω", "Physical resistor sizing constraints")
-        # Snubber capacitor: Cs ≈ N× Coss, snapped to nearest E12 cap decade
-        cs_pf_raw = coss_pf * coss_mult if coss_pf > 0 else 1000.0
-        E12_pF = [100,120,150,180,220,270,330,390,470,560,680,820,
-              1000,1200,1500,1800,2200,2700,3300,4700,
-              5600,6800,8200,10000,12000,15000,18000,22000,27000,33000,47000,
-              56000,68000,82000,100000,120000,150000,180000,220000,270000,330000,470000,
-              560000,680000,820000,1000000]
-        cs_pf_std = float(next((v for v in E12_pF if v >= cs_pf_raw), E12_pF[-1]))
-        cs_pf_std = max(100.0, cs_pf_std)
 
         # ── Snubber value overrides ──────────────────────────────────────────────
         snub_rs_raw  = self.ovr.get("snubber_rs_ohm")
@@ -413,7 +412,8 @@ class PassivesMixin:
             rs_recommend = max(1.0, min(100.0, round(rs_std, 0)))
             cs_recommend = cs_pf_std
 
-        cap_v_rating = int(self.v_peak * snub_v_mult)
+        # Cap V-rating must withstand V_peak PLUS the overshoot transient
+        cap_v_rating = int((self.v_peak + v_overshoot) * snub_v_mult)
         # Dynamic snubber cap label
         if cs_recommend >= 1000:
             cs_label = f"{cs_recommend/1000:.0f}nF / {cap_v_rating}V X7R MLCC"
@@ -421,7 +421,9 @@ class PassivesMixin:
             cs_label = f"{cs_recommend:.0f}pF / {cap_v_rating}V X7R MLCC"
 
         # Snubber power dissipation (per MOSFET)
-        p_snubber = 0.5 * (cs_recommend * 1e-12) * (self.v_peak**2) * self.fsw
+        # The capacitor charges to v_sw_peak = V_peak + V_overshoot each cycle,
+        # then dumps that energy into Rs.  P = ½ × Cs × V_sw_peak² × fsw.
+        p_snubber = 0.5 * (cs_recommend * 1e-12) * (v_sw_peak**2) * self.fsw
         p_snubber_total = p_snubber * self.num_fets
 
         # Qoss energy validation — compare snubber energy with Coss stored energy
@@ -457,7 +459,7 @@ class PassivesMixin:
             "rs_power_rating":            "0.1W minimum (0402)",
             "notes": {
                 "rs_placement":   "Place Cs physically closest to MOSFET D-S pins",
-                "v_rating":       f"Snubber cap voltage rating: {cap_v_rating}V minimum ({snub_v_mult:.1f}×Vpeak)",
+                "v_rating":       f"Snubber cap voltage rating: {cap_v_rating}V minimum ({snub_v_mult:.1f}×(Vpeak+Vovershoot))",
                 "reduce_stray":   "Reducing PCB stray inductance is more effective than snubbers",
                 "pcb_technique":  "Use mirrored top/bottom copper pours for low-inductance half-bridge",
             },

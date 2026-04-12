@@ -277,7 +277,7 @@ export default function PassivesPanel() {
   const capsOvrCnt  = cnt(['delta_v_ripple','bulk_v_rating_v','mlcc_qty','mlcc_size_nf','mlcc_esr_mohm','film_qty','film_size_uf','film_v_rating_v'])
   const bootOvrCnt  = cnt(['bootstrap_droop_v','cboot_v_rating_v'])
   const shuntOvrCnt = cnt(['shunt_topology','csa_gain_override','shunt_single_mohm','shunt_three_mohm','stray_inductance_nh','snubber_rs_ohm','snubber_cs_pf','snubber_v_mult'])
-  const protOvrCnt  = cnt(['prot_r1_kohm','ntc_r25_kohm','ntc_b_coeff','ntc_pullup_kohm'])
+  const protOvrCnt  = cnt(['prot_r1_kohm','prot_r2_kohm','ntc_r25_kohm','ntc_b_coeff','ntc_pullup_kohm'])
   const emiOvrCnt   = cnt(['emi_choke_dcr_mohm','emi_x_cap_nf','emi_x_cap_v','emi_y_cap_nf','emi_y_cap_v'])
   const pcbOvrCnt   = (traceP.trace_width_mm != null ? 1 : 0) + (traceP.trace_length_mm != null ? 1 : 0)
                     + cnt(['gate_trace_w_mm','power_clearance_mm'])
@@ -285,10 +285,7 @@ export default function PassivesPanel() {
   /* Run calculations */
   async function runCalc(silent = false) {
     if (calcInFlight.current) return
-    if (state.project.blocks.mosfet.status !== 'done') {
-      if (!silent) toast.error('Upload MOSFET datasheet first')
-      return 
-    }
+    // Allow calculation even without Mosfet (backend uses fallbacks)
     setCalcBusy(true); calcInFlight.current = true
     if (!silent) toast.loading('Calculating…', { id:'pc' })
     try {
@@ -313,13 +310,18 @@ export default function PassivesPanel() {
   useEffect(() => { runCalcRef.current = runCalc }, [runCalc])
 
   useEffect(() => {
-    if (stale && !calcBusy && state.project.blocks.mosfet?.status === 'done') {
+    if (stale && !calcBusy) {
       const timer = setTimeout(() => {
         runCalcRef.current(true) // Run silently after debounce
       }, 400)
       return () => clearTimeout(timer)
     }
-  }, [stale, calcBusy, state.project.blocks.mosfet, state.project.blocks.driver, state.project.blocks.mcu])
+  }, [stale, calcBusy,
+    state.project.blocks.mosfet, state.project.blocks.mosfet?.selected_params,
+    state.project.blocks.driver, state.project.blocks.driver?.selected_params,
+    state.project.blocks.mcu, state.project.blocks.mcu?.selected_params,
+    state.project.blocks.passives.overrides,
+    state.project.system_specs, state.project.design_constants])
 
   /* Bootstrap reverse */
   async function solveBootstrap() {
@@ -858,14 +860,13 @@ export default function PassivesPanel() {
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="CSA gain" value={fv(shunt.csa_gain)}
               src={ovr.csa_gain_override != null ? 'ovr' : 'auto'}
-              tip="Current sense amplifier gain from driver datasheet (or override)" />
-            <Row label="ADC reference" value={fmtNum(shunt.adc_reference_v, 1)} unit="V" src="auto" />
-            <Row label="ADC target" value={fmtNum(shunt.active?.v_adc_target_v, 2)} unit="V" src="auto"
-              tip={shunt.topology_mode === 'single'
-                ? '50% of ADC ref — mid-rail = 0A for bidirectional sensing'
-                : '80% of ADC ref — maximises range for unidirectional sensing'} />
+              tip="Definition: Current Sense Amplifier voltage gain (V/V). Source: Gate Driver datasheet or manual override. Formula: V_adc = I_shunt × R_shunt × Gain." />
+            <Row label="ADC reference" value={fmtNum(shunt.adc_reference_v, 1)} unit="V" src="auto"
+              tip="Definition: MCU ADC full-scale reference voltage. Source: MCU datasheet (adc_ref parameter). All current sensing calculations are bounded by this voltage." />
+            <Row label="ADC limit" value={fmtNum(shunt.active?.v_adc_max_limit, 2)} unit="V" src="auto"
+              tip="Formula: 50% × V_adc_ref. Meaning: Maximum allowable CSA output voltage. Bidirectional sensing maps ±I_peak to 0…V_ref, so the usable swing per polarity is half the reference." />
             <Row label="Ideal R_shunt" value={fmtNum(shunt.ideal_r_mohm, 3)} unit="mΩ" src="auto"
-              tip="R = V_ADC_target / (CSA_gain × I_max)" />
+              tip="Formula: R_ideal = V_ADC_limit / (CSA_gain × I_max). Meaning: The exact resistor value that would use the full ADC swing at max current." />
           </div>
 
           {/* ── Active topology specific ── */}
@@ -876,10 +877,11 @@ export default function PassivesPanel() {
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="Value" value={fmtNum(shunt.active?.value_mohm, 2)} unit="mΩ" bold
               src={(shunt.topology_mode === 'single' ? ovr.shunt_single_mohm : ovr.shunt_three_mohm) != null ? 'ovr' : 'auto'}
-              tip="R_shunt = V_ADC_target / (CSA_gain × I_max)" />
+              tip="Formula: R_shunt = V_ADC_limit / (CSA_gain × I_max), snapped to 0.5 or 1.0 mΩ standard value." />
             <Row label="Qty" value={fv(shunt.active?.quantity)} unit="pcs" src="auto"
               tip={shunt.topology_mode === 'single' ? '1 shunt on DC bus return' : '1 per phase (U, V, W)'} />
-            <Row label="V_shunt @ Imax" value={fmtNum(shunt.active?.v_shunt_mv, 2)} unit="mV" src="auto" />
+            <Row label="V_shunt @ Imax" value={fmtNum(shunt.active?.v_shunt_mv, 2)} unit="mV" src="auto"
+              tip="Formula: V_shunt = I_max × R_shunt. Meaning: The raw millivolt drop across the physical shunt resistor before CSA amplification." />
             <Row label="V_AC @ I_peak" value={fmtNum(shunt.active?.v_adc_swing_peak, 3)} unit="V" src="auto" bold
               color={shunt.active?.v_adc_swing_peak > shunt.active?.v_adc_max_limit ? '#ff4444' : '#00e676'}
               tip="V_swing = (I_max × √2) × R_shunt × Gain. The absolute highest sinusoidal peak voltage expected." />
@@ -896,7 +898,10 @@ export default function PassivesPanel() {
               <Row label="Total power" value={fmtNum(shunt.active?.total_power_w, 3)} unit="W" src="auto"
                 tip="P = 3 × I_rms² × R_shunt" />
             )}
-            <Row label="Location" value={shunt.active?.location} src="auto" />
+            <Row label="Location" value={shunt.active?.location} src="auto"
+              tip={shunt.topology_mode === 'single'
+                ? 'Single shunt on the DC bus low-side return path, between GND and the bottom FET sources.'
+                : 'One shunt per phase leg, between each low-side MOSFET source pin and the star-point GND.'} />
           </div>
 
           {/* ── Snubber ── */}
@@ -916,14 +921,14 @@ export default function PassivesPanel() {
               tip="V_over = I_peak × √(L_stray / Coss). The deadly transient voltage spike threatening your MOSFET." />
             <Row label="Rs" value={fv(snub.rs_recommended_ohm)} unit="Ω" bold
               src={ovr.snubber_rs_ohm != null ? 'ovr' : 'auto'}
-              tip="Rs = √(L_stray / C_snub). The 'Critical Damping' resistor. Absorbs energy as heat to stop oscillations." />
+              tip="Formula: Rs = √(L_stray / Cs_snub). Meaning: Damping resistor sized to critically damp the Cs–L_stray loop. Because Cs > Coss, this gives an overdamped response for the natural Coss–L resonance, which is the correct engineering choice for suppressing ringing." />
             <Row label="Cs" value={fmtNum(snub.cs_recommended_pf, 0)} unit="pF" bold
               src={ovr.snubber_cs_pf != null ? 'ovr' : 'auto'}
-              tip="Cs ≈ 3× Coss. Snubber cap is sized significantly larger than MOSFET Coss to aggressively collapse the ringing frequency." />
+              tip={`Formula: Cs = ${fv(snub.coss_pf != null ? Math.round(snub.coss_pf) : '?')}pF (Coss) × N, snapped to nearest E12. Meaning: Snubber cap sized significantly larger than MOSFET Coss so it can fully absorb the Coss discharge energy each switching cycle.`} />
             <Row label="Cs V-rating" value={fv(snub.snubber_cap_v_rating)} unit="V" src="auto" 
-              tip="V_rating_min = (Vbus + V_over) × Safety Multiplier" />
+              tip="Formula: V_rating = (V_peak + V_overshoot) × Safety_Multiplier. Meaning: The capacitor must withstand the absolute worst-case switch-node voltage, including the inductive overshoot transient." />
             <Row label="Total power" value={fmtNum(snub.p_total_all_snubbers_w, 3)} unit="W" src="auto"
-              tip="P_total = N_snubbers × (½ × C_snub × V_peak² × fsw). The high-frequency heat violently burned by these Resistors!" />
+              tip="Formula: P_total = N_fets × ½ × Cs × V_sw_peak² × fsw. Meaning: Each cycle the snubber cap charges to V_peak+V_overshoot, then dumps all that energy as heat into Rs." />
           </div>
         </>}
       />
@@ -947,19 +952,27 @@ export default function PassivesPanel() {
             {/* Mini circuit diagram — uses specs (always available, no calc needed) */}
             <div style={{ fontSize:10, fontFamily:'var(--font-mono)', color:'var(--txt-4)',
               background:'var(--bg-3)', borderRadius:5, padding:'5px 8px', lineHeight:1.8 }}>
-              +{specs.bus_voltage ?? '??'}V Bus (V_peak for OVP sizing)<br/>
+              +{specs.bus_voltage ?? '??'}V Bus & TVS Clamp<br/>
               {'  '}│<br/>
               {'  '}[R1 — top resistor, you set this]<br/>
-              {'  '}│◄── Comparator input (= V_ADC_ref when tripping)<br/>
-              {'  '}[R2 — auto-calculated by tool]<br/>
+              {'  '}├────► ADC/Comparator input (V_trip = V_ADC_ref)<br/>
               {'  '}│<br/>
+              {'  '}├──[Cf]──┐ (Filter Capacitor, Optional)<br/>
+              {'  '}│        │<br/>
+              {'  '}[R2]     │ (R2: yours or auto-calculated)<br/>
+              {'  '}│        │<br/>
+              {'  '}┴────────┴<br/>
               {'  '}GND
             </div>
           </div>
           <OvrField label="Divider R1 (Top)" unit="kΩ"
             value={ovr.prot_r1_kohm ?? ''} defaultVal={100}
             onChange={v => setOvr('prot_r1_kohm', v)} onReset={() => resetOvr('prot_r1_kohm')}
-            note="R2 auto-calculated from bus voltage & ADC ref" />
+            note="Top resistor of the voltage divider. R2 auto-calculated unless you override it below." />
+          <OvrField label="Divider R2 (Bottom)" unit="kΩ"
+            value={ovr.prot_r2_kohm ?? ''}
+            onChange={v => setOvr('prot_r2_kohm', v)} onReset={() => resetOvr('prot_r2_kohm')}
+            note="Blank = auto-select E24 standard value. Enter your physical board R2 to back-calculate actual trip voltage via: V_trip = V_ref × (R1+R2)/R2." />
 
           {/* ── NTC Thermistor ── */}
           <div style={fullSpan}>
@@ -1013,14 +1026,31 @@ export default function PassivesPanel() {
             textTransform:'uppercase', marginBottom:4 }}>Over-Voltage Protection (OVP)</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px', marginBottom:6 }}>
             <Row label="Trip voltage" value={fmtNum(prot.ovp?.trip_voltage_v, 1)} unit="V" bold src="auto"
-              tip="Bus voltage at which OVP comparator fires and kills PWM" />
-            <Row label="Actual trip" value={fmtNum(prot.ovp?.actual_trip_v, 1)} unit="V" src="auto"
-              tip="Recalculated from standard E24 R2 value — may differ slightly from target" />
-            <Row label="R1 (top)" value={fmtNum(prot.ovp?.r1_kohm, 0)} unit="kΩ" src={ovr.prot_r1_kohm != null ? 'ovr' : 'auto'} />
-            <Row label="R2 (bottom)" value={fmtNum(prot.ovp?.r2_standard_kohm, 2)} unit="kΩ" bold src="auto"
-              tip="R2 = R1 × V_ADC_ref / (V_OVP_trip − V_ADC_ref), snapped to E24" />
+              tip="Definition: The absolute maximum threshold. If bus voltage reaches this, the protection circuit immediately disables the inverter to prevent MOSFET avalanche failure." />
+            <Row label="Actual trip" value={fmtNum(prot.ovp?.actual_trip_v, 2)} unit="V" 
+              src={prot.ovp?.r2_is_override ? 'ovr' : 'auto'}
+              bold={!!prot.ovp?.r2_is_override}
+              color={prot.ovp?.r2_is_override ? '#ffab00' : undefined}
+              tip={prot.ovp?.r2_is_override
+                ? `Formula: V_trip = V_ref × (R1+R2)/R2 = ${fmtNum(prot.ovp?.actual_trip_v,2)}V. Meaning: The exact trip voltage computed from your physical board components.`
+                : 'Meaning: The exact trip voltage given the standard E24 resistors. May differ slightly from the ideal target due to resistor value snapping.'} />
+            <Row label="R1 (top)" value={fmtNum(prot.ovp?.r1_kohm, 0)} unit="kΩ" src={ovr.prot_r1_kohm != null ? 'ovr' : 'auto'}
+              tip="Definition: Top resistor of the voltage divider network. Connects directly to the high voltage bus." />
+            <Row label="R2 (bottom)" value={fmtNum(prot.ovp?.r2_standard_kohm, 2)} unit="kΩ" bold
+              src={prot.ovp?.r2_is_override ? 'ovr' : 'auto'}
+              tip={prot.ovp?.r2_is_override
+                ? `Meaning: You have manually completely defined the divider circuit.`
+                : 'Formula: R2 = R1 × V_ref / (V_trip - V_ref). Meaning: Auto-selected bottom resistor, snapped to nearest E24 standard value.'} />
+            <Row label="Filter capacitor (C_f)" value={fmtNum(prot.ovp?.c_filter_nf, 1)} unit="nF" src="auto"
+              tip={`Formula: C_f = 1 / (2π × R_eq × F_c).\nMeaning: Standard E12 capacitor that forms an RC low-pass filter with R1||R2. Targets ~2kHz cutoff to reject 20kHz PWM noise without delaying the OVP trip response.`} />
+            <Row label="RC cutoff freq" value={fmtNum(prot.ovp?.f_cutoff_hz, 0)} unit="Hz" src="auto"
+              tip={`Meaning: The actual low-pass edge frequency achieved using the snapped ${fmtNum(prot.ovp?.c_filter_nf, 1)}nF capacitor.`} />
+            <Row label="TVS stand-off (V_RWM)" value={fmtNum(prot.ovp?.tvs_v_rwm_suggested, 1)} unit="V" bold src="auto"
+              tip="Formula: 1.05 × V_ovp_trip. Meaning: Recommended Working Peak Reverse Voltage for a bus clamping TVS diode. Sized exactly 5% above the OVP threshold so it never conducts during normal operation." />
+            <Row label="TVS clamp (V_c)" value={fmtNum(prot.ovp?.tvs_v_clamp_typ, 1)} unit="V" src="auto"
+              tip="Formula: ~1.6 × V_RWM. Meaning: The typical maximum voltage the bus will spike to during a severe overvoltage transient before the TVS fully absorbs the energy." />
             <Row label="Divider current" value={fmtNum(prot.ovp?.divider_current_ua, 1)} unit="µA" src="auto"
-              tip="Quiescent current through R1+R2 at bus voltage — keep < 100µA" />
+              tip="Definition: Quiescent leakage current constantly flowing through R1+R2. Should be kept < 100µA to prevent unnecessary standby power dissipation." />
           </div>
 
           {/* ── UVP ── */}
@@ -1028,13 +1058,27 @@ export default function PassivesPanel() {
             textTransform:'uppercase', marginBottom:4 }}>Under-Voltage Protection (UVP)</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px', marginBottom:6 }}>
             <Row label="Trip voltage" value={fmtNum(prot.uvp?.trip_voltage_v, 1)} unit="V" bold src="auto"
-              tip="Bus voltage at which UVP fires — below this the bridge is disabled" />
+              tip="Definition: Under-voltage lockout threshold. Below this voltage, the inverter shuts down to prevent control logic and gate drive misbehavior." />
+            <Row label="Actual trip" value={fmtNum(prot.uvp?.actual_trip_v, 2)} unit="V"
+              src={prot.uvp?.r2_is_override ? 'ovr' : 'auto'}
+              bold={!!prot.uvp?.r2_is_override}
+              color={prot.uvp?.r2_is_override ? '#ffab00' : undefined}
+              tip={prot.uvp?.r2_is_override
+                ? `Formula: V_trip = V_ref × (R1+R2)/R2 = ${fmtNum(prot.uvp?.actual_trip_v,2)}V. Meaning: The exact trip voltage computed from your physical board components.`
+                : 'Meaning: The exact trip voltage given the standard E24 resistors. May differ slightly from the ideal target due to resistor value snapping.'} />
             <Row label="Hysteresis" value={fmtNum(prot.uvp?.hysteresis_voltage_v, 1)} unit="V" src="auto"
-              tip="Bus must recover above this level to re-enable the gate driver" />
+              tip="Definition: The voltage the bus must recover to before the system is re-enabled. Prevents rapid on/off oscillation at the trip edge boundary." />
             <Row label="R1 (top, shared)" value={fmtNum(prot.uvp?.r1_kohm, 0)} unit="kΩ" src={ovr.prot_r1_kohm != null ? 'ovr' : 'auto'}
-              tip="Same R1 as OVP divider — only R2 differs to set a lower threshold" />
-            <Row label="R2 (bottom)" value={fmtNum(prot.uvp?.r2_standard_kohm, 2)} unit="kΩ" bold src="auto"
-              tip="R2_uvp = R1 × V_ADC_ref / (V_UVP_trip − V_ADC_ref), snapped to E24" />
+              tip="Definition: Uses the exact same physical R1 value as the OVP divider. The difference in trip threshold is achieved entirely by using a different R2 value." />
+            <Row label="R2 (bottom)" value={fmtNum(prot.uvp?.r2_standard_kohm, 2)} unit="kΩ" bold
+              src={prot.uvp?.r2_is_override ? 'ovr' : 'auto'}
+              tip={prot.uvp?.r2_is_override
+                ? 'Meaning: You have manually completely defined the divider circuit.'
+                : 'Formula: R2_uvp = R1 × V_ref / (V_trip - V_ref). Meaning: Auto-selected bottom resistor, snapped to nearest E24 standard value.'} />
+            <Row label="Filter capacitor (C_f)" value={fmtNum(prot.uvp?.c_filter_nf, 1)} unit="nF" src="auto"
+              tip={`Formula: C_f = 1 / (2π × R_eq × F_c).\nMeaning: Standard E12 capacitor that forms a ~2kHz RC low-pass filter with R1||R2.`} />
+            <Row label="RC cutoff freq" value={fmtNum(prot.uvp?.f_cutoff_hz, 0)} unit="Hz" src="auto"
+              tip={`Meaning: The actual low-pass edge frequency achieved using the snapped ${fmtNum(prot.uvp?.c_filter_nf, 1)}nF capacitor.`} />
           </div>
 
           {/* ── OCP ── */}
@@ -1042,9 +1086,9 @@ export default function PassivesPanel() {
             textTransform:'uppercase', marginBottom:4 }}>Over-Current Protection (OCP)</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px', marginBottom:6 }}>
             <Row label="Hardware trip" value={fmtNum(prot.ocp?.hw_threshold_a, 0)} unit="A" bold src="auto"
-              tip="I_ocp_hw = 1.5× I_max — driver IC latches off within 1µs via current sense pin" />
+              tip="Formula: I_ocp_hw = 1.5 × I_max. Definition: Absolute max limit. The driver IC latches off within ~1µs when the analog current sense pin crosses this threshold." />
             <Row label="Software trip" value={fmtNum(prot.ocp?.sw_threshold_a, 0)} unit="A" src="auto"
-              tip="I_ocp_sw = 1.25× I_max — MCU firmware interrupt disables PWM within ~10µs" />
+              tip="Formula: I_ocp_sw = 1.25 × I_max. Definition: Soft limit handled via MCU firmware interrupt. Used to safely disable PWM linearly (~10µs response) before hitting hardware protection limits." />
           </div>
 
           {/* ── NTC / OTP ── */}
