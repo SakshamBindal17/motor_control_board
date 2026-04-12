@@ -625,11 +625,15 @@ export default function PassivesPanel() {
           <OvrField label="Max Droop" unit="V"
             value={ovr.bootstrap_droop_v ?? ''} defaultVal={0.5}
             onChange={v => setOvr('bootstrap_droop_v', v)} onReset={() => resetOvr('bootstrap_droop_v')}
-            note="Sets minimum C_boot size" />
+            note="Overrides calculation. Sets static voltage drop allowed while HS is holding on." />
           <OvrField label="C_boot V-Rating" unit="V"
             value={ovr.cboot_v_rating_v ?? ''} defaultVal={25}
             onChange={v => setOvr('cboot_v_rating_v', v)} onReset={() => resetOvr('cboot_v_rating_v')}
-            note="≥ 2× Vdrv for derating" />
+            note="Overrides safety rule. ≥ 2× Vdrv recommended to combat MLCC DC-bias derating." />
+          <OvrField label="Rg_bootstrap" unit="Ω"
+            value={ovr.rg_bootstrap_ohm ?? ''} defaultVal={10}
+            onChange={v => setOvr('rg_bootstrap_ohm', v)} onReset={() => resetOvr('rg_bootstrap_ohm')}
+            note="Overrides base 10Ω limit. Protects bootstrap diode from massive initial inrush currents." />
           {/* Reverse calculator */}
           <div style={{ ...fullSpan, paddingTop:4, borderTop:'1px solid rgba(255,255,255,.06)' }}>
             <div style={{ fontSize:10, fontWeight:700, color:'#00d4e8', letterSpacing:'.5px',
@@ -661,22 +665,27 @@ export default function PassivesPanel() {
         </>}
         results={<>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
+            <Row label="Rg_bootstrap" value={fmtNum(bcap.r_boot_series_ohm, 1)} unit="Ω" bold src={ovr.rg_bootstrap_ohm != null ? 'ovr': 'auto'}
+              tip="Resistor in series with the bootstrap diode. Limits initial charging inrush spike (I = (Vdrv - Vdrop) / Rg_boot) when LS turns on." />
             <Row label="C_boot required (per phase)" value={fmtNum(bcap.c_boot_calculated_nf, 1)} unit="nF" src="auto"
-              tip="C_boot = Qg / ΔV_droop — calculated for ONE capacitor. Install 1 per high-side switch." />
+              tip="C_boot_min = Qg / ΔV_droop — Exact mathematical minimum capacitance needed to keep the HS gate open through one cycle." />
             <Row label="C_boot ×10 (recommended)" value={fmtNum(bcap.c_boot_calculated_nf != null ? bcap.c_boot_calculated_nf * 10 : null, 0)} unit="nF" bold src="auto"
-              tip="10× C_boot_required — standard design practice for reliable bootstrap refresh under worst-case leakage" />
+              tip="Safety margin calculation: 10× minimum. This combats real-world DC-bias capacitance drop, temperature degradation, and driver quiescent leakage." />
             <Row label="C_boot chosen (per phase)" value={fmtNum(bcap.c_boot_recommended_nf, 0)} unit="nF" bold
               src={ovr.bootstrap_droop_v != null ? 'ovr' : 'auto'}
-              tip="Rounded to next E12 value above required. You install this value × number of phases." />
+              tip="Snaps the recommendation up to the nearest purchasable E12 component size." />
             <Row label="V-rating" value={fv(bcap.c_boot_v_rating_v)} unit="V"
               src={ovr.cboot_v_rating_v != null ? 'ovr' : 'auto'} />
             <Row label="Quantity" value={fv(bcap.c_boot_qty)} unit={`pcs (1 per HS switch)`} src="auto"
-              tip="Fixed by topology: 1 bootstrap cap per high-side MOSFET. Cannot be changed by the user." />
+              tip="Topology constraint: Exactly 1 bootstrap capacitor is mechanically required per phase limb." />
             <Row label="V_boot" value={fmtNum(bcap.v_bootstrap_v, 2)} unit="V" src="auto"
-              tip="V_boot = Vcc - Vd_boot - Vf (diode forward drop)" />
-            <Row label="Min HS on-time" value={fmtNum(bcap.min_hs_on_time_ns, 1)} unit="ns" bold src="auto"
-              tip="t_on_min = C_boot × ΔV_droop / I_charge_avg" />
-            <Row label="Hold time" value={fmtNum(bcap.bootstrap_hold_time_ms, 1)} unit="ms" src="auto" />
+              tip="V_boot = Vcc - Vd_boot_diode. This is the maximum voltage the capacitor can physically reach." />
+            <Row label="Initial Pre-Charge" value={fmtNum(bcap.boot_precharge_us, 1)} unit="µs" bold src="auto"
+              tip="t_precharge = 3 × Rg_boot × C_boot. Long pulse required at startup (from 0V) before PWM begins." />
+            <Row label="Min Refresh Time" value={fmtNum(bcap.min_refresh_us, 3)} unit="µs" bold src="auto"
+              tip="t_refresh = Qg × Rg_boot / ΔV_droop. Short pulse required every PWM cycle to replenish lost gate charge." />
+            <Row label="Hold time" value={fmtNum(bcap.bootstrap_hold_time_ms, 1)} unit="ms" src="auto" 
+              tip="t_hold = (C_boot × ΔV_droop) / I_leakage. Maximum Time the High-Side can stay constantly ON." />
           </div>
         </>}
       />
@@ -768,17 +777,19 @@ export default function PassivesPanel() {
           <OvrField label="Stray L (Loop)" unit="µH" min={0.0001} step={0.001}
             value={ovr.stray_inductance_nh != null ? +(ovr.stray_inductance_nh / 1000).toFixed(4) : ''} defaultVal={0.010}
             onChange={v => setOvr('stray_inductance_nh', v !== '' ? +(parseFloat(v) * 1000).toFixed(4) : '')} onReset={() => resetOvr('stray_inductance_nh')}
-            note="Physical layout parasitic loop inductance" />
+            note="Physical PCB parasitic layout loop inductance (the root cause of ringing)" />
           <OvrField label="Rs Override" unit="Ω" min={0.1}
             value={ovr.snubber_rs_ohm ?? ''}
             onChange={v => setOvr('snubber_rs_ohm', v)} onReset={() => resetOvr('snubber_rs_ohm')}
-            note="Blank = critical damping calc" />
+            note="Overrides damping resistor (Rs). Blank = auto calculate for Critical Damping." />
           <OvrField label="Cs Override" unit="pF" min={1}
             value={ovr.snubber_cs_pf ?? ''}
-            onChange={v => setOvr('snubber_cs_pf', v)} onReset={() => resetOvr('snubber_cs_pf')} />
+            onChange={v => setOvr('snubber_cs_pf', v)} onReset={() => resetOvr('snubber_cs_pf')} 
+            note="Overrides calculated snubber capacitor. Blank = auto size (3× Coss)." />
           <OvrField label="Cap V Mult" unit="× Vpeak"
             value={ovr.snubber_v_mult ?? ''} defaultVal={2.0}
-            onChange={v => setOvr('snubber_v_mult', v)} onReset={() => resetOvr('snubber_v_mult')} />
+            onChange={v => setOvr('snubber_v_mult', v)} onReset={() => resetOvr('snubber_v_mult')} 
+            note="Safety margin multiplier for the snubber capacitor's Voltage Rating." />
         </>}
         results={<>
           {/* ── Topology badge ── */}
@@ -847,18 +858,20 @@ export default function PassivesPanel() {
           )}
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="Stray L" value={fmtNum(snub.stray_inductance_nh != null ? snub.stray_inductance_nh / 1000 : null, 4)} unit="µH"
-              src={ovr.stray_inductance_nh != null ? 'ovr' : 'auto'} />
+              src={ovr.stray_inductance_nh != null ? 'ovr' : 'auto'} 
+              tip="Parasitic Loop Inductance. The core geometric cause of all voltage ringing and EMI." />
             <Row label="Overshoot" value={fmtNum(snub.voltage_overshoot_v, 1)} unit="V" src="auto"
-              tip="V_over = I_peak × √(L_stray/Cs) — resonant overshoot" />
+              tip="V_over = I_peak × √(L_stray / Coss). The deadly transient voltage spike threatening your MOSFET." />
             <Row label="Rs" value={fv(snub.rs_recommended_ohm)} unit="Ω" bold
               src={ovr.snubber_rs_ohm != null ? 'ovr' : 'auto'}
-              tip="Rs = ½√(L/Cs) — critical damping resistor" />
+              tip="Rs = √(L_stray / C_snub). The 'Critical Damping' resistor. Absorbs energy as heat to stop oscillations." />
             <Row label="Cs" value={fmtNum(snub.cs_recommended_pf, 0)} unit="pF" bold
               src={ovr.snubber_cs_pf != null ? 'ovr' : 'auto'}
-              tip="Cs = L_stray / Rs² — resonant snubber capacitor" />
-            <Row label="Cs V-rating" value={fv(snub.snubber_cap_v_rating)} unit="V" src="auto" />
+              tip="Cs ≈ 3× Coss. Snubber cap is sized significantly larger than MOSFET Coss to aggressively collapse the ringing frequency." />
+            <Row label="Cs V-rating" value={fv(snub.snubber_cap_v_rating)} unit="V" src="auto" 
+              tip="V_rating_min = (Vbus + V_over) × Safety Multiplier" />
             <Row label="Total power" value={fmtNum(snub.p_total_all_snubbers_w, 3)} unit="W" src="auto"
-              tip="P = 6 × ½×Cs×V²×fsw for a 3-phase inverter" />
+              tip="P_total = N_snubbers × (½ × C_snub × V_peak² × fsw). The high-frequency heat violently burned by these Resistors!" />
           </div>
         </>}
       />

@@ -202,7 +202,7 @@ class GateDriveMixin:
         hs = _calc_leg("High-Side", hs_rg_on_manual, hs_rg_off_manual, True)
         ls = _calc_leg("Low-Side", ls_rg_on_manual, ls_rg_off_manual, False)
 
-        rg_boot = self._dc("gate.rg_bootstrap")
+        rg_boot = float(self.ovr.get("rg_bootstrap_ohm", self._dc("gate.rg_bootstrap")))
 
         result = {
             "hs_rg_on_ohm": hs["rg_on_recommended_ohm"],
@@ -301,11 +301,18 @@ class GateDriveMixin:
 
         # Minimum high-side on-time to refresh bootstrap
         # C_boot must recharge through R_boot(10Ω) from supply
-        r_boot   = self._dc("gate.rg_bootstrap")
+        r_boot = float(self.ovr.get("rg_bootstrap_ohm", self._dc("gate.rg_bootstrap")))
         self.audit_log.append(f"[Bootstrap] Series bootstrap resistor = {r_boot}Ω.")
         self._log_hc("bootstrap_cap", "Series boot resistor", f"{r_boot} Ω", "Limits peak charging current", "gate.rg_bootstrap")
         tau_boot = r_boot * c_std_nf * 1e-9   # RC time constant
-        t_min_on_ns = 3 * tau_boot * 1e9       # 3τ to charge to ~95%
+        
+        # 1. Initial Pre-Charge Time (startup from 0V to ~95%)
+        t_precharge_us = (3 * tau_boot) * 1e6
+        
+        # 2. Recurring Refresh Time (replenishing Qg and leakage per cycle)
+        # The driving voltage difference is strictly the droop. I_charge = droop / R_boot.
+        # Time to replenish Qg = Qg / I_charge = Qg * R_boot / droop.
+        t_refresh_us = (qg * r_boot / droop) * 1e6
 
         # Bootstrap leakage budget
         # Try extracting Idd(quiescent) from driver datasheet, plus physical gate leakage (~1µA)
@@ -328,17 +335,18 @@ class GateDriveMixin:
         return {
             "c_boot_calculated_nf":     round(c_boot_nf,    1),
             "c_boot_recommended_nf":    c_std_nf,
-            "c_boot_v_rating_v":        25,
+            "c_boot_v_rating_v":        int(self.ovr.get("cboot_v_rating_v", 25)),
             "c_boot_dielectric":        "X7R MLCC",
             "c_boot_qty":               int(self.num_fets // 2),  # 1 per high-side switch; fixed by topology
             "v_bootstrap_v":            round(v_boot,       2),
             "bootstrap_diode":          "B0540W (40V/500mA Schottky)",
             "r_boot_series_ohm":        r_boot,
-            "min_hs_on_time_ns":        round(t_min_on_ns,  1),
+            "boot_precharge_us":        round(t_precharge_us, 1),
+            "min_refresh_us":           round(t_refresh_us, 3),
             "bootstrap_hold_time_ms":   round(t_hold_ms,    1),
             "notes": {
                 "100pct_duty":   "100% duty cycle requires external charge pump or VCC regulator",
-                "refresh":       f"High-side must turn ON ≥ {round(t_min_on_ns,0):.0f}ns per PWM cycle",
+                "refresh":       f"High-side must turn ON ≥ {round(t_refresh_us,3):.3f}µs per PWM cycle",
                 "derating":      "Use 25V cap at 12V drive — only 50% voltage derating",
             },
             "_meta": self._module_meta.get("bootstrap_cap", {"hardcoded": [], "fallbacks": []}),
