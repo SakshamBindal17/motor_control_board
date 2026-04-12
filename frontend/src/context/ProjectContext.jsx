@@ -212,6 +212,7 @@ function reducer(state, action) {
         ...state,
         project: {
           ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
           blocks: {
             ...state.project.blocks,
             [block]: {
@@ -239,6 +240,7 @@ function reducer(state, action) {
         ...state,
         project: {
           ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
           blocks: {
             ...state.project.blocks,
             [block]: {
@@ -331,6 +333,7 @@ function reducer(state, action) {
         ...state,
         project: {
           ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
           blocks: {
             ...state.project.blocks,
             [block]: {

@@ -229,17 +229,23 @@ class PassivesMixin:
         # ── SINGLE SHUNT ────────────────────────────────────────────────────
         if topology == "single":
             # Bidirectional sensing: target 50% ADC ref so ±Imax maps to 0..Vref
-            v_adc_target = adc_ref * 0.5
-            self._log_hc("shunt_resistors", "ADC target (single, bidir)",
-                         f"{v_adc_target} V", "50% of ADC ref — bidirectional FOC")
-            r_ideal_mohm = (v_adc_target / (i_max * csa_gain)) * 1000
+            v_adc_max_limit = adc_ref * 0.5
+            self._log_hc("shunt_resistors", "ADC limit (bidirectional)",
+                         f"{v_adc_max_limit} V", "50% of ADC ref — maximum allowable swing before clipping")
+            r_ideal_mohm = (v_adc_max_limit / (i_max * csa_gain)) * 1000
             r1_mohm_auto = 0.5 if r_ideal_mohm <= 0.75 else 1.0
             r1_mohm = _mohm_ovr("shunt_single_mohm", r1_mohm_auto)
             if "shunt_single_mohm" not in self.ovr:
                 self._log_hc("shunt_resistors", "Single shunt auto-select", f"{r1_mohm} mOhm",
                              "Snapped to 0.5 or 1.0 mOhm standard value")
+            
+            i_peak_sine = i_max * math.sqrt(2)
             v_sh_mv  = i_max * r1_mohm * 1e-3 * 1000
             v_adc    = v_sh_mv * 1e-3 * csa_gain
+            
+            # ADC Swing calculation strictly honoring Peak Sinusoidal Current
+            v_adc_swing_peak = (i_peak_sine * r1_mohm * 1e-3) * csa_gain
+            
             p_dc_w   = i_max**2 * r1_mohm * 1e-3
             p_rms_w  = (i_max / math.sqrt(2))**2 * r1_mohm * 1e-3
             bits_used = math.log2(v_adc * 1000 / lsb_mv) if v_adc > 0 else 0
@@ -248,9 +254,11 @@ class PassivesMixin:
                 "quantity":       1,
                 "location":       "DC bus low-side return (between GND and bottom FETs)",
                 "value_mohm":     r1_mohm,
-                "v_shunt_mv":     round(v_sh_mv,  2),
-                "v_adc_v":        round(v_adc,    3),
-                "v_adc_target_v": round(v_adc_target, 3),
+                "v_shunt_mv":       round(v_sh_mv,  2),
+                "v_adc_v":          round(v_adc,    3),
+                "v_adc_max_limit":  round(v_adc_max_limit, 3),
+                "v_adc_swing_peak": round(v_adc_swing_peak, 3),
+                "i_peak_sine_a":    round(i_peak_sine, 1),
                 "adc_utilisation_pct": round(v_adc / adc_ref * 100, 1),
                 "adc_bits_used":  round(bits_used, 1),
                 "power_dc_w":     round(p_dc_w,   3),
@@ -262,18 +270,24 @@ class PassivesMixin:
 
         # ── THREE-PHASE SHUNTS ──────────────────────────────────────────────
         else:
-            # Unidirectional: target 80% ADC ref to maximise dynamic range
-            v_adc_target = adc_ref * 0.8
-            self._log_hc("shunt_resistors", "ADC target (3-ph, unidir)",
-                         f"{v_adc_target} V", "80% of ADC ref — unidirectional per-phase sensing")
-            r_ideal_mohm = (v_adc_target / (i_max * csa_gain)) * 1000
+            # Bidirectional Phase sensing: target 50% ADC ref so ±Ipeak maps perfectly without clipping
+            v_adc_max_limit = adc_ref * 0.5
+            self._log_hc("shunt_resistors", "ADC limit (bidirectional)",
+                         f"{v_adc_max_limit} V", "50% of ADC ref - critical bidirectional swing limit")
+            r_ideal_mohm = (v_adc_max_limit / (i_max * csa_gain)) * 1000
             r3_mohm_auto = 0.5 if r_ideal_mohm <= 0.75 else 1.0
             r3_mohm = _mohm_ovr("shunt_three_mohm", r3_mohm_auto)
             if "shunt_three_mohm" not in self.ovr:
                 self._log_hc("shunt_resistors", "3-phase shunt auto-select", f"{r3_mohm} mOhm",
                              "Snapped to 0.5 or 1.0 mOhm standard value")
+            
+            i_peak_sine = i_max * math.sqrt(2)
             v_sh_mv  = i_max * r3_mohm * 1e-3 * 1000
             v_adc    = v_sh_mv * 1e-3 * csa_gain
+            
+            # ADC Swing calculation strictly honoring Peak Sinusoidal Current
+            v_adc_swing_peak = (i_peak_sine * r3_mohm * 1e-3) * csa_gain
+            
             p_rms_ea = (i_max / math.sqrt(2))**2 * r3_mohm * 1e-3
             bits_used = math.log2(v_adc * 1000 / lsb_mv) if v_adc > 0 else 0
             active = {
@@ -281,9 +295,11 @@ class PassivesMixin:
                 "quantity":       3,
                 "location":       "Each phase low-side MOSFET source return (U, V, W)",
                 "value_mohm":     r3_mohm,
-                "v_shunt_mv":     round(v_sh_mv,  2),
-                "v_adc_v":        round(v_adc,    3),
-                "v_adc_target_v": round(v_adc_target, 3),
+                "v_shunt_mv":       round(v_sh_mv,  2),
+                "v_adc_v":          round(v_adc,    3),
+                "v_adc_max_limit":  round(v_adc_max_limit, 3),
+                "v_adc_swing_peak": round(v_adc_swing_peak, 3),
+                "i_peak_sine_a":    round(i_peak_sine, 1),
                 "adc_utilisation_pct": round(v_adc / adc_ref * 100, 1),
                 "adc_bits_used":  round(bits_used, 1),
                 "power_rms_per_shunt_w": round(p_rms_ea, 3),

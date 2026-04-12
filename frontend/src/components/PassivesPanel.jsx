@@ -319,7 +319,7 @@ export default function PassivesPanel() {
       }, 400)
       return () => clearTimeout(timer)
     }
-  }, [stale, calcBusy, state.project.blocks.mosfet])
+  }, [stale, calcBusy, state.project.blocks.mosfet, state.project.blocks.driver, state.project.blocks.mcu])
 
   /* Bootstrap reverse */
   async function solveBootstrap() {
@@ -780,10 +780,30 @@ export default function PassivesPanel() {
               textTransform:'uppercase', marginBottom:4, borderTop:'1px solid rgba(255,255,255,.06)',
               paddingTop:6 }}>Current Sense Amplifier</div>
           </div>
-          <OvrField label="CSA Gain"
+          <OvrField label="CSA Gain Override"
             value={ovr.csa_gain_override ?? ''}
             onChange={v => setOvr('csa_gain_override', v)} onReset={() => resetOvr('csa_gain_override')}
-            note="Blank = from driver datasheet" />
+            note={(() => {
+              const driverGain = (() => {
+                try {
+                  const driverBlock = state.project.blocks.driver
+                  if (!driverBlock?.raw_data?.parameters) return null
+                  for (const p of driverBlock.raw_data.parameters) {
+                    if (p.id === 'current_sense_gain') {
+                      const sel = driverBlock.selected_params?.[p.id]
+                      if (!sel) return null
+                      const cond = p.conditions?.[sel.condition_index]
+                      if (!cond) return null
+                      return sel.override ?? cond.selected
+                    }
+                  }
+                  return null
+                } catch { return null }
+              })()
+              return driverGain != null
+                ? `← Gate Driver block: ${driverGain}× (blank = use this automatically)`
+                : 'Blank = use value from Gate Driver block'
+            })()} />
 
           {/* ── Topology-specific shunt override ── */}
           {(ovr.shunt_topology ?? 'three_phase') === 'single' ? (
@@ -797,7 +817,7 @@ export default function PassivesPanel() {
               onChange={v => setOvr('shunt_three_mohm', v)} onReset={() => resetOvr('shunt_three_mohm')} />
           )}
 
-          {/* ── RC Snubber inputs (unchanged) ── */}
+          {/* ── RC Snubber inputs ── */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#ffab00', letterSpacing:'.5px',
               textTransform:'uppercase', marginBottom:4, paddingTop:4,
@@ -814,11 +834,11 @@ export default function PassivesPanel() {
           <OvrField label="Cs Override" unit="pF" min={1}
             value={ovr.snubber_cs_pf ?? ''}
             onChange={v => setOvr('snubber_cs_pf', v)} onReset={() => resetOvr('snubber_cs_pf')} 
-            note="Overrides calculated snubber capacitor. Blank = auto size (3× Coss)." />
+            note="RC Snubber Capacitor. Auto = 3×C_oss (e.g. if Coss=200pF → Cs=600pF). Larger Cs collapses ringing frequency but increases heat: P_loss = ½Cs×V²×fsw. Blank = physics auto-sizes it." />
           <OvrField label="Cap V Mult" unit="× Vpeak"
             value={ovr.snubber_v_mult ?? ''} defaultVal={2.0}
             onChange={v => setOvr('snubber_v_mult', v)} onReset={() => resetOvr('snubber_v_mult')} 
-            note="Safety margin multiplier for the snubber capacitor's Voltage Rating." />
+            note="Voltage Rating Safety Multiplier. V_cap_min = (V_bus + V_overshoot) × Mult. Default 2.0× = 2× safety headroom above worst-case peak. Increase if your PCB has poor layout or long power traces." />
         </>}
         results={<>
           {/* ── Topology badge ── */}
@@ -860,8 +880,11 @@ export default function PassivesPanel() {
             <Row label="Qty" value={fv(shunt.active?.quantity)} unit="pcs" src="auto"
               tip={shunt.topology_mode === 'single' ? '1 shunt on DC bus return' : '1 per phase (U, V, W)'} />
             <Row label="V_shunt @ Imax" value={fmtNum(shunt.active?.v_shunt_mv, 2)} unit="mV" src="auto" />
-            <Row label="V_ADC @ Imax" value={fmtNum(shunt.active?.v_adc_v, 3)} unit="V" src="auto"
-              tip="V_ADC = V_shunt × CSA_gain" />
+            <Row label="V_AC @ I_peak" value={fmtNum(shunt.active?.v_adc_swing_peak, 3)} unit="V" src="auto" bold
+              color={shunt.active?.v_adc_swing_peak > shunt.active?.v_adc_max_limit ? '#ff4444' : '#00e676'}
+              tip="V_swing = (I_max × √2) × R_shunt × Gain. The absolute highest sinusoidal peak voltage expected." />
+            <Row label="AC Swing Limit" value={fmtNum(shunt.active?.v_adc_max_limit, 3)} unit="V" src="auto"
+              tip="Hard limit: V_ADC / 2. Current sensing output must remain below this to prevent clipping!" />
             <Row label="ADC utilisation" value={fmtNum(shunt.active?.adc_utilisation_pct, 1)} unit="%" src="auto"
               tip="% of ADC full-scale used. Target < 90% for headroom." />
             <Row label="ADC bits used" value={fmtNum(shunt.active?.adc_bits_used, 1)} unit="bits" src="auto"
