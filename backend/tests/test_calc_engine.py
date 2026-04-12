@@ -163,9 +163,9 @@ class TestCalculationEngine:
 
     def test_gate_resistors(self, engine):
         gr = engine.calc_gate_resistors()
-        assert gr["rg_on_recommended_ohm"] > 0
-        assert gr["rg_off_recommended_ohm"] > 0
-        assert gr["gate_rise_time_ns"] > 0
+        assert gr["hs_rg_on_ohm"] > 0
+        assert gr["ls_rg_off_ohm"] > 0
+        assert gr["hs_gate_rise_time_ns"] > 0
 
     def test_input_caps(self, engine):
         ic = engine.calc_input_capacitors()
@@ -380,8 +380,8 @@ class TestCalculationEngine:
             motor_specs={}, overrides={"gate_rise_time_ns": 0}
         )
         gr = e.calc_gate_resistors()
-        assert gr["rg_on_recommended_ohm"] > 0
-        assert gr["gate_rise_time_ns"] > 0
+        assert gr["hs_rg_on_ohm"] > 0
+        assert gr["hs_gate_rise_time_ns"] > 0
 
     def test_input_caps_handles_nonpositive_ripple_override(self, default_specs):
         from calc_engine import CalculationEngine

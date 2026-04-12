@@ -85,117 +85,169 @@ class GateDriveMixin:
             except (TypeError, ValueError):
                 return None
 
-        rg_on_manual  = _parse_rg((self.sys or {}).get("gate_rg_on_ohm", ""))
-        rg_off_manual = _parse_rg((self.sys or {}).get("gate_rg_off_ohm", ""))
-        manual_input  = rg_on_manual is not None and rg_off_manual is not None
+        # Fallback to older keys if user saved a project before this refactor
+        legacy_rg_on  = _parse_rg((self.sys or {}).get("rg_on_override", ""))
+        legacy_rg_off = _parse_rg((self.sys or {}).get("rg_off_override", ""))
 
-        if manual_input:
-            sizing_basis = "manual_override"
-            rg_on_std    = rg_on_manual
-            rg_on_raw    = rg_on_manual
-            rg_off_std   = rg_off_manual
-            rg_off_raw   = rg_off_manual
-            vgs_pl_eff   = vgs_pl if (vgs_pl is not None and vgs_th + 0.1 < vgs_pl < vdrv - 0.1) else (vgs_th + 1.0)
-            vgs_pl_eff   = max(vgs_th + 0.2, min(vgs_pl_eff, vdrv - 0.5))
-            self.audit_log.append(f"[Gate Drive] Manual override: Rg_on={rg_on_std}Ω, Rg_off={rg_off_std}Ω entered by user. Physics-based Rg sizing bypassed.")
-        else:
+        hs_rg_on_manual  = _parse_rg((self.sys or {}).get("hs_rg_on_override", "")) or legacy_rg_on
+        hs_rg_off_manual = _parse_rg((self.sys or {}).get("hs_rg_off_override", "")) or legacy_rg_off
+        ls_rg_on_manual  = _parse_rg((self.sys or {}).get("ls_rg_on_override", "")) or legacy_rg_on
+        ls_rg_off_manual = _parse_rg((self.sys or {}).get("ls_rg_off_override", "")) or legacy_rg_off
+
+        t_fall_target_ns = float(self.ovr.get("gate_fall_time_ns", 40))
+
+        def _calc_leg(name, rg_on_manual, rg_off_manual, is_hs: bool):
+            manual_input = rg_on_manual is not None and rg_off_manual is not None
+            vgs_pl_eff = vgs_pl if (vgs_pl is not None and vgs_th + 0.1 < vgs_pl < vdrv - 0.1) else (vgs_th + 1.0)
+            vgs_pl_eff = max(vgs_th + 0.2, min(vgs_pl_eff, vdrv - 0.5))
+
+            if manual_input:
+                sizing_basis = "manual_override"
+                rg_on_std    = rg_on_manual
+                rg_on_raw    = rg_on_manual
+                rg_off_std   = rg_off_manual
+                rg_off_raw   = rg_off_manual
+                if is_hs:
+                    self.audit_log.append(f"[Gate Drive] HS Manual override: Rg_on={rg_on_std}Ω, Rg_off={rg_off_std}Ω.")
+            else:
+                if use_miller_basis:
+                    rg_total_from_time = (vdrv - vgs_pl_eff) / (qgd / t_rise)
+                    rg_drv_min         = (vdrv - vgs_pl_eff) / io_src
+                    sizing_basis = "miller_charge"
+                else:
+                    rg_total_from_time = (vdrv - vgs_th) / (qg / t_rise)
+                    rg_drv_min         = (vdrv - vgs_th) / io_src
+                    sizing_basis = "total_qg_fallback"
+
+                rg_total_on = max(rg_total_from_time, rg_drv_min)
+                rg_on_raw   = max(rg_total_on - rg_int, 0.1)
+                rg_on_std   = _nearest_e(rg_on_raw)
+                
+                # Auto-size Rg_off
+                crss = self._get(self.mosfet, "MOSFET", "crss", None)
+                ciss = self._get(self.mosfet, "MOSFET", "ciss", None)
+                cgs  = ciss - crss if ciss and crss and ciss > crss else None
+
+                if crss and cgs:
+                    # Shoot-through protection: standard physical heuristic
+                    miller_ratio_limit = (cgs / crss) * rg_on_std * 0.7
+                    
+                    # Also respect t_fall_target
+                    if use_miller_basis:
+                        rg_off_target = (t_fall_target_ns * 1e-9) * vgs_pl_eff / qgd
+                    else:
+                        rg_off_target = (t_fall_target_ns * 1e-9) * vgs_th / qg
+                    rg_off_target -= rg_int
+                    
+                    rg_off_raw = min(rg_on_std * 0.9, miller_ratio_limit, max(0.1, rg_off_target))
+                else:
+                    rg_off_raw  = rg_on_std * 0.5
+                
+                rg_off_std  = _nearest_e(rg_off_raw)
+                rg_off_min  = (vgs_pl_eff / io_snk) if use_miller_basis else (vdrv / io_snk)
+                if rg_off_std < rg_off_min:
+                    rg_off_std = _nearest_e(rg_off_min)
+
+            rg_on_total  = rg_on_std + rg_int
+            rg_off_total = rg_off_std + rg_int
+
             if use_miller_basis:
-                rg_total_from_time = (vdrv - vgs_pl_eff) / (qgd / t_rise)
-                rg_drv_min         = (vdrv - vgs_pl_eff) / io_src
-                sizing_basis = "miller_charge"
+                t_rise_actual_ns = (rg_on_total * qgd / max(vdrv - vgs_pl_eff, 0.2)) * 1e9
+                t_fall_actual_ns = (rg_off_total * qgd / max(vgs_pl_eff, 0.2)) * 1e9
             else:
-                rg_total_from_time = (vdrv - vgs_th) / (qg / t_rise)
-                rg_drv_min         = (vdrv - vgs_th) / io_src
-                sizing_basis = "total_qg_fallback"
+                t_rise_actual_ns = (rg_on_total * qg / max(vdrv - vgs_th, 0.2)) * 1e9
+                t_fall_actual_ns = (rg_off_total * qg / max(vgs_th, 0.2)) * 1e9
+                
+            # Dual dV/dt (Improvement 5)
+            dv_dt_bus = 0 if t_rise_actual_ns <= 0 else self.v_bus / (t_rise_actual_ns * 1e-9) / 1e6
+            v_peak = getattr(self, "v_peak", self.v_bus * 1.5)
+            dv_dt_peak = 0 if t_rise_actual_ns <= 0 else v_peak / (t_rise_actual_ns * 1e-9) / 1e6
 
-            rg_total_on        = max(rg_total_from_time, rg_drv_min)
-            rg_on_raw          = max(rg_total_on - rg_int, 0.1)  # external Rg = total - internal
-            rg_on_std          = _nearest_e(rg_on_raw)
-            if rg_int > 0:
-                self.audit_log.append(f"[Gate Drive] Accounted for Rg_int={rg_int:.1f}Ω from MOSFET datasheet. Rg_ext = Rg_total - Rg_int.")
-
-            # Auto-size Rg_off using Miller shoot-through prevention (Cgd/Cgs ratio)
-            crss = self._get(self.mosfet, "MOSFET", "crss", None)
-            ciss = self._get(self.mosfet, "MOSFET", "ciss", None)
-            cgs  = ciss - crss if ciss and crss and ciss > crss else None
-
-            if crss and cgs:
-                # Shoot-through criteria: Rg_off_total < Vth / (Cgd * dV/dt)
-                # Standard physical heuristic limit: Rg_off < (Cgs / Cgd) * Rgon
-                miller_ratio_limit = (cgs / crss) * rg_on_std * 0.7  # 30% margin
-                rg_off_raw = min(rg_on_std * 0.9, miller_ratio_limit)
-                self.audit_log.append(f"[Gate Drive] Sized Rg_off ({rg_off_raw:.1f}Ω) dynamically using Miller ratio Cgs/Cgd ({cgs*1e12:.0f}pF/{crss*1e12:.0f}pF) to prevent dV/dt shoot-through.")
-            else:
-                rg_off_ratio = 0.5
-                rg_off_raw  = rg_on_std * rg_off_ratio
-                self.audit_log.append("[Gate Drive] Miller capacitances missing. Assumed Rg_off = 0.5 × Rg_on ratio.")
+            # Switching loss (Improvement 4)
+            n_parallel = max(1.0, float(self.num_fets) / 6.0)
+            i_load = self.i_max / n_parallel
+            e_on = 0.5 * self.v_bus * i_load * (t_rise_actual_ns * 1e-9)
+            e_off = 0.5 * self.v_bus * i_load * (t_fall_actual_ns * 1e-9)
+            p_sw = (e_on + e_off) * self.fsw
             
-            rg_off_std  = _nearest_e(rg_off_raw)
-            rg_off_min  = (vgs_pl_eff / io_snk) if use_miller_basis else (vdrv / io_snk)
-            if rg_off_std < rg_off_min:
-                rg_off_std = _nearest_e(rg_off_min)
+            # Peak gate currents (Improvement 5)
+            i_peak_on = (vdrv - vgs_pl_eff) / rg_on_total if use_miller_basis else (vdrv - vgs_th) / rg_on_total
+            i_peak_off = vgs_pl_eff / rg_off_total if use_miller_basis else vgs_th / rg_off_total
+
+            # Resistor power dissipation
+            p_gate_total = qg * vdrv * self.fsw
+            rg_path = ((rg_on_std + rg_off_std) / 2) + rg_int
+            rg_fraction = ((rg_on_std + rg_off_std) / 2) / rg_path if rg_path > 0 else 0.5
+            p_per_rg = p_gate_total * rg_fraction
+
+            return {
+                "rg_on_recommended_ohm": rg_on_std,
+                "rg_off_recommended_ohm": rg_off_std,
+                "gate_rise_time_ns": round(t_rise_actual_ns, 1),
+                "gate_fall_time_ns": round(t_fall_actual_ns, 1),
+                "dv_dt_bus": round(dv_dt_bus, 1),
+                "dv_dt_peak": round(dv_dt_peak, 1),
+                "e_on_uj": round(e_on * 1e6, 2),
+                "e_off_uj": round(e_off * 1e6, 2),
+                "p_sw_w": round(p_sw, 2),
+                "i_peak_on_a": round(i_peak_on, 2),
+                "i_peak_off_a": round(i_peak_off, 2),
+                "rg_power_w": round(p_per_rg, 4),
+                "manual_rg_input": manual_input,
+                "sizing_basis": sizing_basis,
+                "rg_on_total_ohm": round(rg_on_total, 2),
+                "rg_off_total_ohm": round(rg_off_total, 2),
+            }
+
+        hs = _calc_leg("High-Side", hs_rg_on_manual, hs_rg_off_manual, True)
+        ls = _calc_leg("Low-Side", ls_rg_on_manual, ls_rg_off_manual, False)
 
         rg_boot = self._dc("gate.rg_bootstrap")
-        self.audit_log.append(f"[Gate Drive] Bootstrap gate resistor (Rg_boot) = {rg_boot}Ω.")
-        self._log_hc("gate_resistors", "Rg_bootstrap", f"{rg_boot} Ω", "Limits peak bootstrap diode charging current", "gate.rg_bootstrap")
-
-        # Actual switching times use total Rg (external + internal)
-        rg_on_total  = rg_on_std + rg_int
-        rg_off_total = rg_off_std + rg_int
-
-        if use_miller_basis:
-            t_rise_actual_ns = (rg_on_total * qgd / max(vdrv - vgs_pl_eff, 0.2)) * 1e9
-            t_fall_actual_ns = (rg_off_total * qgd / max(vgs_pl_eff, 0.2)) * 1e9
-        else:
-            t_rise_actual_ns = (rg_on_total * qg / max(vdrv - vgs_th, 0.2)) * 1e9
-            t_fall_actual_ns = (rg_off_total * qg / max(vdrv, 0.2)) * 1e9
-
-        dv_dt            = 0 if t_rise_actual_ns <= 0 else self.v_peak / (t_rise_actual_ns * 1e-9) / 1e6
-
-        p_gate_total = qg * vdrv * self.fsw   # total gate drive power per MOSFET
-        # Power split: Rg_ext / (Rg_ext + Rg_int) — driver output impedance lumped into Rg_int
-        rg_ext_avg  = (rg_on_std + rg_off_std) / 2
-        rg_path     = rg_ext_avg + rg_int
-        rg_fraction = rg_ext_avg / rg_path if rg_path > 0 else 0.5
-        p_per_rg = p_gate_total * rg_fraction
 
         result = {
-            "rg_on_calculated_ohm":     round(rg_on_raw,          2),
-            "rg_on_recommended_ohm":    rg_on_std,
-            "rg_off_calculated_ohm":    round(rg_off_raw,         2),
-            "rg_off_recommended_ohm":   rg_off_std,
-            "rg_internal_ohm":          round(rg_int, 2) if rg_int > 0 else None,
-            "rg_on_total_ohm":          round(rg_on_total, 2),
-            "rg_off_total_ohm":         round(rg_off_total, 2),
-            "rg_bootstrap_ohm":         rg_boot,
-            "gate_rise_time_ns":        round(t_rise_actual_ns,   1),
-            "gate_fall_time_ns":        round(t_fall_actual_ns,   1),
-            "dv_dt_v_per_us":           round(dv_dt,              1),
-            "driver_source_current_a":  round(io_src_a,           2),
-            "driver_sink_current_a":    round(io_snk_a,           2),
-            "gate_resistor_power_w":    round(p_per_rg,           4),
-            "gate_resistor_rating":     "0.1W minimum (0402/0603)",
-            "bypass_diode_turn_off":    "1N4148 or BAT54 in parallel with Rg_off",
+            "hs_rg_on_ohm": hs["rg_on_recommended_ohm"],
+            "hs_rg_off_ohm": hs["rg_off_recommended_ohm"],
+            "ls_rg_on_ohm": ls["rg_on_recommended_ohm"],
+            "ls_rg_off_ohm": ls["rg_off_recommended_ohm"],
+            
+            "hs_gate_rise_time_ns": hs["gate_rise_time_ns"],
+            "ls_gate_rise_time_ns": ls["gate_rise_time_ns"],
+            "hs_gate_fall_time_ns": hs["gate_fall_time_ns"],
+            "ls_gate_fall_time_ns": ls["gate_fall_time_ns"],
+            
+            "hs_dv_dt_bus": hs["dv_dt_bus"],
+            "hs_dv_dt_peak": hs["dv_dt_peak"],
+            "ls_dv_dt_bus": ls["dv_dt_bus"],
+            "ls_dv_dt_peak": ls["dv_dt_peak"],
+            
+            "hs_p_sw_w": hs["p_sw_w"],
+            "ls_p_sw_w": ls["p_sw_w"],
+            
+            "hs_i_peak_on_a": hs["i_peak_on_a"],
+            "hs_i_peak_off_a": hs["i_peak_off_a"],
+            "ls_i_peak_on_a": ls["i_peak_on_a"],
+            "ls_i_peak_off_a": ls["i_peak_off_a"],
+            
+            "hs_rg_power_w": hs["rg_power_w"],
+            "ls_rg_power_w": ls["rg_power_w"],
+            
+            "rg_internal_ohm": round(rg_int, 2) if rg_int > 0 else 0,
+            "rg_bootstrap_ohm": rg_boot,
+            "sizing_basis_hs": hs["sizing_basis"],
+            "sizing_basis_ls": ls["sizing_basis"],
+            "manual_rg_input": hs["manual_rg_input"] and ls["manual_rg_input"],
+            "gate_resistor_rating": "0.1W minimum (0402/0603)",
+            "bypass_diode_turn_off": "1N4148 or BAT54 in parallel with Rg_off",
             "notes": {
-                "rg_on_basis":  (
-                    f"Qgd={qgd*1e9:.1f}nC, Vdrv={vdrv}V, Vpl={vgs_pl_eff:.2f}V, t_rise={t_rise_target_ns}ns target"
-                    if use_miller_basis else
-                    f"Qg={qg_nc:.1f}nC, Vdrv={vdrv}V, Vth={vgs_th}V, t_rise={t_rise_target_ns}ns target"
-                ) + (f", Rg_int={rg_int:.1f}Ω subtracted" if rg_int > 0 else ""),
-                "rg_off_note":  "Place Schottky diode antiparallel with Rg_off for asymmetric drive",
-                "placement":    "Mount within 10mm of gate pin, 0402/0603, shortest possible trace",
-                "emi_note":     f"dV/dt={round(dv_dt,1)} V/µs — adjust Rg_on if EMI issues arise",
+                "placement": "Mount within 10mm of gate pin, shortest possible trace",
             },
             "_meta": self._module_meta.get("gate_resistors", {"hardcoded": [], "fallbacks": []}),
         }
 
-        result["rg_sizing_basis"] = sizing_basis
         if use_miller_basis:
             result["qgd_used_nc"] = round(qgd * 1e9, 2)
-            result["vgs_plateau_used_v"] = round(vgs_pl_eff, 2)
-            if qgs is not None and qgs > 0:
-                result["qgs_extracted_nc"] = round(qgs * 1e9, 2)
-
+            result["vgs_plateau_used_v"] = round(vgs_pl, 2) if vgs_pl else None
+            
         # Add driver output timing info if available
         if drv_tr is not None:
             result["driver_rise_time_ns"] = round(drv_tr * 1e9, 1)

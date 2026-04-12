@@ -1084,8 +1084,8 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
     # ═══════════════════════════════════════════════════════════════════
     def run_all(self) -> dict:
         results = {
-            "mosfet_losses":        self.calc_mosfet_losses(),
             "gate_resistors":       self.calc_gate_resistors(),
+            "mosfet_losses":        self.calc_mosfet_losses(),
             "input_capacitors":     self.calc_input_capacitors(),
             "bootstrap_cap":        self.calc_bootstrap_cap(),
             "shunt_resistors":      self.calc_shunt_resistors(),

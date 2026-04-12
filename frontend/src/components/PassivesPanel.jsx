@@ -272,8 +272,8 @@ export default function PassivesPanel() {
 
   /* override counts */
   function cnt(keys) { return keys.filter(k => ovr[k] != null && ovr[k] !== '').length }
-  const gateOvrCnt  = [specs.rg_on_override, specs.rg_off_override].filter(v => v != null && v !== '').length
-              + cnt(['gate_rise_time_ns','deadtime_override_ns'])
+  const gateOvrCnt  = [specs.hs_rg_on_override, specs.hs_rg_off_override, specs.ls_rg_on_override, specs.ls_rg_off_override].filter(v => v != null && v !== '').length
+              + cnt(['gate_rise_time_ns', 'gate_fall_time_ns', 'deadtime_override_ns'])
   const capsOvrCnt  = cnt(['delta_v_ripple','bulk_v_rating_v','mlcc_qty','mlcc_size_nf','mlcc_esr_mohm','film_qty','film_size_uf','film_v_rating_v'])
   const bootOvrCnt  = cnt(['bootstrap_droop_v','cboot_v_rating_v'])
   const shuntOvrCnt = cnt(['shunt_topology','csa_gain_override','shunt_single_mohm','shunt_three_mohm','stray_inductance_nh','snubber_rs_ohm','snubber_cs_pf','snubber_v_mult'])
@@ -362,9 +362,11 @@ export default function PassivesPanel() {
   const loopSt    = pcbg?.half_bridge_loop_status || 'unknown'
   const loopColor = loopSt === 'OK' ? 'var(--green)' : loopSt === 'WARNING' ? '#ffab40' : loopSt === 'CRITICAL' ? 'var(--red)' : 'var(--txt-4)'
 
-  const rg_on_ok  = specs.rg_on_override  != null && specs.rg_on_override  !== ''
-  const rg_off_ok = specs.rg_off_override != null && specs.rg_off_override !== ''
-  const gateReady = rg_on_ok && rg_off_ok
+  const hs_rg_on_ok  = specs.hs_rg_on_override  != null && specs.hs_rg_on_override  !== ''
+  const hs_rg_off_ok = specs.hs_rg_off_override != null && specs.hs_rg_off_override !== ''
+  const ls_rg_on_ok  = specs.ls_rg_on_override  != null && specs.ls_rg_on_override  !== ''
+  const ls_rg_off_ok = specs.ls_rg_off_override != null && specs.ls_rg_off_override !== ''
+  const gateReady = hs_rg_on_ok && hs_rg_off_ok && ls_rg_on_ok && ls_rg_off_ok
 
   /* shared col-span helper */
   const fullSpan = { gridColumn:'1/-1' }
@@ -390,7 +392,7 @@ export default function PassivesPanel() {
           <div style={{ fontSize:11, background:'rgba(255,171,64,.12)',
             border:'1px solid rgba(255,171,64,.45)', borderRadius:7,
             padding:'6px 12px', color:'#ffab40', fontWeight:700 }}>
-            ⚠ Enter Rg_on &amp; Rg_off in Gate Drive to enable calculations
+            ⚠ Enter all 4 HS/LS Rg values in Gate Drive to enable calculations
           </div>
         )}
       </div>
@@ -405,49 +407,95 @@ export default function PassivesPanel() {
         overrideCount={gateOvrCnt}
         stale={stale} noResults={!C}
         inputs={<>
-          <OvrField label="Rg Turn-On" unit="Ω" mandatory
-            value={specs.rg_on_override ?? ''}
-            onChange={v => setSpec('rg_on_override', v)}
-            onReset={() => resetSpec('rg_on_override')}
-            note="Sets dV/dt at turn-on" />
-          <OvrField label="Rg Turn-Off" unit="Ω" mandatory
-            value={specs.rg_off_override ?? ''}
-            onChange={v => setSpec('rg_off_override', v)}
-            onReset={() => resetSpec('rg_off_override')}
-            note="Faster switch-off, lower loss" />
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 15px', gridColumn:'1/-1', marginBottom:10 }}>
+            <div style={{ background:'rgba(187,134,252,0.05)', padding:'8px', borderRadius:'6px', border:'1px solid rgba(187,134,252,0.2)' }}>
+              <div style={{ fontSize:10, fontWeight:800, color:'#bb86fc', marginBottom:6, textTransform:'uppercase', letterSpacing:0.5 }}>High-Side (HS)</div>
+              <OvrField label="HS Turn-On" unit="Ω" mandatory
+                value={specs.hs_rg_on_override ?? ''}
+                onChange={v => setSpec('hs_rg_on_override', v)}
+                onReset={() => resetSpec('hs_rg_on_override')} />
+              <OvrField label="HS Turn-Off" unit="Ω" mandatory
+                value={specs.hs_rg_off_override ?? ''}
+                onChange={v => setSpec('hs_rg_off_override', v)}
+                onReset={() => resetSpec('hs_rg_off_override')} />
+            </div>
+            <div style={{ background:'rgba(30,144,255,0.05)', padding:'8px', borderRadius:'6px', border:'1px solid rgba(30,144,255,0.2)' }}>
+               <div style={{ fontSize:10, fontWeight:800, color:'#1e90ff', marginBottom:6, textTransform:'uppercase', letterSpacing:0.5 }}>Low-Side (LS)</div>
+               <OvrField label="LS Turn-On" unit="Ω" mandatory
+                value={specs.ls_rg_on_override ?? ''}
+                onChange={v => setSpec('ls_rg_on_override', v)}
+                onReset={() => resetSpec('ls_rg_on_override')} />
+              <OvrField label="LS Turn-Off" unit="Ω" mandatory
+                value={specs.ls_rg_off_override ?? ''}
+                onChange={v => setSpec('ls_rg_off_override', v)}
+                onReset={() => resetSpec('ls_rg_off_override')} />
+            </div>
+          </div>
           <OvrField label="Rise Time Target" unit="ns"
             value={ovr.gate_rise_time_ns ?? ''} defaultVal={40}
             onChange={v => setOvr('gate_rise_time_ns', v)}
-            onReset={() => resetOvr('gate_rise_time_ns')}
-            note="Rg auto-sizing target (if no override)" />
+            onReset={() => resetOvr('gate_rise_time_ns')} 
+            note="Engine uses this target to size the closest standard E-series resistor." />
+          <OvrField label="Fall Time Target" unit="ns"
+            value={ovr.gate_fall_time_ns ?? ''} defaultVal={40}
+            onChange={v => setOvr('gate_fall_time_ns', v)}
+            onReset={() => resetOvr('gate_fall_time_ns')} 
+            note="Engine uses this target to size the closest standard E-series resistor." />
+          <OvrField label="Gate Voltage (Vdrv)" unit="V"
+            value={specs.gate_drive_voltage ?? ''} defaultVal={12}
+            onChange={v => setSpec('gate_drive_voltage', v)}
+            onReset={() => resetSpec('gate_drive_voltage')}
+            note="Sets driver strength and plateau capability limit" />
           <OvrField label="Dead Time Override" unit="ns"
             value={ovr.deadtime_override_ns ?? ''}
             onChange={v => setOvr('deadtime_override_ns', v)}
-            onReset={() => resetOvr('deadtime_override_ns')}
-            note="Blank = auto (td_off + tf + margin)" />
+            onReset={() => resetOvr('deadtime_override_ns')} />
         </>}
         results={<>
           {gate.manual_rg_input && (
             <div style={{ fontSize:10, background:'#bb86fc18', border:'1px solid #bb86fc40',
-              borderRadius:5, padding:'3px 8px', color:'#bb86fc', marginBottom:6, fontWeight:700 }}>
+              borderRadius:5, padding:'3px 8px', color:'#bb86fc', marginBottom:6, fontWeight:700, gridColumn:'1/-1' }}>
               ✓ Manual Rg values active
             </div>
           )}
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
-            <Row label="Rg_on" value={fmtNum(gate.rg_on_recommended_ohm, 1)} unit="Ω" bold
-              src={rg_on_ok ? 'ovr' : 'auto'}
-              tip="Rg_on controls turn-on speed → dV/dt and switching loss" />
-            <Row label="Rg_off" value={fmtNum(gate.rg_off_recommended_ohm, 1)} unit="Ω" bold
-              src={rg_off_ok ? 'ovr' : 'auto'}
-              tip="Rg_off controls turn-off speed → body-diode overlap and EMI" />
-            <Row label="Rise time" value={fmtNum(gate.gate_rise_time_ns, 1)} unit="ns" src="auto"
-              tip="t_rise = Rg_on × (Qgs2 + Qgd) / (Vdrv - Vth)" />
-            <Row label="Fall time" value={fmtNum(gate.gate_fall_time_ns, 1)} unit="ns" src="auto"
-              tip="t_fall = Rg_off × (Qgs2 + Qgd) / Vth" />
-            <Row label="dV/dt" value={fmtNum(gate.dv_dt_v_per_us, 1)} unit="V/µs" src="auto"
-              tip="dV/dt = Vbus / t_rise — keep under 10 V/ns to avoid EMI issues" />
-            <Row label="Rg power" value={fmtNum(gate.gate_resistor_power_w, 4)} unit="W" src="auto"
-              tip="P_Rg = Qg × Vdrv × fsw — power dissipated per gate resistor" />
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px 20px', gridColumn:'1/-1' }}>
+            {/* HS Column */}
+            <div>
+              <div style={{ borderBottom:'1px solid var(--border-1)', paddingBottom:4, marginBottom:6, fontSize:10, fontWeight:700, color:'var(--txt-3)' }}>HIGH SIDE</div>
+              <Row label="Rg_on / off" value={`${fmtNum(gate.hs_rg_on_ohm,1)} / ${fmtNum(gate.hs_rg_off_ohm,1)}`} unit="Ω" bold src={hs_rg_on_ok?'ovr':'auto'} 
+                tip="Standard E-series resistor value calculated to most closely match your target switching speeds." />
+              <Row label="Rise / Fall" value={`${fmtNum(gate.hs_gate_rise_time_ns,1)} / ${fmtNum(gate.hs_gate_fall_time_ns,1)}`} unit="ns" src="auto" 
+                tip="Actual physical times given the real E-series resistor. t_rise = Rg_on_total × Qgd / (Vdrv−Vplateau)  |  t_fall = Rg_off_total × Qgd / Vplateau" />
+              <Row label="dV/dt Bus" value={fmtNum(gate.hs_dv_dt_bus,1)} unit="V/ns" src="auto" color={gate.hs_dv_dt_bus > 10 ? '#ff5252' : gate.hs_dv_dt_bus > 5 ? '#ffab40' : '#4caf50'} 
+                tip="dV/dt = Vbus / t_rise. Nominal operating stress. Keep < 5 V/ns for low EMI footprint." />
+              <Row label="dV/dt Peak" value={fmtNum(gate.hs_dv_dt_peak,1)} unit="V/ns" src="auto" color={gate.hs_dv_dt_peak > 10 ? '#ff5252' : gate.hs_dv_dt_peak > 5 ? '#ffab40' : '#4caf50'} 
+                tip="dV/dt = Vpeak / t_rise. Worst-case transient stress. Keep < 10 V/ns to prevent motor phase insulation breakdown." />
+              <Row label="I_peak On/Off" value={`${fmtNum(gate.hs_i_peak_on_a,1)} / ${fmtNum(gate.hs_i_peak_off_a,1)}`} unit="A" src="auto" 
+                tip="I_peak_on = (Vdrv−Vplateau)/Rg_on_total | I_peak_off = Vplateau/Rg_off_total. Used to validate High Side Gate Driver IC capability." />
+              <Row label="Sw Loss (Psw)" value={fmtNum(gate.hs_p_sw_w,2)} unit="W" src="auto" 
+                tip="P_sw = 0.5 × Vbus × I_load × (t_rise + t_fall) × fsw. High side hard-switching power loss." />
+            </div>
+            {/* LS Column */}
+            <div>
+              <div style={{ borderBottom:'1px solid var(--border-1)', paddingBottom:4, marginBottom:6, fontSize:10, fontWeight:700, color:'var(--txt-3)' }}>LOW SIDE</div>
+              <Row label="Rg_on / off" value={`${fmtNum(gate.ls_rg_on_ohm,1)} / ${fmtNum(gate.ls_rg_off_ohm,1)}`} unit="Ω" bold src={ls_rg_on_ok?'ovr':'auto'} 
+                tip="Standard E-series resistor value calculated to most closely match your target switching speeds." />
+              <Row label="Rise / Fall" value={`${fmtNum(gate.ls_gate_rise_time_ns,1)} / ${fmtNum(gate.ls_gate_fall_time_ns,1)}`} unit="ns" src="auto" 
+                tip="Actual physical times given the real E-series resistor. Differs slightly from target because resistors are discrete values." />
+              <Row label="dV/dt Bus" value={fmtNum(gate.ls_dv_dt_bus,1)} unit="V/ns" src="auto" color={gate.ls_dv_dt_bus > 10 ? '#ff5252' : gate.ls_dv_dt_bus > 5 ? '#ffab40' : '#4caf50'} 
+                tip="dV/dt = Vbus / t_rise" />
+              <Row label="dV/dt Peak" value={fmtNum(gate.ls_dv_dt_peak,1)} unit="V/ns" src="auto" color={gate.ls_dv_dt_peak > 10 ? '#ff5252' : gate.ls_dv_dt_peak > 5 ? '#ffab40' : '#4caf50'} 
+                tip="dV/dt = Vpeak / t_rise" />
+              <Row label="I_peak On/Off" value={`${fmtNum(gate.ls_i_peak_on_a,1)} / ${fmtNum(gate.ls_i_peak_off_a,1)}`} unit="A" src="auto" 
+                tip="Validates your Low Side Driver IC source/sink limits." />
+              <Row label="Sw Loss (Psw)" value={fmtNum(gate.ls_p_sw_w,2)} unit="W" src="auto" 
+                tip="Low side primarily exhibits conduction and body diode loss. Switching loss here is usually minimal compared to High Side." />
+            </div>
+          </div>
+          <div style={{ marginTop: 8, display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px', gridColumn:'1/-1', borderTop:'1px solid #ffffff10', paddingTop:8 }}>
+            <Row label="HS Sizing Basis" value={gate.sizing_basis_hs} unit="" src="auto" />
+            <Row label="Rg Internal" value={fmtNum(gate.rg_internal_ohm,1)} unit="Ω" src="auto" tip="Subtracted from external calculation" />
+            {dt.trr_warning && <div style={{gridColumn:'1/-1', color:'#ff5252', fontSize:10, marginTop:4}}>⚠ {dt.trr_warning}</div>}
           </div>
           {dt.dt_recommended_ns != null && (
             <>
@@ -463,6 +511,9 @@ export default function PassivesPanel() {
                   tip="Quantized to MCU timer resolution" />
                 <Row label="Period loss" value={fmtNum(dt.dt_pct_of_period, 3)} unit="%" src="auto"
                   tip="2 × DT / Tsw — effective duty cycle reduction per switching cycle" />
+                <Row label="Body Diode Loss" value={fmtNum(dt.body_diode_loss_total_w, 2)} unit="W" src="auto" 
+                  tip="Total power dissipated by body diodes during dead time commutation" />
+                <Row label="Diode Time/Cyc" value={fmtNum(dt.dt_actual_ns * 2, 1)} unit="ns" src="auto" />
               </div>
             </>
           )}

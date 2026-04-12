@@ -15,8 +15,17 @@ class MosfetMixin:
         rds       = self._get(self.mosfet, "MOSFET", "rds_on",  1.5e-3)   # Ω
         qg        = self._get(self.mosfet, "MOSFET", "qg",      92e-9)    # C
         qgd       = self._get(self.mosfet, "MOSFET", "qgd",     30e-9)    # C
-        tr        = self._get(self.mosfet, "MOSFET", "tr",       30e-9)   # s
-        tf        = self._get(self.mosfet, "MOSFET", "tf",       20e-9)   # s
+        # Get datasheet testing switching times as fallback
+        tr_ds     = self._get(self.mosfet, "MOSFET", "tr",       30e-9)   # s
+        tf_ds     = self._get(self.mosfet, "MOSFET", "tf",       20e-9)   # s
+        
+        # Pull actual circuit switching times from gate drive physics based on user's Rg
+        gate_res  = self._cached_results.get("gate_resistors", {})
+        tr_ns     = gate_res.get("hs_gate_rise_time_ns", gate_res.get("gate_rise_time_ns", tr_ds * 1e9))
+        tf_ns     = gate_res.get("hs_gate_fall_time_ns", gate_res.get("gate_fall_time_ns", tf_ds * 1e9))
+        tr        = tr_ns * 1e-9
+        tf        = tf_ns * 1e-9
+        
         rth_jc    = self._get(self.mosfet, "MOSFET", "rth_jc",   0.5)     # °C/W
         qrr       = self._get(self.mosfet, "MOSFET", "qrr",      44e-9)   # C
 
@@ -31,8 +40,6 @@ class MosfetMixin:
         rds_mohm  = rds  * 1e3
         qg_nc     = qg   * 1e9
         qrr_nc    = qrr  * 1e9
-        tr_ns     = tr   * 1e9
-        tf_ns     = tf   * 1e9
 
         # ─── RMS switch current ───────────────────────────────────────
         # If motor Lph is available, refine with actual current ripple
