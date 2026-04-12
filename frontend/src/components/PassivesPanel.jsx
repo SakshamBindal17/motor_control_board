@@ -533,13 +533,7 @@ export default function PassivesPanel() {
           <OvrField label="Ripple ΔV" unit="V"
             value={ovr.delta_v_ripple ?? ''} defaultVal={2.0}
             onChange={v => setOvr('delta_v_ripple', v)} onReset={() => resetOvr('delta_v_ripple')} />
-          <OvrField label="Bulk V-Rating" unit="V"
-            value={ovr.bulk_v_rating_v ?? ''} defaultVal={100}
-            onChange={v => setOvr('bulk_v_rating_v', v)} onReset={() => resetOvr('bulk_v_rating_v')}
-            note="e.g. 63V, 100V" />
-          <OvrField label="Bulk ESL/cap" unit="µH" min={0.0001} step={0.001}
-            value={ovr.bulk_esl_nh != null ? +(ovr.bulk_esl_nh / 1000).toFixed(4) : ''} defaultVal={0.015}
-            onChange={v => setOvr('bulk_esl_nh', v !== '' ? +(parseFloat(v) * 1000).toFixed(4) : '')} onReset={() => resetOvr('bulk_esl_nh')} />
+          {/* Bulk removed per DC limitation constraints */}
           {/* MLCC sub-header */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#1e90ff', letterSpacing:'.5px',
@@ -553,12 +547,14 @@ export default function PassivesPanel() {
             value={ovr.mlcc_size_nf != null ? +(ovr.mlcc_size_nf / 1000).toFixed(4) : ''} defaultVal={0.1}
             onChange={v => setOvr('mlcc_size_nf', v !== '' ? +(parseFloat(v) * 1000).toFixed(2) : '')} onReset={() => resetOvr('mlcc_size_nf')}
             note="X7R recommended (100nF = 0.1µF)" />
-          <OvrField label="MLCC ESR/cap" unit="mΩ" min={0.1}
-            value={ovr.mlcc_esr_mohm ?? ''} defaultVal={5}
-            onChange={v => setOvr('mlcc_esr_mohm', v)} onReset={() => resetOvr('mlcc_esr_mohm')} />
-          <OvrField label="MLCC ESL/cap" unit="µH" min={0.0001} step={0.0001}
-            value={ovr.mlcc_esl_nh != null ? +(ovr.mlcc_esl_nh / 1000).toFixed(4) : ''} defaultVal={0.001}
-            onChange={v => setOvr('mlcc_esl_nh', v !== '' ? +(parseFloat(v) * 1000).toFixed(4) : '')} onReset={() => resetOvr('mlcc_esl_nh')} />
+          <OvrField label="MLCC Z (Impedance)" unit="mΩ" min={0.1}
+            value={ovr.mlcc_z_mohm ?? ''} defaultVal={2}
+            onChange={v => setOvr('mlcc_z_mohm', v)} onReset={() => resetOvr('mlcc_z_mohm')}
+            note="|Z| from manufacturer datasheet graph exclusively exactly at switching frequency." />
+          <OvrField label="MLCC V-Rating" unit="V"
+            value={ovr.mlcc_v_rating_v ?? ''} defaultVal={50}
+            onChange={v => setOvr('mlcc_v_rating_v', v)} onReset={() => resetOvr('mlcc_v_rating_v')}
+            note="Critical for calculating violent DC-Bias capacitance droop effect." />
           {/* Film sub-header */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#1e90ff', letterSpacing:'.5px',
@@ -571,22 +567,36 @@ export default function PassivesPanel() {
           <OvrField label="Film Size" unit="µF" min={0.1}
             value={ovr.film_size_uf ?? ''} defaultVal={4.7}
             onChange={v => setOvr('film_size_uf', v)} onReset={() => resetOvr('film_size_uf')} />
-          <OvrField label="Film ESL/cap" unit="µH" min={0.0001} step={0.001}
-            value={ovr.film_esl_nh != null ? +(ovr.film_esl_nh / 1000).toFixed(4) : ''} defaultVal={0.005}
-            onChange={v => setOvr('film_esl_nh', v !== '' ? +(parseFloat(v) * 1000).toFixed(4) : '')} onReset={() => resetOvr('film_esl_nh')} />
+          <OvrField label="Film Z (Impedance)" unit="mΩ" min={0.1}
+            value={ovr.film_z_mohm ?? ''} defaultVal={5.0}
+            onChange={v => setOvr('film_z_mohm', v)} onReset={() => resetOvr('film_z_mohm')}
+            note="|Z| derived directly from Film datasheet curve precisely at switching freq." />
           <OvrField label="Film V-Rating" unit="V"
             value={ovr.film_v_rating_v ?? ''} defaultVal={100}
             onChange={v => setOvr('film_v_rating_v', v)} onReset={() => resetOvr('film_v_rating_v')} />
+            
+          {/* Logic Bypass sub-header */}
+          <div style={fullSpan}>
+            <div style={{ fontSize:10, fontWeight:700, color:'#1e90ff', letterSpacing:'.5px',
+              textTransform:'uppercase', marginBottom:4, paddingTop:4,
+              borderTop:'1px solid rgba(255,255,255,.06)' }}>Logic Bypass (VDD Isolation)</div>
+          </div>
+          <OvrField label="Bypass Count" unit="pcs" step={1}
+            value={ovr.bypass_qty ?? ''} defaultVal={2}
+            onChange={v => setOvr('bypass_qty', v)} onReset={() => resetOvr('bypass_qty')}
+            note="Total tiny caps immediately next to Gate Driver chips." />
+          <OvrField label="Bypass Size" unit="µF" step={0.1}
+            value={ovr.bypass_size_uf ?? ''} defaultVal={4.7}
+            onChange={v => setOvr('bypass_size_uf', v)} onReset={() => resetOvr('bypass_size_uf')} />
         </>}
         results={<>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
-            <Row label="Ripple RMS" value={fmtNum(icap.i_ripple_rms_a, 2)} unit="A" src="auto"
-              tip="I_ripple = I_max × √(D×(1-D)) — worst case at D=0.5" />
+            <Row label="Ripple RMS" value={fmtNum(icap.i_ripple_rms_a, 2)} unit="A" src="auto" bold color="#ffab00"
+              tip="I_ripple = I_max × √(D×(1-D)) — The devastating high-frequency AC current that destroys capacitors!" />
             <Row label="Required C" value={fmtNum(icap.c_bulk_required_uf, 1)} unit="µF" src="auto"
-              tip="C_bulk = I_ripple / (8 × fsw × ΔV) — from ripple current and target ΔV" />
+              tip="C_bulk = I_ripple / (8 × fsw × ΔV) — Pure theoretical minimum to quench low-freq ripple." />
             <Row label="Bulk caps" value={`${fv(icap.n_bulk_caps)}×`} bold src="auto" />
-            <Row label="Per cap" value={`${fv(icap.c_per_bulk_cap_uf)}µF/${fv(icap.v_rating_bulk_v)}V`} bold
-              src={ovr.bulk_v_rating_v != null ? 'ovr' : 'auto'} />
+            <Row label="Per cap" value={`${fv(icap.c_per_bulk_cap_uf)}µF`} bold src="auto" />
             <Row label="V-ripple actual" value={fmtNum(icap.v_ripple_actual_v, 3)} unit="V" src="auto" />
             <Row label="ESR budget" value={fmtNum(icap.esr_budget_total_mohm, 1)} unit="mΩ" src="auto"
               tip="ESR limit = ΔV / I_ripple — keeps voltage spike in check" />
@@ -596,18 +606,37 @@ export default function PassivesPanel() {
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="Count × Size" value={`${fv(icap.c_mlcc_qty)}× ${fv(icap.c_mlcc_nf != null ? +(icap.c_mlcc_nf / 1000).toFixed(4) : null)}µF`}
               src={ovr.mlcc_qty != null || ovr.mlcc_size_nf != null ? 'ovr' : 'auto'} />
-            <Row label="‖ ESR" value={fmtNum(icap.c_mlcc_parallel_esr_mohm, 2)} unit="mΩ" bold src="auto"
-              tip="ESR_parallel = ESR_single / N — N MLCCs in parallel" />
-            <Row label="Power loss" value={fmtNum(icap.c_mlcc_power_loss_w, 4)} unit="W" src="auto"
-              tip="P = I_ripple² × ESR_parallel" />
+            <Row label="‖ Impedance" value={fmtNum(icap.c_mlcc_parallel_z_mohm, 2)} unit="mΩ" bold src="auto"
+              tip="|Z_parallel| = |Z_single| / N. Total resistive equivalent at high freq." />
+            <Row label="Power loss" value={fmtNum(icap.c_mlcc_power_loss_w, 4)} unit="W" src="auto" bold color={icap.c_mlcc_power_loss_w > 0.1 ? '#ff4444' : '#ffab00'}
+              tip="P_loss = I_mlcc² × |Z_parallel|. Heat physically burned right into the MLCC bodies." />
+            <Row label="DC Bias Limit" value={fv(icap.c_mlcc_v_rating)} unit="V" 
+              src={ovr.mlcc_v_rating_v != null ? 'ovr' : 'auto'} />
           </div>
+          {icap.c_mlcc_safety_warning === "DANGER: Severe DC-Bias Derating" && (
+            <div style={{ marginTop:6, fontSize:11, padding:'5px 8px', borderRadius:5, background:'rgba(255,68,68,.1)', border:'1px solid rgba(255,68,68,.3)', color:'var(--red)' }}>
+              ⚠ DANGER: V_bus exceeds 60% of MLCC V-Rating. Capacitance will plummet due to DC-Bias squeezing!
+            </div>
+          )}
+          
           <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
             letterSpacing:'.5px', textTransform:'uppercase' }}>Film</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="Count × Size" value={`${fv(icap.c_film_qty)}× ${fv(icap.c_film_uf)}µF`}
               src={ovr.film_qty != null || ovr.film_size_uf != null ? 'ovr' : 'auto'} />
+            <Row label="‖ Impedance" value={fmtNum(icap.c_film_z_mohm / (icap.c_film_qty || 1), 2)} unit="mΩ" src="auto"
+              tip="|Z_parallel| = |Z_single| / N. Bulk AC current steering resistance." />
             <Row label="V-rating" value={fv(icap.c_film_v_rating)} unit="V"
               src={ovr.film_v_rating_v != null ? 'ovr' : 'auto'} />
+          </div>
+
+          <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
+            letterSpacing:'.5px', textTransform:'uppercase' }}>Logic Bypass</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
+            <Row label="Lg Bypass" value={`${fv(icap.c_bypass_qty)}× ${fv(icap.c_bypass_size_uf)}µF`} src="auto"
+              tip="Tiny capacitors placed strictly on driver/MCU logic VDD pins to stabilize." />
+            <Row label="IC P_loss" value={fmtNum(icap.c_bypass_power_w, 4)} unit="W" src="auto" bold color="#ffab00"
+              tip="P_loss = N_fets × (½ × Qg² / C_bypass) × fsw. Thermal energy wasted charging Logic bypass caps." />
           </div>
         </>}
       />

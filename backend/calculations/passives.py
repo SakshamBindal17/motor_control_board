@@ -80,50 +80,63 @@ class PassivesMixin:
             try: return int(float(self.ovr.get(key, default)))
             except (TypeError, ValueError): return int(default)
 
-        bulk_v_rating  = _int("bulk_v_rating_v",  100)
         film_qty       = _int("film_qty",           2)
         film_size_uf   = _flt("film_size_uf",       4.7)
         film_v_rating  = _int("film_v_rating_v",   100)
+        film_z_mohm    = _flt("film_z_mohm",        5.0)
+
         mlcc_qty       = _int("mlcc_qty",            6)
         mlcc_size_nf   = _flt("mlcc_size_nf",      100.0)
-        mlcc_esr_mohm  = _flt("mlcc_esr_mohm",       5.0)
-        bulk_esl_nh    = _flt("bulk_esl_nh", 15.0)
-        film_esl_nh    = _flt("film_esl_nh", 5.0)
-        mlcc_esl_nh    = _flt("mlcc_esl_nh", 1.0)
-        
+        mlcc_z_mohm    = _flt("mlcc_z_mohm",         2.0)
+        mlcc_v_rating  = _int("mlcc_v_rating_v",    50)
+
+        bypass_qty     = _int("bypass_qty",          2)
+        bypass_size_uf = _flt("bypass_size_uf",      4.7)
+
         esr_typ_mohm = self._dc("input.esr_per_cap")
         self._log_hc("input_capacitors", "Typical ESR per bulk cap", f"{esr_typ_mohm} mΩ", "Electrolytic ESR estimate for thermal calc", "input.esr_per_cap")
 
-        # ── Parallel Impedance Network Splitting ────────────────────────────────
-        w = 2 * math.pi * max(fsw, 1000)
-        def _z(c_uf, esr_mohm, esl_nh, qty):
-            if qty <= 0 or c_uf <= 0: return complex(1e9, 0)
-            c_f = c_uf * 1e-6 * qty
-            esr_ohm = (esr_mohm * 1e-3) / qty
-            esl_h = (esl_nh * 1e-9) / qty
-            return complex(esr_ohm, w * esl_h - 1 / (w * c_f))
+        # ── Scalar Impedance Network Splitting ────────────────────────────────
+        # Extracted directly from datasheet Z-graphs at f_sw, removing imaginary L vectors 
+        # allowing for pure Ohmic current division.
+        def _z_mag(z_mohm, qty):
+            if qty <= 0: return 1e9
+            return (z_mohm * 1e-3) / qty
 
-        Z_bulk = _z(bulk_uf, esr_typ_mohm, bulk_esl_nh, n_caps)
-        Z_film = _z(film_size_uf, 5.0, film_esl_nh, film_qty) # 5mΩ typical film ESR
-        Z_mlcc = _z(mlcc_size_nf * 1e-3, mlcc_esr_mohm, mlcc_esl_nh, mlcc_qty)
+        Zmag_bulk = (esr_typ_mohm * 1e-3) / n_caps if n_caps > 0 else 1e9
+        Zmag_film = _z_mag(film_z_mohm, film_qty)
+        Zmag_mlcc = _z_mag(mlcc_z_mohm, mlcc_qty)
 
-        Y_total = (1/Z_bulk) + (1/Z_film) + (1/Z_mlcc)
-        Z_eq = 1 / Y_total
+        Ymag_total = (1/Zmag_bulk) + (1/Zmag_film) + (1/Zmag_mlcc)
+        Zmag_eq = 1 / Ymag_total
 
-        # Split ripple current
-        I_bulk = i_ripple_rms * abs(Z_eq / Z_bulk)
-        I_film = i_ripple_rms * abs(Z_eq / Z_film)
-        I_mlcc = i_ripple_rms * abs(Z_eq / Z_mlcc)
+        # Split high-frequency ripple current via admittance
+        I_bulk = i_ripple_rms * (Zmag_eq / Zmag_bulk)
+        I_film = i_ripple_rms * (Zmag_eq / Zmag_film)
+        I_mlcc = i_ripple_rms * (Zmag_eq / Zmag_mlcc)
 
-        p_cap_total = (I_bulk**2) * Z_bulk.real
+        p_cap_total = (I_bulk**2) * Zmag_bulk
         p_per_cap   = 0 if n_caps == 0 else p_cap_total / n_caps
-        mlcc_power_loss_w = (I_mlcc**2) * Z_mlcc.real
+        mlcc_power_loss_w = (I_mlcc**2) * Zmag_mlcc
+        
+        # MLCC DC Bios Safety verification
+        mlcc_safety_warning = "SAFE"
+        if self.v_bus > (0.6 * mlcc_v_rating):
+            mlcc_safety_warning = "DANGER: Severe DC-Bias Derating"
 
-        mlcc_parallel_esr_mohm = round(mlcc_esr_mohm / mlcc_qty, 3) if mlcc_qty > 0 else mlcc_esr_mohm
+        mlcc_parallel_z_mohm = round(mlcc_z_mohm / mlcc_qty, 3) if mlcc_qty > 0 else mlcc_z_mohm
         i_rip_per_cap = 0 if n_caps == 0 else I_bulk / n_caps
 
+        # ── Bypass Capacitor Power Loss ──
+        # Power lost charging C_bypass per switch: P = fsw * num_fets * (0.5 * Q_g^2 / C_bypass)
+        qg = self._get(self.mosfet, "MOSFET", "qg", 92e-9)   # C
+        c_bypass_total_f = bypass_size_uf * 1e-6 * bypass_qty
+        p_bypass_w = 0.0
+        if c_bypass_total_f > 0:
+            p_bypass_w = fsw * self.num_fets * (0.5 * (qg**2) / c_bypass_total_f)
+
         self.audit_log.append(
-            f"[DC Bus] Parallel high-frequency impedance split at {fsw/1000:.0f}kHz: "
+            f"[DC Bus] Scalar AC impedance split at {fsw/1000:.0f}kHz: "
             f"I_bulk={I_bulk:.1f}A, I_film={I_film:.1f}A, I_mlcc={I_mlcc:.1f}A."
         )
 
@@ -136,7 +149,6 @@ class PassivesMixin:
             "n_bulk_caps":               n_caps,
             "c_per_bulk_cap_uf":         bulk_uf,
             "c_total_uf":                c_total,
-            "v_rating_bulk_v":           bulk_v_rating,
             "v_ripple_actual_v":         round(v_ripple_actual,    4),
             "esr_budget_total_mohm":     round(esr_total_budget_mohm, 1),
             "esr_budget_per_cap_mohm":   round(esr_per_cap,        1),
@@ -146,14 +158,19 @@ class PassivesMixin:
             "c_film_uf":                 film_size_uf,
             "c_film_v_rating":           film_v_rating,
             "c_film_qty":                film_qty,
+            "c_film_z_mohm":             film_z_mohm,
             "c_mlcc_nf":                 mlcc_size_nf,
-            "c_mlcc_esr_per_cap_mohm":   mlcc_esr_mohm,
-            "c_mlcc_parallel_esr_mohm":  mlcc_parallel_esr_mohm,
-            "c_mlcc_power_loss_w":       mlcc_power_loss_w,
-            "c_mlcc_v_rating":           100,
+            "c_mlcc_z_per_cap_mohm":     mlcc_z_mohm,
+            "c_mlcc_parallel_z_mohm":    mlcc_parallel_z_mohm,
+            "c_mlcc_power_loss_w":       round(mlcc_power_loss_w,  4),
+            "c_mlcc_v_rating":           mlcc_v_rating,
             "c_mlcc_qty":                mlcc_qty,
+            "c_mlcc_safety_warning":     mlcc_safety_warning,
+            "c_bypass_qty":              bypass_qty,
+            "c_bypass_size_uf":          bypass_size_uf,
+            "c_bypass_power_w":          round(p_bypass_w,         4),
             "c_mlcc_dielectric":         "X7R",
-            "recommended_bulk_part":     f"Panasonic EEU-FC2A101 ({bulk_uf:.0f}µF/{bulk_v_rating}V, 1.94A ripple)",
+            "recommended_bulk_part":     f"Panasonic EEU-FC2A101 ({bulk_uf:.0f}µF, 1.94A ripple)",
             "notes": {
                 "placement_bulk":  "Within 30mm of H-bridge, low-impedance bus bar",
                 "placement_film":  "Within 20mm of each half-bridge section",
