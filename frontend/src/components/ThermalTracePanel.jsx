@@ -1,12 +1,11 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { Link2, Unlink } from 'lucide-react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { Link2, Unlink, Plus, Copy, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useProject } from '../context/ProjectContext.jsx'
-import CalculationsPanel from './CalculationsPanel.jsx'
 import { fmtNum } from '../utils.js'
 import {
-  iterativeSolve, buildSolverParams, assessStatus,
-  computeRecommendations, getCoolingParams, OZ2MM,
-  TRACE_SAFE_DT, VIA_SAFE_DT, CD_SAFE, normalizeTraceModel,
+  solveMultiSection, assessMultiSectionStatus,
+  computeMultiSectionRecommendations, normalizeTraceModel,
+  TRACE_SAFE_DT, VIA_SAFE_DT, CD_SAFE, DEFAULT_SECTION,
 } from '../utils/thermalTraceCalc.js'
 
 // ─── Field Config ─────────────────────────────────────────────────────
@@ -30,14 +29,16 @@ const MODEL_OPTIONS = [
   { value: '2152', label: 'IPC-2152', note: 'Newer, with correction factors' },
 ]
 
-// ─── Helpers ──────────────────────────────────────────────────────────
+// ─── Status Helpers ──────────────────────────────────────────────────
+const STATUS_ICON = { safe: '🟢', warn: '🟡', danger: '🔴' }
+const STATUS_COLOR = { safe: 'var(--green)', warn: 'var(--amber)', danger: 'var(--red)' }
+
 function StatusBanner({ status }) {
   if (!status) return null
   const bg = status.level === 'danger' ? 'rgba(255,68,68,.08)' :
              status.level === 'warn'   ? 'rgba(255,171,0,.08)' :
-                                         'rgba(0,230,118,.06)'
-  const border = status.level === 'danger' ? 'var(--red)' :
-                 status.level === 'warn'   ? 'var(--amber)' : 'var(--green)'
+                                          'rgba(0,230,118,.06)'
+  const border = STATUS_COLOR[status.level] || 'var(--green)'
   return (
     <div style={{
       padding: '10px 14px', borderRadius: 8,
@@ -51,9 +52,8 @@ function StatusBanner({ status }) {
   )
 }
 
-function ResultCard({ label, value, unit, icon, status, explain }) {
-  const color = status === 'danger' ? 'var(--red)' :
-                status === 'warn'   ? 'var(--amber)' : 'var(--green)'
+function ResultCard({ label, value, unit, status, explain }) {
+  const color = STATUS_COLOR[status] || 'var(--green)'
   return (
     <div data-tip={explain} style={{
       background: 'var(--bg-3)', borderRadius: 10, padding: '12px 14px',
@@ -61,7 +61,7 @@ function ResultCard({ label, value, unit, icon, status, explain }) {
       flex: '1 1 140px', minWidth: 130,
     }}>
       <div style={{ fontSize: 10, color: 'var(--txt-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em' }}>
-        {icon && <span style={{ marginRight: 4 }}>{icon}</span>}{label}
+        {label}
       </div>
       <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono)', color }}>
         {value}
@@ -71,58 +71,42 @@ function ResultCard({ label, value, unit, icon, status, explain }) {
   )
 }
 
-function BreakdownRow({ label, val, tip }) {
-  return (
-    <div data-tip={tip} className="brow" style={{ cursor: tip ? 'help' : 'default', display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '1px solid var(--border-1)', fontSize: 13, gap: 12 }}>
-      <span className="brow-k" style={{ color: 'var(--txt-2)' }}>{label}</span>
-      <span className="brow-v" style={{ fontFamily: 'var(--font-mono)', color: 'var(--txt-1)', fontWeight: 500, textAlign: 'right' }}>{val}</span>
-    </div>
-  )
-}
-
-function Field({ label, unit, value, onChange, min, max, step, type, note, disabled, isLinked, onToggleLink, systemValue, tip }) {
-  const displayVal = isLinked && value == null ? systemValue : value;
-  const hasError = min != null && displayVal !== '' && parseFloat(displayVal) < min;
+function Field({ label, unit, value, onChange, min, max, step, note, disabled, isLinked, onToggleLink, systemValue, tip }) {
+  const displayVal = isLinked && value == null ? systemValue : value
+  const hasError = min != null && displayVal !== '' && parseFloat(displayVal) < min
 
   return (
-    <div data-tip={tip} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div data-tip={tip} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-        <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--txt-2)' }}>
+        <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--txt-2)' }}>
           {label}
-          {unit && <span style={{ fontSize: 10, color: 'var(--txt-3)', fontWeight: 400, marginLeft: 4 }}>[{unit}]</span>}
+          {unit && <span style={{ fontSize: 9, color: 'var(--txt-3)', fontWeight: 400, marginLeft: 3 }}>[{unit}]</span>}
         </label>
         {onToggleLink && (
           <button
-            className={`btn btn-ghost btn-icon`}
+            className="btn btn-ghost btn-icon"
             style={{ padding: 2, height: 'auto', color: isLinked ? 'var(--green)' : 'var(--txt-3)' }}
             onClick={onToggleLink}
-            data-tip={isLinked ? `Linked to Project Spec (${systemValue}${unit})` : "Unlinked (User override)"}
+            data-tip={isLinked ? `Linked to Project (${systemValue}${unit})` : "Unlinked (override)"}
           >
-            {isLinked ? <Link2 size={12} /> : <Unlink size={12} />}
+            {isLinked ? <Link2 size={11} /> : <Unlink size={11} />}
           </button>
         )}
       </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input
-          type="number"
-          className="inp inp-mono inp-sm"
-          value={displayVal}
-          onKeyDown={e => {
-            if (e.key === '-' || e.key === 'e' || e.key === 'E' || e.key === '+') {
-              e.preventDefault();
-            }
-          }}
-          onChange={e => {
-            if (isLinked && onToggleLink) onToggleLink()
-            onChange(e.target.value)
-          }}
-          min={min != null ? min : 0} step={step || 'any'}
-          disabled={disabled}
-          style={{ width: '100%', borderColor: hasError ? 'var(--red)' : isLinked ? 'var(--green)40' : undefined, color: hasError ? 'var(--red)' : undefined }}
-        />
-        {hasError && <span style={{ fontSize: 10, color: 'var(--red)', fontWeight: 700, whiteSpace: 'nowrap' }}>&lt; {min}</span>}
-      </div>
-      {note && <span style={{ fontSize: 10, color: 'var(--txt-3)' }}>{note}</span>}
+      <input
+        type="number"
+        className="inp inp-mono inp-sm"
+        value={displayVal}
+        onKeyDown={e => { if (e.key === '-' || e.key === 'e' || e.key === 'E' || e.key === '+') e.preventDefault() }}
+        onChange={e => {
+          if (isLinked && onToggleLink) onToggleLink()
+          onChange(e.target.value)
+        }}
+        min={min != null ? min : 0} step={step || 'any'}
+        disabled={disabled}
+        style={{ width: '100%', fontSize: 11, padding: '4px 6px', borderColor: hasError ? 'var(--red)' : isLinked ? 'var(--green)40' : undefined }}
+      />
+      {note && <span style={{ fontSize: 9, color: 'var(--txt-3)' }}>{note}</span>}
     </div>
   )
 }
@@ -131,7 +115,7 @@ function SectionHead({ children, icon }) {
   return (
     <div style={{
       fontSize: 11, fontWeight: 700, color: 'var(--txt-2)',
-      padding: '8px 0 4px', borderBottom: '1px solid var(--border-1)',
+      padding: '6px 0 3px', borderBottom: '1px solid var(--border-1)',
       display: 'flex', alignItems: 'center', gap: 6,
       textTransform: 'uppercase', letterSpacing: '.05em',
     }}>
@@ -147,9 +131,9 @@ function VerticalLayerBar({ label, dT, maxDT, explain }) {
   const isWarn = dT > TRACE_SAFE_DT
   const innerBg = isDanger ? 'var(--red)' : isWarn ? 'var(--amber)' : 'var(--green)'
   return (
-    <div data-tip={explain} className="layer-chip" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+    <div data-tip={explain} className="layer-chip" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
       <div className="bar-outer" style={{
-        width: 32, height: 56, background: 'var(--bg-3)', border: '1px solid var(--border-2)',
+        width: 26, height: 44, background: 'var(--bg-3)', border: '1px solid var(--border-2)',
         borderRadius: 4, overflow: 'hidden', position: 'relative', display: 'flex', alignItems: 'flex-end',
         transition: 'all 0.2s',
       }}>
@@ -158,42 +142,23 @@ function VerticalLayerBar({ label, dT, maxDT, explain }) {
           transition: 'height .25s, background .25s'
         }} />
       </div>
-      <div style={{ fontSize: 9, color: 'var(--txt-3)', textAlign: 'center', lineHeight: 1.4, fontFamily: 'var(--font-mono)' }}>
+      <div style={{ fontSize: 8, color: 'var(--txt-3)', textAlign: 'center', lineHeight: 1.3, fontFamily: 'var(--font-mono)' }}>
         {label}
       </div>
-      <div style={{ fontSize: 10, color: 'var(--txt-2)', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>
+      <div style={{ fontSize: 9, color: 'var(--txt-2)', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>
         {fmtNum(dT, 1)}°
       </div>
     </div>
   )
 }
 
-// ─── Main Component ───────────────────────────────────────────────────
-export default function ThermalTracePanel({ config }) {
-  const { state, dispatch } = useProject()
 
-  // Inject layer chip styles dynamically to guarantee glow effect
-  React.useEffect(() => {
-    if (!document.getElementById('layer-chip-style')) {
-      const style = document.createElement('style')
-      style.id = 'layer-chip-style'
-      style.innerHTML = `
-        .layer-chip { cursor: help; border-radius: 6px; padding: 4px; transition: all 0.2s ease; }
-        .layer-chip:hover { background: rgba(255,255,255,0.03); }
-        .layer-chip:hover .bar-outer { border-color: var(--green); box-shadow: 0 0 8px var(--green)40; }
-      `
-      document.head.appendChild(style)
-    }
-  }, [])
-  const { project } = state
-  const P = project.pcb_trace_thermal?.params || {}
-  const specs = project.system_specs
-  // eslint-disable-next-line no-unused-vars
-  const [showBreakdown, setShowBreakdown] = useState(false)
-  const [showRecos, setShowRecos] = useState(true)
+// ─── Section Card Component ───────────────────────────────────────────
+function SectionCard({ section, index, sectionCount, sectionResult, dispatch, isBottleneck }) {
+  const level = sectionResult?.level || 'safe'
+  const borderColor = STATUS_COLOR[level]
 
-  // Update a param
-  const setP = useCallback((key, val) => {
+  const setS = useCallback((key, val) => {
     let parsed = val
     if (typeof val === 'string') {
       if (val === '') parsed = ''
@@ -202,714 +167,862 @@ export default function ThermalTracePanel({ config }) {
         parsed = Number.isFinite(n) ? n : val
       }
     }
-    dispatch({ type: 'SET_PCB_TRACE_PARAMS', payload: { [key]: parsed } })
+    dispatch({ type: 'SET_PCB_TRACE_SECTION', payload: { sectionId: section.id, [key]: parsed } })
+  }, [dispatch, section.id])
+
+  const totalLayers = (section.n_external_layers ?? 2) + (section.n_internal_layers ?? 0)
+
+  return (
+    <div style={{
+      minWidth: 270, maxWidth: 320, flex: '0 0 280px',
+      background: 'var(--bg-2)', borderRadius: 12,
+      border: `1.5px solid ${isBottleneck ? borderColor : 'var(--border-1)'}`,
+      boxShadow: isBottleneck ? `0 0 12px ${borderColor}30` : 'none',
+      padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8,
+      scrollSnapAlign: 'start', transition: 'border-color .3s, box-shadow .3s',
+    }}>
+      {/* Header: Name + Status + Actions */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: 14 }}>{STATUS_ICON[level]}</span>
+        <input
+          type="text" className="inp inp-sm"
+          value={section.name || ''}
+          onChange={e => setS('name', e.target.value)}
+          placeholder={`Section ${index + 1}`}
+          style={{ flex: 1, fontSize: 12, fontWeight: 600, background: 'transparent', border: '1px solid transparent', padding: '2px 6px', borderRadius: 4 }}
+          onFocus={e => { e.target.style.borderColor = 'var(--border-2)'; e.target.style.background = 'var(--bg-3)' }}
+          onBlur={e => { e.target.style.borderColor = 'transparent'; e.target.style.background = 'transparent' }}
+        />
+        {isBottleneck && (
+          <span style={{ fontSize: 8, fontWeight: 800, padding: '2px 5px', borderRadius: 3,
+            background: `${borderColor}20`, color: borderColor, letterSpacing: '.04em' }}>
+            BOTTLENECK
+          </span>
+        )}
+        <button
+          className="btn btn-ghost btn-icon" style={{ padding: 3, height: 'auto' }}
+          onClick={() => dispatch({ type: 'ADD_PCB_TRACE_SECTION', payload: { ...section, name: `${section.name} (copy)` } })}
+          data-tip="Duplicate this section"
+        >
+          <Copy size={12} />
+        </button>
+        <button
+          className="btn btn-ghost btn-icon" style={{ padding: 3, height: 'auto', color: sectionCount <= 1 ? 'var(--txt-4)' : 'var(--red)' }}
+          onClick={() => dispatch({ type: 'REMOVE_PCB_TRACE_SECTION', payload: section.id })}
+          disabled={sectionCount <= 1}
+          data-tip={sectionCount <= 1 ? "Can't delete last section" : "Delete section"}
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+
+      {/* Trace Geometry */}
+      <SectionHead icon="📏">Trace</SectionHead>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+        <Field label="Width" unit="mm" value={section.trace_width_mm ?? 7}
+          onChange={v => setS('trace_width_mm', v)} min={0.1} step={0.5} />
+        <Field label="Length" unit="mm" value={section.trace_length_mm ?? 20}
+          onChange={v => setS('trace_length_mm', v)} min={0.1} step={1} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--txt-2)' }}>Cu Weight</label>
+          <select className="inp inp-sm" value={section.copper_oz ?? 2}
+            onChange={e => setS('copper_oz', parseInt(e.target.value))}
+            style={{ width: '100%', fontSize: 11, padding: '4px 4px' }}>
+            {OZ_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <label style={{ fontSize: 10, fontWeight: 600, color: 'var(--txt-2)' }}>Bus Bar Area</label>
+          <input type="number" className="inp inp-mono inp-sm"
+            placeholder="auto" value={section.busbar_area_mm2 ?? ''}
+            min={0.01} step={0.5}
+            onChange={e => setS('busbar_area_mm2', e.target.value === '' ? null : parseFloat(e.target.value))}
+            style={{ width: '100%', fontSize: 11, padding: '4px 6px' }}
+          />
+          <span style={{ fontSize: 8, color: 'var(--txt-4)' }}>mm² · blank = auto</span>
+        </div>
+      </div>
+
+      {/* Layer Stack */}
+      <SectionHead icon="📚">Layers</SectionHead>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+        <Field label="External" value={section.n_external_layers ?? 2}
+          onChange={v => setS('n_external_layers', Math.min(2, Math.max(0, parseInt(v) || 0)))}
+          min={0} max={2} step={1} note="max 2" />
+        <Field label="Internal" value={section.n_internal_layers ?? 0}
+          onChange={v => setS('n_internal_layers', Math.max(0, parseInt(v) || 0))}
+          min={0} step={1} />
+      </div>
+      <div style={{
+        padding: '4px 8px', borderRadius: 5, background: 'var(--bg-4)',
+        fontSize: 10, display: 'flex', justifyContent: 'space-between', color: 'var(--txt-2)',
+      }}>
+        <span>Total layers</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: borderColor }}>{totalLayers}</span>
+      </div>
+
+      {/* Via Array */}
+      <SectionHead icon="🔩">Vias</SectionHead>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <label style={{ fontSize: 10, color: 'var(--txt-2)', fontWeight: 600 }}>Enable</label>
+        <input type="checkbox" checked={section.vias_on !== false}
+          onChange={e => setS('vias_on', e.target.checked)} />
+      </div>
+      {section.vias_on !== false && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+          <Field label="Count" value={section.n_vias ?? 10}
+            onChange={v => setS('n_vias', v)} min={1} step={1} />
+          <Field label="Drill" unit="mm" value={section.via_drill_mm ?? 0.3}
+            onChange={v => setS('via_drill_mm', v)} min={0.1} step={0.05} />
+          <Field label="Plate" unit="µm" value={section.via_plating_um ?? 25}
+            onChange={v => setS('via_plating_um', v)} min={10} step={5} />
+        </div>
+      )}
+
+      {/* Per-section mini result */}
+      {sectionResult?.result && (
+        <div style={{
+          padding: '6px 8px', borderRadius: 6, background: `${borderColor}0a`,
+          border: `1px solid ${borderColor}20`, display: 'flex', flexDirection: 'column', gap: 2,
+          fontSize: 10, fontFamily: 'var(--font-mono)',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--txt-3)' }}>ΔT</span>
+            <span style={{ color: borderColor, fontWeight: 700 }}>{fmtNum(sectionResult.result.dT_total, 1)}°C</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--txt-3)' }}>R</span>
+            <span style={{ fontWeight: 600 }}>{fmtNum(sectionResult.result.R_total * 1000, 3)} mΩ</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--txt-3)' }}>Vdrop</span>
+            <span style={{ fontWeight: 600 }}>{fmtNum(sectionResult.result.Vdrop * 1000, 2)} mV</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ color: 'var(--txt-3)' }}>CD</span>
+            <span style={{ fontWeight: 600, color: sectionResult.result.CD > CD_SAFE ? 'var(--amber)' : undefined }}>
+              {fmtNum(sectionResult.result.CD, 2)} A/mm²
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ─── Main Component ───────────────────────────────────────────────────
+export default function ThermalTracePanel({ config }) {
+  const { state, dispatch } = useProject()
+
+  // Inject layer chip styles
+  React.useEffect(() => {
+    if (!document.getElementById('layer-chip-style')) {
+      const style = document.createElement('style')
+      style.id = 'layer-chip-style'
+      style.innerHTML = `
+        .layer-chip { cursor: help; border-radius: 6px; padding: 3px; transition: all 0.2s ease; }
+        .layer-chip:hover { background: rgba(255,255,255,0.03); }
+        .layer-chip:hover .bar-outer { border-color: var(--green); box-shadow: 0 0 8px var(--green)40; }
+      `
+      document.head.appendChild(style)
+    }
+  }, [])
+
+  const { project } = state
+  const ptt = project.pcb_trace_thermal
+  const common = ptt?.common || {}
+  const sections = ptt?.sections || [{ id: 'sec_1', name: 'Section 1', ...DEFAULT_SECTION }]
+  const specs = project.system_specs
+
+  const [showRecos, setShowRecos] = useState(true)
+  const [showBreakdown, setShowBreakdown] = useState(true)
+  const scrollRef = useRef(null)
+
+  // Update common params
+  const setC = useCallback((key, val) => {
+    let parsed = val
+    if (typeof val === 'string') {
+      if (val === '') parsed = ''
+      else {
+        const n = parseFloat(val)
+        parsed = Number.isFinite(n) ? n : val
+      }
+    }
+    dispatch({ type: 'SET_PCB_TRACE_COMMON', payload: { [key]: parsed } })
   }, [dispatch])
 
-  // Sync cooling mode bidirectional with system specs
-  useEffect(() => {
-    const sysMapFwd = { natural: 'natural', enhanced: 'custom', forced: 'forced_air', heatsink: 'heatsink' }
-    const sysMapRev = { natural: 'natural', custom: 'enhanced', forced_air: 'forced', heatsink: 'heatsink' }
-    
-    const specCool = specs.cooling || 'natural'
-    const pcbCool = P.cooling_mode || 'natural'
-
-    if (sysMapFwd[pcbCool] !== specCool) {
-      // Out of sync. Decide who wins. If this component just mounted/updated P, maybe we push to spec.
-      // Easiest robust way: if P.cooling_mode recently changed by user, push to spec.
-      // If specs.cooling was passed down and differs, assume it changed outside and pull it in.
-      // Let's rely on standard unidirectional dispatch + an inverse watcher.
-    }
-  }, [P.cooling_mode, specs.cooling]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Let's do a strict bidirectional hook:
+  // Sync cooling mode
   const handleSetCooling = (mode) => {
-    setP('cooling_mode', mode)
+    setC('cooling_mode', mode)
     const sysMapFwd = { natural: 'natural', enhanced: 'custom', forced: 'forced_air', heatsink: 'heatsink' }
     dispatch({ type: 'SET_SYSTEM_SPECS', payload: { cooling: sysMapFwd[mode] } })
   }
-
-  // Watch for external system spec changes to cooling
   useEffect(() => {
     const sysMapRev = { natural: 'natural', custom: 'enhanced', forced_air: 'forced', heatsink: 'heatsink' }
     const mapped = sysMapRev[specs.cooling] || 'natural'
-    if (P.cooling_mode && P.cooling_mode !== mapped) {
-       setP('cooling_mode', mapped)
-    }
+    if (common.cooling_mode && common.cooling_mode !== mapped) setC('cooling_mode', mapped)
   }, [specs.cooling]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Build solver params with system spec fallbacks
-  const solverParams = useMemo(() => buildSolverParams(P, specs), [P, specs])
-  const normalizedModel = useMemo(() => normalizeTraceModel(P.model), [P.model])
+  const normalizedModel = useMemo(() => normalizeTraceModel(common.model), [common.model])
 
-  // Run calculation
-  const result = useMemo(() => iterativeSolve(solverParams), [solverParams])
+  // ── Run multi-section solver ──
+  const multiResult = useMemo(
+    () => solveMultiSection(sections, common, specs),
+    [sections, common, specs]
+  )
+
+  const combined = multiResult?.combined || null
+  const perSection = multiResult?.perSection || []
+  const bottleneckIdx = multiResult?.bottleneckIdx ?? 0
 
   // Status assessment
-  const status = useMemo(() => assessStatus(result, solverParams), [result, solverParams])
+  const status = useMemo(() => assessMultiSectionStatus(combined), [combined])
 
   // Recommendations
   const recos = useMemo(() => {
-    if (!result || status.level === 'safe') return []
-    return computeRecommendations(solverParams, result)
-  }, [solverParams, result, status.level])
+    if (!multiResult || status.level === 'safe') return []
+    return computeMultiSectionRecommendations(sections, common, specs, multiResult)
+  }, [sections, common, specs, multiResult, status.level])
 
-  // Persist results to project state for backend coupling
+  // Persist combined results for backend coupling
   useEffect(() => {
-    if (result) {
-      const dT = result.dT_total
-      const tmax = solverParams.Ta + dT
-      const margin = solverParams.Tmax_allow - tmax
+    if (combined) {
       dispatch({
         type: 'SET_PCB_TRACE_RESULTS',
         payload: {
-          worst_dt_c: Math.max(dT, result.dT_via || 0),
-          max_conductor_temp_c: tmax,
-          max_safe_current_a: result.Imax_total,
-          voltage_drop_v: result.Vdrop,
-          voltage_drop_mv: result.Vdrop * 1000,
-          power_dissipated_w: result.Ploss,
-          current_density_a_mm2: result.CD,
+          worst_dt_c: combined.worstDt,
+          max_conductor_temp_c: combined.tmax_abs,
+          max_safe_current_a: combined.Imax_safe,
+          voltage_drop_v: combined.Vdrop_total,
+          voltage_drop_mv: combined.Vdrop_total * 1000,
+          power_dissipated_w: combined.Ploss_total,
+          current_density_a_mm2: combined.CD_worst,
           thermal_status: status.message,
           thermal_status_level: status.level,
-          thermal_margin_c: margin,
+          thermal_margin_c: combined.margin,
+          trace_power_loss_w: combined.Ploss_total,
         },
       })
     }
-  }, [result, status, solverParams.Ta, solverParams.Tmax_allow, dispatch])
+  }, [combined, status, dispatch])
 
-  // Helper: effective current/ambient
-  const effCurrent = P.current_a ?? specs.max_phase_current ?? 80
-  const effAmbient = P.ambient_c ?? specs.ambient_temp_c ?? 30
-  const totalLayers = (P.n_external_layers ?? 2) + (P.n_internal_layers ?? 0)
+  // Scroll handlers
+  const scrollCards = (dir) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollBy({ left: dir * 300, behavior: 'smooth' })
+    }
+  }
 
-  // ─── Result cards ─────────────────────────────────────────────
-  const cards = result ? [
+  const effCurrent = common.current_a ?? specs.max_phase_current ?? 80
+  const effAmbient = common.ambient_c ?? specs.ambient_temp_c ?? 30
+
+  // Build result cards from combined
+  const cards = combined ? [
     {
-      label: 'Worst ΔT (trace or via)', value: fmtNum(Math.max(result.dT_total, result.dT_via || 0), 1), unit: '°C above ambient',
-      explain: 'Worst-case temperature rise across all layers and vias. IPC formulas calculate this empirically.',
-      status: result.dT_total > 60 ? 'danger' : result.dT_total > TRACE_SAFE_DT ? 'warn' : 'safe',
+      label: 'Worst ΔT (bottleneck)', value: fmtNum(combined.worstDt, 1), unit: '°C',
+      explain: `Worst-case temperature rise across all ${combined.sectionCount} sections. The bottleneck section (with fewest layers or narrowest trace) determines this value.`,
+      status: combined.dT_worst > 60 ? 'danger' : combined.dT_worst > TRACE_SAFE_DT ? 'warn' : 'safe',
     },
     {
-      label: 'Max conductor temp', value: fmtNum(solverParams.Ta + result.dT_total, 1), unit: '°C absolute',
-      explain: `Calculated as Ambient (${solverParams.Ta}°C) + Worst ΔT. Must not exceed user-defined Max Conductor Temp margin, otherwise PCB damage can occur.`,
-      status: (solverParams.Ta + result.dT_total) > solverParams.Tmax_allow ? 'danger' :
-              (solverParams.Ta + result.dT_total) > solverParams.Tmax_allow * 0.9 ? 'warn' : 'safe',
+      label: 'Max conductor temp', value: fmtNum(combined.tmax_abs, 1), unit: '°C',
+      explain: `Ambient (${combined.Ta}°C) + Worst ΔT. Must not exceed Max Conductor Temp limit.`,
+      status: combined.tmax_abs > combined.Tmax_allow ? 'danger' :
+              combined.tmax_abs > combined.Tmax_allow * 0.9 ? 'warn' : 'safe',
     },
     {
-      label: 'Max safe current', value: fmtNum(result.Imax_total, 1), unit: 'A at your ΔT limit',
-      explain: 'Automatically reverse-calculated maximum safe current that this trace can carry without exceeding the specified max conductor temperature limit.',
-      status: result.Imax_total < effCurrent ? 'danger' :
-              result.Imax_total < effCurrent * 1.3 ? 'warn' : 'safe',
+      label: 'Max safe current', value: fmtNum(combined.Imax_safe, 1), unit: 'A',
+      explain: 'Limited by the weakest section. The section with fewest layers or narrowest trace sets this ceiling.',
+      status: combined.Imax_safe < effCurrent ? 'danger' :
+              combined.Imax_safe < effCurrent * 1.3 ? 'warn' : 'safe',
     },
     {
-      label: 'Total voltage drop', value: fmtNum(result.Vdrop * 1000, 2), unit: 'mV (trace + via)',
-      explain: 'Ohmic voltage loss: I × R_total. Resistance is dynamically calculated using ρ(T) (temperature-corrected copper resistivity) at peak temperature.',
-      status: result.Vdrop > 1 ? 'danger' : result.Vdrop > 0.5 ? 'warn' : 'safe',
+      label: 'Total voltage drop', value: fmtNum(combined.Vdrop_total * 1000, 2), unit: 'mV',
+      explain: `Sum of voltage drops across all ${combined.sectionCount} sections in series. Each section\'s Vdrop = I × R_section.`,
+      status: combined.Vdrop_total > 1 ? 'danger' : combined.Vdrop_total > 0.5 ? 'warn' : 'safe',
     },
     {
-      label: 'Power dissipated', value: fmtNum(result.Ploss, 3), unit: 'W',
-      explain: 'Ohmic power loss/heat: I² × R_total. This trace loss is automatically fed back to the main system thermal budget.',
-      status: result.Ploss > 5 ? 'danger' : result.Ploss > 2 ? 'warn' : 'safe',
+      label: 'Total power dissipated', value: fmtNum(combined.Ploss_total, 3), unit: 'W',
+      explain: `Sum of I²R losses across all sections. Fed back to the system thermal budget.`,
+      status: combined.Ploss_total > 5 ? 'danger' : combined.Ploss_total > 2 ? 'warn' : 'safe',
     },
     {
-      label: 'Current density', value: fmtNum(result.CD, 2), unit: 'A/mm²',
-      explain: 'Current per unit cross-sectional area. IPC typically recommends values below 8-15 A/mm², depending on acceptable ΔT.',
-      status: result.CD > 15 ? 'danger' : result.CD > CD_SAFE ? 'warn' : 'safe',
+      label: 'Worst current density', value: fmtNum(combined.CD_worst, 2), unit: 'A/mm²',
+      explain: 'Current density in the most stressed section. IPC recommends < 8-15 A/mm².',
+      status: combined.CD_worst > 15 ? 'danger' : combined.CD_worst > CD_SAFE ? 'warn' : 'safe',
     },
   ] : []
 
   return (
-    <div style={{ display: 'flex', gap: 14, height: '100%', minHeight: 0 }}>
-      {/* ─── Left: Thermal Trace content ─────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0, overflowY: 'auto', paddingRight: 4 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%', minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
 
-        {/* Header */}
-        <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{
-            width: 40, height: 40, borderRadius: 10, flexShrink: 0,
-            background: `${config.color}18`, border: `1px solid ${config.color}35`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
-          }}>🔥</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>PCB Trace Thermal &amp; Power Loop Impedance</div>
-            <div style={{ fontSize: 11, color: 'var(--txt-3)' }}>
-              IPC-2221B / IPC-2152 · Current capacity, ΔT, voltage drop, via thermal · Bus bar support · Loop inductance
-            </div>
+      {/* ─── Header ─── */}
+      <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+          background: `${config.color}18`, border: `1px solid ${config.color}35`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
+        }}>🔥</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--txt-1)' }}>PCB Trace Thermal &amp; Bus Bar Analysis</div>
+          <div style={{ fontSize: 11, color: 'var(--txt-3)' }}>
+            IPC-2221B / IPC-2152 · Multi-section bus bar · Series chain thermal model
           </div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {MODEL_OPTIONS.map(m => (
-              <button
-                key={m.value}
-                className={`btn btn-sm ${normalizedModel === m.value ? 'btn-primary' : 'btn-ghost'}`}
-                onClick={() => setP('model', m.value)}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {MODEL_OPTIONS.map(m => (
+            <button
+              key={m.value}
+              className={`btn btn-sm ${normalizedModel === m.value ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => setC('model', m.value)}
+              style={{ fontSize: 10, padding: '4px 10px' }}
+              data-tip={m.note}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ─── Common Parameters + Cooling ─── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+
+        {/* Common Params */}
+        <div className="card" style={{ padding: '10px 14px' }}>
+          <SectionHead icon="⚙️">Common Parameters</SectionHead>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+            <Field label="Current" unit="A" value={common.current_a}
+              onChange={v => setC('current_a', v)} min={0.1} step={1}
+              isLinked={common.current_a == null}
+              onToggleLink={() => setC('current_a', common.current_a == null ? specs.max_phase_current || 80 : null)}
+              systemValue={specs.max_phase_current || 80}
+            />
+            <Field label="Ambient" unit="°C" value={common.ambient_c}
+              onChange={v => setC('ambient_c', v)} min={-40} step={1}
+              isLinked={common.ambient_c == null}
+              onToggleLink={() => setC('ambient_c', common.ambient_c == null ? specs.ambient_temp_c || 30 : null)}
+              systemValue={specs.ambient_temp_c || 30}
+            />
+            <Field label="PCB Thickness" unit="mm" value={common.pcb_thickness_mm ?? 1.6}
+              onChange={v => setC('pcb_thickness_mm', v)} min={0.4} step={0.1} />
+            <Field label="Max Conductor Temp" unit="°C" value={common.max_conductor_temp_c ?? 105}
+              onChange={v => setC('max_conductor_temp_c', v)} min={60} step={5}
+              note="FR4 Tg = 130–180°C" />
+          </div>
+
+          {/* IPC-2152 Corrections */}
+          {normalizedModel === '2152' && (
+            <>
+              <SectionHead icon="📊">IPC-2152 Corrections</SectionHead>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 6 }}>
+                <Field label="Plane Distance" unit="mm" value={common.plane_dist_mm ?? 0}
+                  onChange={v => setC('plane_dist_mm', v)} min={0} step={0.1} note="0 = no plane" />
+                <Field label="Copper Fill" unit="%" value={common.copper_fill_pct ?? 0}
+                  onChange={v => setC('copper_fill_pct', v)} min={0} max={100} step={5} />
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Cooling Method */}
+        <div className="card" style={{ padding: '10px 14px' }}>
+          <SectionHead icon="❄️">Cooling Method</SectionHead>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+            {COOLING_MODES.map(m => (
+              <button key={m.value}
+                className={`btn btn-sm ${common.cooling_mode === m.value ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => handleSetCooling(m.value)}
                 style={{ fontSize: 10, padding: '4px 10px' }}
-                data-tip={m.note}
+                data-tip={m.tip}
               >
-                {m.label}
+                {m.icon} {m.label}
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Input Panels */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-
-          {/* ── Trace Parameters ── */}
-          <div className="card" style={{ padding: '10px 14px' }}>
-            <SectionHead icon="📏">Trace Geometry</SectionHead>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-              <Field
-                type="range" label="Current" unit="A" value={P.current_a}
-                onChange={v => setP('current_a', v)}
-                min={0.1} max={200} step={1}
-                isLinked={P.current_a == null}
-                onToggleLink={() => setP('current_a', P.current_a == null ? specs.max_phase_current || 80 : null)}
-                systemValue={specs.max_phase_current || 80}
-              />
-              <Field
-                type="range" label="Ambient" unit="°C" value={P.ambient_c}
-                onChange={v => setP('ambient_c', v)}
-                min={-40} max={125} step={1}
-                isLinked={P.ambient_c == null}
-                onToggleLink={() => setP('ambient_c', P.ambient_c == null ? specs.ambient_temp_c || 30 : null)}
-                systemValue={specs.ambient_temp_c || 30}
-              />
-              <Field
-                type="range" label="Trace Width" unit="mm" value={P.trace_width_mm ?? 7}
-                onChange={v => setP('trace_width_mm', v)} min={0.1} max={50} step={0.5}
-              />
-              <Field
-                type="range" label="Trace Length" unit="mm" value={P.trace_length_mm ?? 20}
-                onChange={v => setP('trace_length_mm', v)} min={0.1} max={200} step={1}
-              />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--txt-2)' }}>Copper Weight</label>
-                <select
-                  className="inp inp-sm"
-                  value={P.copper_oz ?? 2}
-                  onChange={e => setP('copper_oz', parseInt(e.target.value))}
-                  style={{ width: '100%' }}
-                >
-                  {OZ_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </div>
-              <Field
-                type="range" label="PCB Thickness" unit="mm" value={P.pcb_thickness_mm ?? 1.6}
-                onChange={v => setP('pcb_thickness_mm', v)} min={0.4} max={4} step={0.1}
-              />
-              <Field
-                type="range" label="Max Conductor Temp" unit="°C" value={P.max_conductor_temp_c ?? 105}
-                onChange={v => setP('max_conductor_temp_c', v)} min={60} max={250} step={5}
-                note="FR4 Tg = 130–180°C"
-              />
-              {/* Bus Bar Area — overrides IPC trace width × copper weight area */}
-              <div style={{ gridColumn:'1/-1' }}>
-                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
-                  <span style={{ fontSize:11, fontWeight:600, color:'var(--txt-2)' }}>Bus Bar Area</span>
-                  <span style={{ fontSize:9, fontWeight:700, padding:'1px 6px', borderRadius:4,
-                    background:'rgba(100,181,246,.15)', border:'1px solid rgba(100,181,246,.35)',
-                    color:'#64b5f6', letterSpacing:'.03em' }}>OPTIONAL</span>
-                  <span style={{ fontSize:9, color:'var(--txt-4)' }}>
-                    — overrides IPC trace area (width × Cu weight)
-                  </span>
-                </div>
-                <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                  <input
-                    type="number" className="inp inp-mono"
-                    placeholder="blank = use trace width × Cu weight"
-                    value={P.busbar_area_mm2 ?? ''}
-                    min={0.01} step={0.5}
-                    onChange={e => setP('busbar_area_mm2', e.target.value === '' ? null : parseFloat(e.target.value))}
-                    style={{ flex:1 }}
-                  />
-                  <span style={{ fontSize:11, color:'var(--txt-3)', fontFamily:'var(--font-mono)', flexShrink:0 }}>mm²</span>
-                  {P.busbar_area_mm2 != null && (
-                    <button
-                      onClick={() => setP('busbar_area_mm2', null)}
-                      style={{ fontSize:10, padding:'3px 8px', borderRadius:4, cursor:'pointer',
-                        background:'rgba(255,68,68,.1)', border:'1px solid rgba(255,68,68,.3)', color:'var(--red)' }}>
-                      × Clear
-                    </button>
-                  )}
-                </div>
-                {P.busbar_area_mm2 != null && P.busbar_area_mm2 > 0 && (
-                  <div style={{ fontSize:10, color:'#64b5f6', marginTop:3 }}>
-                    ⚡ Bus bar mode: cross-section = {P.busbar_area_mm2} mm² — e.g. a {(P.busbar_area_mm2 / 3).toFixed(1)}mm × 3mm copper strap
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* ── Cooling Method ── */}
-          <div className="card" style={{ padding: '10px 14px' }}>
-            <SectionHead icon="❄️">Cooling Method</SectionHead>
-            <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
-              {COOLING_MODES.map(m => (
-                <button
-                  key={m.value}
-                  className={`btn btn-sm ${P.cooling_mode === m.value ? 'btn-primary' : 'btn-ghost'}`}
-                  onClick={() => handleSetCooling(m.value)}
-                  style={{ fontSize: 10, padding: '4px 10px' }}
-                  data-tip={m.tip}
-                >
-                  {m.icon} {m.label}
-                </button>
-              ))}
-            </div>
-
-            <div style={{ marginTop: 8 }}>
-              {P.cooling_mode === 'natural' && (
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {['vertical', 'horizontal', 'enclosed'].map(o => (
-                    <button
-                      key={o}
-                      className={`btn btn-sm ${P.orientation === o ? 'btn-primary' : 'btn-ghost'}`}
-                      onClick={() => setP('orientation', o)}
-                      style={{ fontSize: 10, padding: '3px 8px', textTransform: 'capitalize' }}
-                    >
-                      {o}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {P.cooling_mode === 'enhanced' && (
-                <Field
-                  label="Spreading Factor" value={P.spreading_factor ?? 1.5}
-                  onChange={v => setP('spreading_factor', v)} min={1} max={3} step={0.1}
-                  note="1.0 = no help, 3.0 = heavy copper pour"
-                  tip="Multiplier for heat spreading capability due to solid internal planes."
-                />
-              )}
-              {P.cooling_mode === 'forced' && (
-                <Field
-                  label="Air Velocity" unit="m/s" value={P.air_velocity_ms ?? 1}
-                  onChange={v => setP('air_velocity_ms', v)} min={0.1} max={30} step={0.5}
-                  note="Typical fan = 1–5 m/s"
-                  tip="LFM = m/s × 196.85. Exponentially increases the heat transfer coefficient 'h'."
-                />
-              )}
-              {P.cooling_mode === 'heatsink' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <Field
-                    label="θ_sa (Heatsink)" unit="°C/W" value={P.hs_theta_sa ?? 5}
-                    onChange={v => setP('hs_theta_sa', v)} min={0.1} step={0.5}
-                    tip="Thermal Resistance of the heatsink to ambient air."
-                  />
-                  <Field
-                    label="θ_int (Interface)" unit="°C/W/cm²" value={P.hs_theta_int ?? 0.5}
-                    onChange={v => setP('hs_theta_int', v)} min={0.01} step={0.1}
-                    tip="Thermal Resistance of the thermal pad/paste per cm²."
-                  />
-                  <Field
-                    label="Contact Area" unit="cm²" value={P.hs_contact_area_cm2 ?? 10}
-                    onChange={v => setP('hs_contact_area_cm2', v)} min={0.5} step={1}
-                    tip="Total physical area of contact between the PCB and Heatsink."
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Effective h display */}
-            {result && (
-              <div data-tip="Absolute heat transfer coefficient empirically calculated radially around the trace based on chosen cooling method." style={{
-                marginTop: 8, padding: '6px 10px', borderRadius: 6,
-                background: 'var(--bg-4)', fontSize: 11, color: 'var(--txt-2)',
-                display: 'flex', justifyContent: 'space-between', cursor: 'help',
-              }}>
-                <span>Effective h</span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: config.color }}>
-                  {fmtNum(solverParams.cooling.h, 1)} W/m²K
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* ── Layer Stack ── */}
-          <div className="card" style={{ padding: '10px 14px' }}>
-            <SectionHead icon="📚">Layer Stack</SectionHead>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-              <Field
-                label="External Layers" value={P.n_external_layers ?? 2}
-                onChange={v => setP('n_external_layers', Math.min(2, Math.max(0, parseInt(v) || 0)))}
-                min={0} max={2} step={1}
-                note="Carrying current (max 2)"
-                tip="Number of outermost trace layers carrying current. Excellent thermal shedding."
-              />
-              <Field
-                label="Internal Layers" value={P.n_internal_layers ?? 0}
-                onChange={v => setP('n_internal_layers', Math.max(0, parseInt(v) || 0))}
-                min={0} max={20} step={1}
-                note="Half the ΔT of external"
-                tip="Number of internal plane layers packed inside the board. Heat becomes trapped easily."
-              />
-              <div style={{
-                gridColumn: '1 / -1', padding: '8px 10px', borderRadius: 6,
-                background: 'var(--bg-4)', fontSize: 11, color: 'var(--txt-2)',
-                display: 'flex', justifyContent: 'space-between',
-              }}>
-                <span>Total copper layers</span>
-                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: config.color }}>
-                  {totalLayers}
-                </span>
-              </div>
-            </div>
-
-            {/* IPC-2152 Corrections (only visible in 2152 mode) */}
-            {normalizedModel === '2152' && (
-              <>
-                <SectionHead icon="📊">IPC-2152 Correction Factors</SectionHead>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-                  <Field
-                    label="Plane Distance" unit="mm" value={P.plane_dist_mm ?? 0}
-                    onChange={v => setP('plane_dist_mm', v)} min={0} step={0.1}
-                    note="0 = no adjacent plane"
-                  />
-                  <Field
-                    label="Copper Fill" unit="%" value={P.copper_fill_pct ?? 0}
-                    onChange={v => setP('copper_fill_pct', v)} min={0} max={100} step={5}
-                    note="Adjacent layer fill %"
-                  />
-                </div>
-                {result?.corr && (
-                  <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-                    {[
-                      ['Board', result.corr.Cf_board],
-                      ['Plane', result.corr.Cf_plane],
-                      ['Pour', result.corr.Cf_pour],
-                      ['Total', result.corr.total],
-                    ].map(([label, val]) => (
-                      <div key={label} style={{
-                        padding: '3px 8px', borderRadius: 4, background: 'var(--bg-4)',
-                        fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--txt-2)',
-                      }}>
-                        {label}: <strong style={{ color: val < 0.9 ? 'var(--green)' : 'var(--txt-1)' }}>{fmtNum(val, 3)}</strong>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* ── Via Array ── */}
-          <div className="card" style={{ padding: '10px 14px' }}>
-            <SectionHead icon="🔩">Via Array</SectionHead>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-              <label style={{ fontSize: 11, color: 'var(--txt-2)', fontWeight: 600 }}>Enable vias</label>
-              <input
-                type="checkbox"
-                checked={P.vias_on !== false}
-                onChange={e => setP('vias_on', e.target.checked)}
-              />
-            </div>
-            {P.vias_on !== false && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8 }}>
-                <Field
-                  label="Count" value={P.n_vias ?? 10}
-                  onChange={v => setP('n_vias', v)} min={1} max={500} step={1}
-                />
-                <Field
-                  label="Drill Ø" unit="mm" value={P.via_drill_mm ?? 0.3}
-                  onChange={v => setP('via_drill_mm', v)} min={0.1} max={1.5} step={0.05}
-                />
-                <Field
-                  label="Plating" unit="µm" value={P.via_plating_um ?? 25}
-                  onChange={v => setP('via_plating_um', v)} min={10} max={75} step={5}
-                />
-              </div>
-            )}
-            {result && P.vias_on !== false && result.dT_via > 0 && (
-              <div style={{
-                marginTop: 8, padding: '6px 10px', borderRadius: 6,
-                background: 'var(--bg-4)', fontSize: 11,
-                display: 'flex', justifyContent: 'space-between',
-              }}>
-                <span style={{ color: 'var(--txt-3)' }}>Via ΔT</span>
-                <span style={{
-                  fontFamily: 'var(--font-mono)', fontWeight: 700,
-                  color: result.dT_via > 60 ? 'var(--red)' : result.dT_via > VIA_SAFE_DT ? 'var(--amber)' : 'var(--green)',
-                }}>
-                  {fmtNum(result.dT_via, 1)}°C
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Results Section Reordered */}
-        {result && (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-              {cards.map(c => <ResultCard key={c.label} {...c} />)}
-            </div>
-            <StatusBanner status={status} />
-          </>
-        )}
-
-        {/* ── Layer Stack Thermal Distribution ── */}
-        {result && (
-          <div className="card" style={{ padding: '10px 14px' }}>
-            <SectionHead icon="📊">Layer-by-Layer Thermal Distribution</SectionHead>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 12 }}>
-              {(() => {
-                const maxDT = Math.max(result.dT_ext, result.dT_int, result.dT_via || 0, 1)
-                const bars = []
-                const nExt = P.n_external_layers ?? 2
-                const nInt = P.n_internal_layers ?? 0
-                for (let i = 0; i < nExt; i++) bars.push(<VerticalLayerBar key={`ext${i}`} label={`Ext L${i + 1}`} dT={result.dT_ext} maxDT={maxDT} explain={`External Layer ${i+1}\nK-factor = 0.048 (Better cooling exposure)\nΔT = ${fmtNum(result.dT_ext, 1)}°C`} />)
-                for (let i = 0; i < nInt; i++) bars.push(<VerticalLayerBar key={`int${i}`} label={`Int L${i + 1}`} dT={result.dT_int} maxDT={maxDT} explain={`Internal Layer ${i+1}\nK-factor = 0.024 (Reduced convection cooling)\nΔT = ${fmtNum(result.dT_int, 1)}°C`} />)
-                if (P.vias_on !== false && result.dT_via > 0) {
-                  bars.push(<div key="sep" style={{ width: 1, height: 56, background: 'var(--border-2)', margin: '0 4px', alignSelf: 'flex-end', marginBottom: 28 }} />)
-                  bars.push(<VerticalLayerBar key="via" label={<span>Via Array <span style={{fontSize:8,color:'var(--txt-3)'}}>×{P.n_vias??10}</span></span>} dT={result.dT_via} maxDT={maxDT} explain={`Via Array Thermal Resistance\nTotal array carries full total current\nΔT = ${fmtNum(result.dT_via, 1)}°C`} />)
-                }
-                return bars
-              })()}
-            </div>
-            <div style={{ marginTop: 16, fontSize: 11, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)' }}>
-              Teal = safe (ΔT {'<'} 30°C) · Orange = elevated (30–60°C) · Red = critical ({'>'} 60°C) · E = external, I = internal
-            </div>
-          </div>
-        )}
-
-        {/* ── Recommendations ── */}
-        {recos.length > 0 && (
-          <div className="card" style={{ padding: '10px 14px' }}>
-            <div
-              onClick={() => setShowRecos(p => !p)}
-              style={{
-                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
-                fontSize: 11, fontWeight: 700, color: 'var(--txt-2)',
-                padding: '8px 0 4px', borderBottom: '1px solid var(--border-1)',
-                textTransform: 'uppercase', letterSpacing: '.05em',
-              }}
-            >
-              <span>💡</span>
-              Design Recommendations ({recos.length})
-              <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--txt-3)' }}>
-                {showRecos ? '▲' : '▼'}
-              </span>
-            </div>
-            {showRecos && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
-                {recos.map((rec, i) => (
-                  <div key={i} style={{
-                    padding: '8px 10px', borderRadius: 6,
-                    background: rec.solves ? 'rgba(0,230,118,.05)' : 'rgba(255,171,0,.05)',
-                    border: `1px solid ${rec.solves ? 'var(--green)' : 'var(--amber)'}20`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{
-                        fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-                        background: rec.solves ? 'var(--green)' : 'var(--amber)',
-                        color: '#000', flexShrink: 0
-                      }}>
-                        {rec.solves ? 'SOLVES' : 'PARTIAL'}
-                      </span>
-                      <div style={{ fontSize: 12, color: 'var(--txt-1)', fontWeight: 500 }}>{rec.action}</div>
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)', fontWeight: 600, textAlign: 'right' }}>
-                      <span style={{ color: 'var(--green)' }}>-{fmtNum(rec.deltaDT, 1)}°C</span>
-                      <span style={{ marginLeft: 6, color: 'var(--txt-2)' }}>-{fmtNum(rec.deltaCD, 1)} A/mm²</span>
-                      {rec.deltaVia > 0.1 && <span style={{ marginLeft: 6, color: 'var(--amber)' }}>-{fmtNum(rec.deltaVia, 1)}°C(via)</span>}
-                    </div>
-                  </div>
+          <div style={{ marginTop: 8 }}>
+            {common.cooling_mode === 'natural' && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {['vertical', 'horizontal', 'enclosed'].map(o => (
+                  <button key={o}
+                    className={`btn btn-sm ${common.orientation === o ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setC('orientation', o)}
+                    style={{ fontSize: 10, padding: '3px 8px', textTransform: 'capitalize' }}
+                  >{o}</button>
                 ))}
               </div>
             )}
-          </div>
-        )}
-
-        {/* ── Full Parameter Breakdown ── */}
-        {result && (
-          <div className="card" style={{ padding: '10px 14px' }}>
-            <SectionHead icon="⚡">Full Parameter Breakdown</SectionHead>
-            <div style={{ display: 'flex', flexDirection: 'column', marginTop: 8 }}>
-              {/* Breakdown Replaced Layout */}
-              <BreakdownRow label="Copper thickness" val={`${Math.round((solverParams.oz ?? 2) * 35)} µm  (${(solverParams.oz ?? 2)} oz/ft²)`} tip="Base raw thickness of the selected weight copper." />
-              <BreakdownRow label="Trace cross-section (per layer)" val={`${fmtNum(result.Amm2, 4)} mm²  (${fmtNum(result.Wmil, 1)} × ${fmtNum(result.Hmil, 2)} mil)`} tip="Geometric Cross Section Area = W × Thickness" />
-              <BreakdownRow label="Total cross-section (all layers)" val={`${fmtNum(result.Amm2_tot, 4)} mm²`} tip="Total Area spreading the current across all defined PCB layers." />
-              <BreakdownRow label="Current per layer" val={`${fmtNum(result.Iper, 2)} A`} tip="Assuming uniform current division among layers." />
-              <BreakdownRow label="Current density per layer" val={<span>{fmtNum(result.CD, 2)} A/mm² {result.CD > 15 ? <span style={{color:'var(--red)'}}>⚠ HIGH</span> : result.CD > 8 ? <span style={{color:'var(--amber)'}}>(elevated)</span> : ''}</span>} tip="Amperage packed into 1 square millimeter. Above 8 requires caution." />
-              <BreakdownRow label="ρ(T) at operating temp" val={`${fmtNum(result.rho_T * 1e5, 3)} × 10⁻⁵ Ω·mm  (temp-corrected)`} tip="Copper resistivity linearly scales worse as it gets hotter (+0.393% per °C)." />
-              <BreakdownRow label="Trace R per layer" val={`${fmtNum(result.R_par * (solverParams.nExt + solverParams.nInt) * 1000, 4)} mΩ`} tip="Resistance of a single trace layer based on length and area and heat." />
-              <BreakdownRow label="Parallel trace R" val={`${fmtNum(result.R_par * 1000, 4)} mΩ`} tip="Combined parallel resistance of all trace layers." />
-
-              {result.vRes && (
-                <>
-                  <BreakdownRow label="Via barrel area (each)" val={`${fmtNum(result.vRes.A_barrel, 5)} mm²`} tip="Cross-section area of a single via's copper plating." />
-                  <BreakdownRow label="Via R_th effective (each)" val={`${fmtNum(result.vRes.R_th_via, 1)} °C/W  (R_barrel/2)`} tip="Thermal resistance of a single via spreading heat into the board." />
-                  <BreakdownRow label="Via R_el (each, at T)" val={`${fmtNum((result.vRes.R_el_via * (result.rho_T / 1.72e-5)) * 1000, 4)} mΩ`} tip="Electrical resistance of a single via at peak operating temperature." />
-                  <BreakdownRow label="Via array R" val={`${fmtNum(result.R_via_par * 1000, 4)} mΩ`} tip="Total resistance of the entire via farm." />
-                </>
-              )}
-              
-              <BreakdownRow label="Total equivalent R" val={`${fmtNum(result.R_total * 1000, 4)} mΩ`} tip="Total trace resistance + Total via array resistance." />
-              <BreakdownRow label="Voltage drop" val={`${fmtNum(result.Vdrop * 1000, 2)} mV`} tip="Ohm's law: I_total × R_equivalent." />
-              <BreakdownRow label="Power dissipated" val={`${fmtNum(result.Ploss, 3)} W`} tip="Ohm's law: I² × R_equivalent." />
-            </div>
-            {solverParams.model === '2221' ? (
-              <div style={{ marginTop: 12, fontSize: 11, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)', padding: '10px 14px', background: 'var(--bg-1)', borderRadius: 6, border: '1px solid var(--border-2)', wordBreak: 'break-all' }}>
-                I = K · ΔT^0.44 · A^0.725 (IPC-2221)
-              </div>
-            ) : (
-              <div style={{ marginTop: 12, fontSize: 11, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)', padding: '10px 14px', background: 'var(--bg-1)', borderRadius: 6, border: '1px solid var(--border-2)', wordBreak: 'break-all' }}>
-                I = [K · ΔT^0.44 · A^0.725] · {fmtNum(result.corr?.total || 1, 3)} (IPC-2152 modified)
+            {common.cooling_mode === 'enhanced' && (
+              <Field label="Spreading Factor" value={common.spreading_factor ?? 1.5}
+                onChange={v => setC('spreading_factor', v)} min={1} max={3} step={0.1}
+                note="1.0 = no help, 3.0 = heavy copper pour" />
+            )}
+            {common.cooling_mode === 'forced' && (
+              <Field label="Air Velocity" unit="m/s" value={common.air_velocity_ms ?? 1}
+                onChange={v => setC('air_velocity_ms', v)} min={0.1} max={30} step={0.5}
+                note="Typical fan = 1–5 m/s" />
+            )}
+            {common.cooling_mode === 'heatsink' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <Field label="θ_sa (Heatsink)" unit="°C/W" value={common.hs_theta_sa ?? 5}
+                  onChange={v => setC('hs_theta_sa', v)} min={0.1} step={0.5} />
+                <Field label="θ_int (Interface)" unit="°C/W/cm²" value={common.hs_theta_int ?? 0.5}
+                  onChange={v => setC('hs_theta_int', v)} min={0.01} step={0.1} />
+                <Field label="Contact Area" unit="cm²" value={common.hs_contact_area_cm2 ?? 10}
+                  onChange={v => setC('hs_contact_area_cm2', v)} min={0.5} step={1} />
               </div>
             )}
           </div>
-        )}
+        </div>
+      </div>
 
+      {/* ─── Section Cards (Horizontal Scroll) ─── */}
+      <div className="card" style={{ padding: '10px 14px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <SectionHead icon="🔗">Bus Bar Sections ({sections.length})</SectionHead>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button className="btn btn-sm btn-ghost" onClick={() => scrollCards(-1)}
+              style={{ padding: '3px 6px' }}><ChevronLeft size={14} /></button>
+            <button className="btn btn-sm btn-ghost" onClick={() => scrollCards(1)}
+              style={{ padding: '3px 6px' }}><ChevronRight size={14} /></button>
+            <button className="btn btn-sm btn-primary" onClick={() => dispatch({ type: 'ADD_PCB_TRACE_SECTION' })}
+              style={{ fontSize: 10, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Plus size={12} /> Add Section
+            </button>
+          </div>
+        </div>
 
-        {/* ── PCB Power Loop Impedance (moved from Passives tab) ── */}
-        {(() => {
-          const C        = state.project.calculations
-          const pcbg     = C?.pcb_guidelines || {}
-          const traceP   = state.project.pcb_trace_thermal?.params || {}
-          const ovr      = state.project.blocks.passives?.overrides || {}
-          
-          // Compute Loop Inductance instantly on the frontend
-          let loopNh = null
-          let loopSt = 'unknown'
-          let loopColor = 'var(--txt-4)'
-          const l_mm = parseFloat(traceP.trace_length_mm) || 0
-          const w_mm = parseFloat(traceP.trace_width_mm) || 0
-          const cu_oz = parseFloat(traceP.copper_oz ?? 2)
-          
+        <div ref={scrollRef} style={{
+          display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8,
+          scrollSnapType: 'x mandatory', scrollBehavior: 'smooth',
+        }}>
+          {sections.map((sec, i) => (
+            <SectionCard
+              key={sec.id}
+              section={sec}
+              index={i}
+              sectionCount={sections.length}
+              sectionResult={perSection[i] || null}
+              dispatch={dispatch}
+              isBottleneck={i === bottleneckIdx && sections.length > 1}
+            />
+          ))}
+        </div>
+
+        {/* Section Summary Bar */}
+        <div style={{
+          marginTop: 6, padding: '6px 10px', borderRadius: 6,
+          background: 'var(--bg-4)', fontSize: 11, fontFamily: 'var(--font-mono)',
+          display: 'flex', justifyContent: 'space-between', color: 'var(--txt-2)',
+        }}>
+          <span>Total path: <strong style={{ color: config.color }}>{fmtNum(combined?.totalLength || 0, 1)} mm</strong>
+            {sections.length > 1 && (
+              <span style={{ color: 'var(--txt-3)' }}>
+                {' '}= {sections.map(s => `${s.trace_length_mm ?? 0}`).join(' + ')} mm
+              </span>
+            )}
+          </span>
+          <span>{sections.length} section{sections.length > 1 ? 's' : ''}</span>
+        </div>
+      </div>
+
+      {/* ─── Unified Results ─── */}
+      {combined && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+            {cards.map(c => <ResultCard key={c.label} {...c} />)}
+          </div>
+          <StatusBanner status={status} />
+        </>
+      )}
+
+      {/* ─── Per-Section Breakdown Table ─── */}
+      {combined && perSection.length > 0 && (
+        <div className="card" style={{ padding: '10px 14px' }}>
+          <div onClick={() => setShowBreakdown(p => !p)} style={{
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+            fontSize: 11, fontWeight: 700, color: 'var(--txt-2)',
+            padding: '6px 0', borderBottom: '1px solid var(--border-1)',
+            textTransform: 'uppercase', letterSpacing: '.05em',
+          }}>
+            <span>📊</span>
+            Per-Section Breakdown
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--txt-3)' }}>
+              {showBreakdown ? '▲' : '▼'}
+            </span>
+          </div>
+          {showBreakdown && (
+            <div style={{ overflowX: 'auto', marginTop: 8 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid var(--border-2)' }}>
+                    {['Section', 'Layers', 'ΔT (°C)', 'R (mΩ)', 'Vdrop (mV)', 'Ploss (W)', 'CD (A/mm²)', 'Status'].map(h => (
+                      <th key={h} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 700, color: 'var(--txt-2)', fontSize: 10, textTransform: 'uppercase' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {perSection.map((ps, i) => {
+                    const r = ps.result
+                    if (!r) return null
+                    const isBottle = i === bottleneckIdx && sections.length > 1
+                    const color = STATUS_COLOR[ps.level]
+                    return (
+                      <tr key={ps.section.id || i} style={{
+                        borderBottom: '1px solid var(--border-1)',
+                        background: isBottle ? `${color}08` : undefined,
+                      }}>
+                        <td style={{ padding: '6px 8px', fontWeight: isBottle ? 700 : 500 }}>
+                          {ps.section.name || `Section ${i + 1}`}
+                        </td>
+                        <td style={{ padding: '6px 8px' }}>{(ps.section.n_external_layers ?? 2) + (ps.section.n_internal_layers ?? 0)}L</td>
+                        <td style={{ padding: '6px 8px', color }}>{fmtNum(r.dT_total, 1)}</td>
+                        <td style={{ padding: '6px 8px' }}>{fmtNum(r.R_total * 1000, 3)}</td>
+                        <td style={{ padding: '6px 8px' }}>{fmtNum(r.Vdrop * 1000, 2)}</td>
+                        <td style={{ padding: '6px 8px' }}>{fmtNum(r.Ploss, 3)}</td>
+                        <td style={{ padding: '6px 8px', color: r.CD > CD_SAFE ? 'var(--amber)' : undefined }}>{fmtNum(r.CD, 2)}</td>
+                        <td style={{ padding: '6px 8px' }}>
+                          <span style={{ fontSize: 13 }}>{STATUS_ICON[ps.level]}</span>
+                          {isBottle && <span style={{ fontSize: 9, marginLeft: 4, color }}>← bottleneck</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {/* Total row */}
+                  <tr style={{ borderTop: '2px solid var(--border-2)', fontWeight: 700 }}>
+                    <td style={{ padding: '6px 8px' }}>TOTAL</td>
+                    <td style={{ padding: '6px 8px', color: 'var(--txt-3)' }}>—</td>
+                    <td style={{ padding: '6px 8px', color: STATUS_COLOR[status.level] }}>{fmtNum(combined.dT_worst, 1)}</td>
+                    <td style={{ padding: '6px 8px' }}>{fmtNum(combined.R_total * 1000, 3)}</td>
+                    <td style={{ padding: '6px 8px' }}>{fmtNum(combined.Vdrop_total * 1000, 2)}</td>
+                    <td style={{ padding: '6px 8px' }}>{fmtNum(combined.Ploss_total, 3)}</td>
+                    <td style={{ padding: '6px 8px', color: combined.CD_worst > CD_SAFE ? 'var(--amber)' : undefined }}>{fmtNum(combined.CD_worst, 2)}</td>
+                    <td style={{ padding: '6px 8px' }}><span style={{ fontSize: 13 }}>{STATUS_ICON[status.level]}</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── Layer-by-Layer Thermal Distribution ─── */}
+      {combined && perSection.length > 0 && (
+        <div className="card" style={{ padding: '10px 14px' }}>
+          <SectionHead icon="📊">Layer-by-Layer Thermal Distribution</SectionHead>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 10 }}>
+            {perSection.map((ps, secIdx) => {
+              const r = ps.result
+              if (!r) return null
+              const sec = ps.section
+              const nExt = sec.n_external_layers ?? 2
+              const nInt = sec.n_internal_layers ?? 0
+              const maxDT = Math.max(combined.dT_worst, combined.dT_via_worst || 0, 1)
+
+              return (
+                <div key={sec.id || secIdx} style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'center' }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--txt-2)', whiteSpace: 'nowrap', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {sec.name || `S${secIdx + 1}`}
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end' }}>
+                    {Array.from({ length: nExt }, (_, i) => (
+                      <VerticalLayerBar key={`e${i}`} label={`E${i+1}`} dT={r.dT_ext}
+                        maxDT={maxDT} explain={`External L${i+1} · K=0.048 · ΔT=${fmtNum(r.dT_ext,1)}°C`} />
+                    ))}
+                    {Array.from({ length: nInt }, (_, i) => (
+                      <VerticalLayerBar key={`i${i}`} label={`I${i+1}`} dT={r.dT_int}
+                        maxDT={maxDT} explain={`Internal L${i+1} · K=0.024 · ΔT=${fmtNum(r.dT_int,1)}°C`} />
+                    ))}
+                    {sec.vias_on !== false && r.dT_via > 0 && (
+                      <>
+                        <div style={{ width: 1, height: 44, background: 'var(--border-2)', margin: '0 2px', alignSelf: 'flex-end', marginBottom: 22 }} />
+                        <VerticalLayerBar label={`Via×${sec.n_vias??10}`} dT={r.dT_via}
+                          maxDT={maxDT} explain={`Via Array · ΔT=${fmtNum(r.dT_via,1)}°C`} />
+                      </>
+                    )}
+                  </div>
+                  {/* Section separator */}
+                  {secIdx < perSection.length - 1 && (
+                    <div style={{ width: 1, height: '100%', minHeight: 30, background: 'var(--border-2)', margin: '0 4px' }} />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <div style={{ marginTop: 10, fontSize: 10, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)' }}>
+            🟢 safe (ΔT {'<'} 30°C) · 🟡 elevated (30–60°C) · 🔴 critical ({'>'} 60°C) · E=external, I=internal
+          </div>
+        </div>
+      )}
+
+      {/* ─── Recommendations ─── */}
+      {recos.length > 0 && (
+        <div className="card" style={{ padding: '10px 14px' }}>
+          <div onClick={() => setShowRecos(p => !p)} style={{
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+            fontSize: 11, fontWeight: 700, color: 'var(--txt-2)',
+            padding: '6px 0', borderBottom: '1px solid var(--border-1)',
+            textTransform: 'uppercase', letterSpacing: '.05em',
+          }}>
+            <span>💡</span>
+            Design Recommendations ({recos.length})
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--txt-3)' }}>
+              {showRecos ? '▲' : '▼'}
+            </span>
+          </div>
+          {showRecos && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+              {recos.map((rec, i) => (
+                <div key={i} style={{
+                  padding: '8px 10px', borderRadius: 6,
+                  background: rec.solves ? 'rgba(0,230,118,.05)' : 'rgba(255,171,0,.05)',
+                  border: `1px solid ${rec.solves ? 'var(--green)' : 'var(--amber)'}20`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                      background: rec.solves ? 'var(--green)' : 'var(--amber)',
+                      color: '#000', flexShrink: 0
+                    }}>
+                      {rec.solves ? 'SOLVES' : 'PARTIAL'}
+                    </span>
+                    <div style={{ fontSize: 12, color: 'var(--txt-1)', fontWeight: 500 }}>{rec.action}</div>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)', fontWeight: 600, textAlign: 'right' }}>
+                    <span style={{ color: 'var(--green)' }}>-{fmtNum(rec.deltaDT, 1)}°C</span>
+                    <span style={{ marginLeft: 6, color: 'var(--txt-2)' }}>-{fmtNum(rec.deltaCD, 1)} A/mm²</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── PCB Power Loop Impedance ─── */}
+      {(() => {
+        const C = state.project.calculations
+        const pcbg = C?.pcb_guidelines || {}
+        const ovr = state.project.blocks.passives?.overrides || {}
+
+        // Compute per-section inductance from all sections
+        const perSecL = sections.map(sec => {
+          const l_mm = parseFloat(sec.trace_length_mm) || 0
+          const w_mm = parseFloat(sec.trace_width_mm) || 0
+          const cu_oz = parseFloat(sec.copper_oz ?? 2)
+          const name = sec.name || 'Section'
           if (l_mm > 0 && w_mm > 0) {
             const h_mm = cu_oz * 0.035
             const ln_arg = Math.max(4.0 * l_mm / (w_mm + h_mm), 1.01)
-            loopNh = 0.4 * l_mm * (Math.log(ln_arg) + 0.5)
-            
-            if (loopNh <= 5.0) { loopSt = 'OK'; loopColor = 'var(--green)' }
-            else if (loopNh <= 10.0) { loopSt = 'WARNING'; loopColor = '#ffab40' }
-            else { loopSt = 'CRITICAL'; loopColor = 'var(--red)' }
+            const L_nH = 0.4 * l_mm * (Math.log(ln_arg) + 0.5)
+            return { name, l_mm, w_mm, cu_oz, L_nH, valid: true }
           }
+          return { name, l_mm, w_mm, cu_oz, L_nH: 0, valid: false }
+        })
 
-          const tLayers  = (traceP.n_external_layers || 2) + (traceP.n_internal_layers || 0)
+        const validSecs = perSecL.filter(s => s.valid)
+        const totalLoopNh = validSecs.length > 0 ? validSecs.reduce((sum, s) => sum + s.L_nH, 0) : null
 
-          function setTrace(k, v) {
-            const n = parseFloat(v)
-            dispatch({ type:'SET_PCB_TRACE_PARAMS', payload:{ [k]: Number.isFinite(n) ? n : undefined } })
-          }
-          function setOvrLocal(k, v) {
-            const n = parseFloat(v)
-            dispatch({ type:'SET_PASSIVES_OVERRIDE', payload:{ key:k, value: Number.isFinite(n) ? n : undefined } })
-          }
+        let loopSt = 'unknown', loopColor = 'var(--txt-4)'
+        if (totalLoopNh != null) {
+          if (totalLoopNh <= 5.0) { loopSt = 'OK'; loopColor = 'var(--green)' }
+          else if (totalLoopNh <= 10.0) { loopSt = 'WARNING'; loopColor = '#ffab40' }
+          else { loopSt = 'CRITICAL'; loopColor = 'var(--red)' }
+        }
 
-          return (
-            <div className="card" style={{ padding:'14px 16px' }}>
-              {/* Header */}
-              <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12 }}>
-                <div style={{ width:34, height:34, borderRadius:9, flexShrink:0,
-                  background:'rgba(100,181,246,.12)', border:'1px solid rgba(100,181,246,.3)',
-                  display:'flex', alignItems:'center', justifyContent:'center', fontSize:17 }}>🖥️</div>
-                <div>
-                  <div style={{ fontWeight:700, fontSize:13, color:'#64b5f6' }}>PCB Power Loop Impedance</div>
-                  <div style={{ fontSize:10, color:'var(--txt-3)' }}>
-                    Half-bridge commutation loop inductance · PCB layout guidelines
-                  </div>
+        // Bus bar resistance from combined thermal results (frontend solver uses SI units)
+        const busBarR = combined?.R_total != null ? combined.R_total * 1000 : null  // Ω → mΩ
+        const busBarVdrop = combined?.Vdrop_total != null ? combined.Vdrop_total * 1000 : null  // V → mV
+        const busBarPloss = combined?.Ploss_total ?? null  // W
+
+        function setOvrLocal(k, v) {
+          const n = parseFloat(v)
+          dispatch({ type: 'SET_PASSIVES_OVERRIDE', payload: { key: k, value: Number.isFinite(n) ? n : undefined } })
+        }
+
+        return (
+          <div className="card" style={{ padding: '14px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+                background: 'rgba(100,181,246,.12)', border: '1px solid rgba(100,181,246,.3)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17 }}>🖥️</div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: '#64b5f6' }}>PCB Power Loop Impedance</div>
+                <div style={{ fontSize: 10, color: 'var(--txt-3)' }}>
+                  Half-bridge commutation loop inductance · Bus bar resistance · Layout guidelines
                 </div>
               </div>
+            </div>
 
-              {/* Inputs grid */}
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8, marginBottom:12 }}>
-                {[
-                  { label:'Power Trace Width', unit:'mm', val: traceP.trace_width_mm ?? '', onChg: v => setTrace('trace_width_mm', v), ph:'e.g. 7' },
-                  { label:'Power Trace Length', unit:'mm', val: traceP.trace_length_mm ?? '', onChg: v => setTrace('trace_length_mm', v), ph:'one-way, mm' },
-                  { label:'PCB Layers', unit:'layers', val: tLayers > 0 ? tLayers : '', onChg: v => {
-                    const n = Math.max(1, Math.round(parseFloat(v) || 2))
-                    dispatch({ type:'SET_PCB_TRACE_PARAMS', payload:{ n_external_layers: Math.min(n,2), n_internal_layers: Math.max(0, n-2) } })
-                  }, ph:'2' },
-                  { label:'Gate Trace Width', unit:'mm', val: ovr.gate_trace_w_mm ?? '', onChg: v => setOvrLocal('gate_trace_w_mm', v), ph:'0.3' },
-                  { label:'Power Clearance', unit:'mm', val: ovr.power_clearance_mm ?? '', onChg: v => setOvrLocal('power_clearance_mm', v), ph:'1.0' },
-                ].map(f => (
-                  <div key={f.label}>
-                    <div style={{ fontSize:10, fontWeight:600, color:'var(--txt-3)', marginBottom:3 }}>
-                      {f.label} <span style={{ fontFamily:'var(--font-mono)', color:'var(--txt-4)' }}>[{f.unit}]</span>
-                    </div>
-                    <input
-                      type="number" className="inp inp-mono"
-                      value={f.val} placeholder={f.ph}
-                      onChange={e => f.onChg(e.target.value)}
-                      style={{ width:'100%', fontSize:12, padding:'5px 8px' }}
-                    />
+            {/* Unique inputs only: gate trace width + power clearance */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+              {[
+                { label: 'Gate Trace Width', unit: 'mm', val: ovr.gate_trace_w_mm ?? '', onChg: v => setOvrLocal('gate_trace_w_mm', v), ph: '0.3',
+                  note: 'Gate drive signal trace — minimum for controlled impedance' },
+                { label: 'Power Clearance', unit: 'mm', val: ovr.power_clearance_mm ?? '', onChg: v => setOvrLocal('power_clearance_mm', v), ph: '1.0',
+                  note: 'High-voltage spacing between power traces' },
+              ].map(f => (
+                <div key={f.label}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--txt-3)', marginBottom: 3 }}>
+                    {f.label} <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--txt-4)' }}>[{f.unit}]</span>
                   </div>
-                ))}
-              </div>
-
-              {/* Loop inductance result */}
-              <div style={{
-                padding:'10px 14px', borderRadius:8,
-                background: loopNh != null ? `${loopColor}0e` : 'var(--bg-2)',
-                border:`1px solid ${loopNh != null ? loopColor + '55' : 'var(--border-1)'}`,
-                marginBottom:10,
-              }}>
-                <div style={{ fontSize:10, color:'var(--txt-3)', marginBottom:4 }}>
-                  Half-Bridge Power Loop Inductance
+                  <input type="number" className="inp inp-mono"
+                    value={f.val} placeholder={f.ph}
+                    onChange={e => f.onChg(e.target.value)}
+                    style={{ width: '100%', fontSize: 12, padding: '5px 8px' }}
+                  />
+                  {f.note && <div style={{ fontSize: 9, color: 'var(--txt-4)', marginTop: 2 }}>{f.note}</div>}
                 </div>
-                <div style={{ display:'flex', alignItems:'baseline', gap:8 }}>
-                  <span style={{ fontSize:22, fontWeight:800, fontFamily:'var(--font-mono)', color: loopNh != null ? loopColor : 'var(--txt-4)' }}>
-                    {loopNh != null ? `${+(loopNh).toFixed(2)}` : '—'}
+              ))}
+            </div>
+
+            {/* Data source note */}
+            <div style={{
+              padding: '6px 10px', borderRadius: 6, marginBottom: 12,
+              background: 'rgba(100,181,246,.06)', border: '1px solid rgba(100,181,246,.15)',
+              fontSize: 10, color: 'var(--txt-3)', display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ fontSize: 14 }}>🔗</span>
+              <span>Trace geometry, layer stack, and via data are automatically pulled from the <strong style={{ color: '#64b5f6' }}>bus bar sections</strong> above.</span>
+            </div>
+
+            {/* Per-section inductance breakdown */}
+            {validSecs.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--txt-3)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>
+                  Per-Section Loop Inductance
+                </div>
+                <div style={{ borderRadius: 7, overflow: 'hidden', border: '1px solid var(--border-1)' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-3)' }}>
+                        <th style={{ padding: '5px 8px', textAlign: 'left', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Section</th>
+                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Length</th>
+                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Width</th>
+                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Cu</th>
+                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>L (nH)</th>
+                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Contrib.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {validSecs.map((s, i) => {
+                        const pct = totalLoopNh > 0 ? (s.L_nH / totalLoopNh * 100) : 0
+                        const isWorst = validSecs.length > 1 && s.L_nH === Math.max(...validSecs.map(x => x.L_nH))
+                        return (
+                          <tr key={i} style={{
+                            background: isWorst ? 'rgba(255,171,0,.06)' : 'transparent',
+                            borderTop: '1px solid var(--border-1)',
+                          }}>
+                            <td style={{ padding: '5px 8px', fontWeight: 600, color: isWorst ? 'var(--amber)' : 'var(--txt-1)' }}>
+                              {s.name}{isWorst && validSecs.length > 1 ? ' ⚠' : ''}
+                            </td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--txt-2)' }}>{fmtNum(s.l_mm, 1)} mm</td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--txt-2)' }}>{fmtNum(s.w_mm, 1)} mm</td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--txt-2)' }}>{s.cu_oz} oz</td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)', color: isWorst ? 'var(--amber)' : 'var(--txt-1)' }}>{fmtNum(s.L_nH, 2)}</td>
+                            <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--txt-3)' }}>{fmtNum(pct, 0)}%</td>
+                          </tr>
+                        )
+                      })}
+                      {/* Total row */}
+                      {validSecs.length > 1 && (
+                        <tr style={{ borderTop: '2px solid var(--border-2)', background: 'var(--bg-3)' }}>
+                          <td style={{ padding: '5px 8px', fontWeight: 700, color: loopColor }}>TOTAL</td>
+                          <td colSpan={3} />
+                          <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 800, fontFamily: 'var(--font-mono)', color: loopColor, fontSize: 13 }}>
+                            {fmtNum(totalLoopNh, 2)}
+                          </td>
+                          <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--txt-3)' }}>100%</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Loop inductance result banner */}
+            <div style={{
+              padding: '10px 14px', borderRadius: 8,
+              background: totalLoopNh != null ? `${loopColor}0e` : 'var(--bg-2)',
+              border: `1px solid ${totalLoopNh != null ? loopColor + '55' : 'var(--border-1)'}`,
+              marginBottom: 10,
+            }}>
+              <div style={{ fontSize: 10, color: 'var(--txt-3)', marginBottom: 4 }}>
+                Half-Bridge Power Loop Inductance {validSecs.length > 1 ? `(${validSecs.length} sections, series sum)` : ''}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: totalLoopNh != null ? loopColor : 'var(--txt-4)' }}>
+                  {totalLoopNh != null ? `${+(totalLoopNh).toFixed(2)}` : '—'}
+                </span>
+                <span style={{ fontSize: 13, color: 'var(--txt-3)' }}>nH</span>
+                {totalLoopNh != null && (
+                  <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: loopColor }}>
+                    {loopSt === 'OK' ? '✓ GOOD' : loopSt === 'WARNING' ? '⚠ WARNING' : '✗ CRITICAL'}
                   </span>
-                  <span style={{ fontSize:13, color:'var(--txt-3)' }}>nH</span>
-                  {loopNh != null && (
-                    <span style={{ marginLeft:'auto', fontSize:11, fontWeight:700, color: loopColor }}>
-                      {loopSt === 'OK' ? '✓ GOOD' : loopSt === 'WARNING' ? '⚠ WARNING' : '✗ CRITICAL'}
-                    </span>
-                  )}
-                </div>
-                {loopNh != null && (
-                  <div style={{ fontSize:10, color:'var(--txt-4)', marginTop:4 }}>
-                    Target &lt; 5.0 nH · Current: {fmtNum(loopNh, 2)} nH · Formula: L ≈ 0.4 × l × [ln(4l/(w+t)) + 0.5] nH
-                  </div>
-                )}
-                {loopNh == null && (
-                  <div style={{ fontSize:10, color:'var(--txt-4)', marginTop:4 }}>
-                    Enter trace width and length above to calculate loop inductance.
-                  </div>
                 )}
               </div>
-
-              {/* Guidelines grid */}
-              {C && (
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
-                  {[
-                    { label:'Power trace width', val: pcbg.power_trace_w_mm != null ? `${fmtNum(pcbg.power_trace_w_mm,2)} mm` : '—' },
-                    { label:'Gate trace width',  val: pcbg.gate_trace_w_mm  != null ? `${fmtNum(pcbg.gate_trace_w_mm,2)} mm`  : '—' },
-                    { label:'Power clearance',   val: pcbg.power_clearance_mm != null ? `${fmtNum(pcbg.power_clearance_mm,1)} mm` : '—' },
-                  ].map(r => (
-                    <div key={r.label} style={{ background:'var(--bg-3)', borderRadius:7,
-                      padding:'8px 10px', border:'1px solid var(--border-1)' }}>
-                      <div style={{ fontSize:9.5, color:'var(--txt-3)', fontWeight:600, textTransform:'uppercase', letterSpacing:'.04em', marginBottom:3 }}>{r.label}</div>
-                      <div style={{ fontSize:14, fontWeight:700, fontFamily:'var(--font-mono)', color:'var(--txt-1)' }}>{r.val}</div>
-                    </div>
-                  ))}
+              {totalLoopNh != null && (
+                <div style={{ fontSize: 10, color: 'var(--txt-4)', marginTop: 4 }}>
+                  Target &lt; 5.0 nH · L = Σ L_section · L_section ≈ 0.4 × l × [ln(4l/(w+t)) + 0.5] nH
+                </div>
+              )}
+              {totalLoopNh == null && (
+                <div style={{ fontSize: 10, color: 'var(--txt-4)', marginTop: 4 }}>
+                  Enter trace width and length in the bus bar sections above to calculate loop inductance.
                 </div>
               )}
             </div>
-          )
-        })()}
 
-        {/* ── No-data placeholder ── */}
-        {!result && (
-          <div className="card" style={{ padding: '48px 24px', textAlign: 'center' }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>🔥</div>
-            <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--txt-1)', marginBottom: 6 }}>
-              PCB Trace Thermal Calculator
+            {/* Bus bar resistance + impedance metrics */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+              {[
+                { label: 'Bus Bar Resistance', val: busBarR != null ? `${fmtNum(busBarR, 3)} mΩ` : '—', note: 'Total series R' },
+                { label: 'Bus Bar Vdrop', val: busBarVdrop != null ? `${fmtNum(busBarVdrop, 2)} mV` : '—', note: 'I × R_total' },
+                { label: 'Bus Bar Power Loss', val: busBarPloss != null ? `${fmtNum(busBarPloss, 3)} W` : '—', note: 'I² × R' },
+                { label: 'Loop Inductance', val: totalLoopNh != null ? `${fmtNum(totalLoopNh, 2)} nH` : '—', note: 'Σ L_section' },
+              ].map(r => (
+                <div key={r.label} style={{ background: 'var(--bg-3)', borderRadius: 7,
+                  padding: '8px 10px', border: '1px solid var(--border-1)' }}>
+                  <div style={{ fontSize: 9, color: 'var(--txt-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>{r.label}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--txt-1)' }}>{r.val}</div>
+                  <div style={{ fontSize: 8.5, color: 'var(--txt-4)', marginTop: 2 }}>{r.note}</div>
+                </div>
+              ))}
             </div>
-            <div style={{ fontSize: 12, color: 'var(--txt-3)' }}>
-              Enter trace parameters to calculate thermal performance using IPC-2221B/2152 standards.
-            </div>
+
+            {/* Backend guidelines (if available) */}
+            {C && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                {[
+                  { label: 'Power trace (rec.)', val: pcbg.power_trace_w_mm != null ? `${fmtNum(pcbg.power_trace_w_mm, 2)} mm` : '—' },
+                  { label: 'Gate trace width', val: pcbg.gate_trace_w_mm != null ? `${fmtNum(pcbg.gate_trace_w_mm, 2)} mm` : '—' },
+                  { label: 'Power clearance', val: pcbg.power_clearance_mm != null ? `${fmtNum(pcbg.power_clearance_mm, 1)} mm` : '—' },
+                ].map(r => (
+                  <div key={r.label} style={{ background: 'var(--bg-3)', borderRadius: 7,
+                    padding: '8px 10px', border: '1px solid var(--border-1)' }}>
+                    <div style={{ fontSize: 9.5, color: 'var(--txt-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>{r.label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--txt-1)' }}>{r.val}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        )
+      })()}
 
-      {/* ─── Right: Calculations panel ─── */}
-      <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <CalculationsPanel />
-      </div>
+      {/* ─── No-data placeholder ─── */}
+      {!combined && (
+        <div className="card" style={{ padding: '48px 24px', textAlign: 'center' }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>🔥</div>
+          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--txt-1)', marginBottom: 6 }}>
+            PCB Trace Thermal Calculator
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--txt-3)' }}>
+            Enter trace parameters to calculate thermal performance using IPC-2221B/2152 standards.
+          </div>
+        </div>
+      )}
     </div>
   )
 }

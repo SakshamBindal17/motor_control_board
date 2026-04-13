@@ -226,6 +226,16 @@ class ThermalMixin:
     # ═══════════════════════════════════════════════════════════════════
 
     # ═══════════════════════════════════════════════════════════════════
+    def _get_bus_bar_r_mohm(self):
+        """Get total bus bar resistance from pcb_trace_thermal results (if available)."""
+        try:
+            tr = self.calc_pcb_trace_thermal()
+            if isinstance(tr, dict) and tr.get("has_data"):
+                return round(tr.get("resistance_total_mohm", 0), 4)
+        except Exception:
+            pass
+        return None
+
     def calc_pcb_guidelines(self) -> dict:
         self._current_module = "pcb_guidelines"
         th = self.calc_thermal()
@@ -257,25 +267,52 @@ class ThermalMixin:
         loop_inductance_nh = None
         loop_status = "unknown"
         L_LOOP_TARGET = 5.0  # nH — standard half-bridge design target
+        per_section_L = []   # list of { name, l_mm, w_mm, cu_oz, L_nH }
 
         if hasattr(self, 'pcb_trace_params') and self.pcb_trace_params:
-            trace_l_mm = float(self.pcb_trace_params.get("trace_length_mm", 0) or 0)
-            trace_w_mm = float(self.pcb_trace_params.get("trace_width_mm",  0) or 0)
-            cu_oz_val  = float(self.pcb_trace_params.get("copper_oz", cu_oz) or cu_oz)
-            if trace_l_mm > 0 and trace_w_mm > 0:
-                h_mm     = cu_oz_val * 0.035  # trace thickness (1 oz = 35 µm)
-                ln_arg   = max(4.0 * trace_l_mm / (trace_w_mm + h_mm), 1.01)
-                l_nH     = 0.4 * trace_l_mm * (math.log(ln_arg) + 0.5)
-                loop_inductance_nh = round(l_nH, 1)
+            ptp = self.pcb_trace_params
+
+            if "sections" in ptp and ptp["sections"]:
+                # Multi-section: compute inductance per section, then sum
+                for sec in ptp["sections"]:
+                    sl = float(sec.get("trace_length_mm", 0) or 0)
+                    sw = float(sec.get("trace_width_mm", 0) or 0)
+                    scu = float(sec.get("copper_oz", cu_oz) or cu_oz)
+                    sname = sec.get("name", "Section")
+                    if sl > 0 and sw > 0:
+                        sh = scu * 0.035
+                        sln = max(4.0 * sl / (sw + sh), 1.01)
+                        sL = 0.4 * sl * (math.log(sln) + 0.5)
+                        per_section_L.append({
+                            "name": sname, "l_mm": sl, "w_mm": sw,
+                            "cu_oz": scu, "L_nH": round(sL, 2),
+                        })
+            else:
+                # Legacy flat format — single section
+                trace_l_mm = float(ptp.get("trace_length_mm", 0) or 0)
+                trace_w_mm = float(ptp.get("trace_width_mm",  0) or 0)
+                cu_oz_val  = float(ptp.get("copper_oz", cu_oz) or cu_oz)
+                if trace_l_mm > 0 and trace_w_mm > 0:
+                    h_mm = cu_oz_val * 0.035
+                    ln_arg = max(4.0 * trace_l_mm / (trace_w_mm + h_mm), 1.01)
+                    l_nH = 0.4 * trace_l_mm * (math.log(ln_arg) + 0.5)
+                    per_section_L.append({
+                        "name": "Trace", "l_mm": trace_l_mm, "w_mm": trace_w_mm,
+                        "cu_oz": cu_oz_val, "L_nH": round(l_nH, 2),
+                    })
+
+            if per_section_L:
+                loop_inductance_nh = round(sum(s["L_nH"] for s in per_section_L), 1)
                 if loop_inductance_nh <= L_LOOP_TARGET:
                     loop_status = "OK"
                 elif loop_inductance_nh <= 10.0:
                     loop_status = "WARNING"
                 else:
                     loop_status = "CRITICAL"
+                sec_desc = " + ".join(f"{s['name']}({s['l_mm']:.0f}mm×{s['w_mm']:.1f}mm)" for s in per_section_L)
                 self.audit_log.append(
                     f"[PCB] Half-bridge loop inductance: {loop_inductance_nh:.1f}nH "
-                    f"(trace {trace_l_mm:.0f}mm × {trace_w_mm:.1f}mm, {cu_oz_val}oz Cu). "
+                    f"({sec_desc}). "
                     f"Target <{L_LOOP_TARGET}nH — status: {loop_status}."
                 )
         if loop_inductance_nh is None:
@@ -301,6 +338,8 @@ class ThermalMixin:
             "half_bridge_loop_target_nh":    L_LOOP_TARGET,
             "half_bridge_loop_calculated_nh": loop_inductance_nh,
             "half_bridge_loop_status":       loop_status,
+            "per_section_inductance":        per_section_L,
+            "bus_bar_resistance_mohm":       self._get_bus_bar_r_mohm(),
             "shunt_kelvin_trace":            "Route sense traces INSIDE power trace pair (Kelvin connection)",
             "notes": {
                 "analog_gnd":    "AGND star point at ADC VREF, single bridge to PGND",

@@ -231,7 +231,9 @@ export default function PassivesPanel() {
   const stale  = !!state.project.calcs_stale
   const ovr    = state.project.blocks.passives.overrides || {}
   const specs  = state.project.system_specs || {}
-  const traceP = state.project.pcb_trace_thermal?.params || {}
+  const ptt_common = state.project.pcb_trace_thermal?.common || {}
+  const ptt_sections = state.project.pcb_trace_thermal?.sections || []
+  const traceP = { ...ptt_common, ...(ptt_sections[0] || {}) }  // merged: backward compat view
 
   // required/recommended open by default; optional sections start collapsed
   const [open, setOpen] = useState({
@@ -297,7 +299,10 @@ export default function PassivesPanel() {
         motor_specs: state.project.blocks.motor.specs || {},
         passives_overrides: state.project.blocks.passives.overrides || {},
         design_constants: state.project.design_constants || {},
-        pcb_trace_thermal_params: state.project.pcb_trace_thermal?.params || {},
+        pcb_trace_thermal_params: {
+          common: state.project.pcb_trace_thermal?.common || {},
+          sections: state.project.pcb_trace_thermal?.sections || [],
+        },
       })
       dispatch({ type:'SET_CALCULATIONS', payload: r })
       if (!silent) toast.success('Done!', { id:'pc' })

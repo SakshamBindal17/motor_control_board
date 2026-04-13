@@ -272,9 +272,11 @@ class TestCalculationEngine:
         )
         r_2221 = e_2221.calc_pcb_trace_thermal()
 
-        assert r_alias["ipc2152_corrections"] is not None
+        # New multi-section format checks
+        assert r_alias["has_data"] is True
         assert r_alias["notes"]["standard"].startswith("IPC-2221B + corrections")
-        assert r_2221["ipc2152_corrections"] is None
+        assert r_2221["notes"]["standard"].startswith("IPC-2221B")
+        assert "correction" not in r_2221["notes"]["standard"].lower() or "corrections" not in r_2221["notes"]["standard"]
 
     def test_protection_dividers(self, engine):
         pd = engine.calc_protection_dividers()

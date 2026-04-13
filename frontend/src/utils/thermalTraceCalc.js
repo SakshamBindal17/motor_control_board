@@ -616,3 +616,266 @@ export function buildSolverParams(panelParams, systemSpecs = {}) {
       : null,
   };
 }
+
+// ─── Multi-Section Bus Bar Solver ───────────────────────────────────
+// The bus bar is modeled as N sections connected in series.
+// Same current I flows through every section. Each section is solved
+// independently using the existing IPC engine, then results are aggregated.
+
+/**
+ * Keys that belong to the "common" (shared) parameter block.
+ * Everything else is per-section.
+ */
+export const COMMON_PARAM_KEYS = [
+  'current_a', 'ambient_c', 'pcb_thickness_mm', 'max_conductor_temp_c',
+  'model', 'cooling_mode', 'orientation', 'spreading_factor',
+  'air_velocity_ms', 'hs_theta_sa', 'hs_theta_int', 'hs_contact_area_cm2',
+  'plane_dist_mm', 'copper_fill_pct',
+];
+
+/**
+ * Default values for a new section.
+ */
+export const DEFAULT_SECTION = {
+  name: 'New Section',
+  trace_width_mm: 7,
+  trace_length_mm: 20,
+  copper_oz: 2,
+  n_external_layers: 2,
+  n_internal_layers: 0,
+  vias_on: true,
+  n_vias: 10,
+  via_drill_mm: 0.3,
+  via_plating_um: 25,
+  busbar_area_mm2: null,
+};
+
+/**
+ * Build solver params for a single section, merging section-specific fields
+ * with common (shared) fields and system specs.
+ */
+export function buildSectionSolverParams(section, common, systemSpecs = {}) {
+  const current = common.current_a ?? systemSpecs.max_phase_current ?? 80;
+  const ambient = common.ambient_c ?? systemSpecs.ambient_temp_c ?? 30;
+
+  const cooling = getCoolingParams(common.cooling_mode || 'natural', {
+    orientation:         common.orientation || 'vertical',
+    spreading_factor:    common.spreading_factor ?? 1.5,
+    air_velocity_ms:     common.air_velocity_ms ?? 1,
+    hs_theta_sa:         common.hs_theta_sa ?? 5,
+    hs_theta_int:        common.hs_theta_int ?? 0.5,
+    hs_contact_area_cm2: common.hs_contact_area_cm2 ?? 10,
+  });
+
+  return {
+    Itot:        Math.max(0.001, current),
+    Ta:          ambient,
+    Wmm:         Math.max(0.01, section.trace_width_mm ?? 7),
+    Lmm:         Math.max(0.1, section.trace_length_mm ?? 20),
+    oz:          section.copper_oz ?? 2,
+    nExt:        clamp(Math.round(section.n_external_layers ?? 2), 0, 2),
+    nInt:        clamp(Math.round(section.n_internal_layers ?? 0), 0, 20),
+    cooling,
+    pcbThick:    Math.max(0.1, common.pcb_thickness_mm ?? 1.6),
+    Tmax_allow:  common.max_conductor_temp_c ?? 105,
+    vias_on:     section.vias_on !== false,
+    nvias:       clamp(Math.round(section.n_vias ?? 10), 1, 500),
+    vdrill:      Math.max(0.05, section.via_drill_mm ?? 0.3),
+    vplate_um:   Math.max(1, section.via_plating_um ?? 25),
+    planeDist:   common.plane_dist_mm ?? 0,
+    copperFill:  common.copper_fill_pct ?? 0,
+    model:       normalizeTraceModel(common.model),
+    busbar_area_mm2: (section.busbar_area_mm2 != null && section.busbar_area_mm2 > 0)
+      ? section.busbar_area_mm2
+      : null,
+  };
+}
+
+/**
+ * Master multi-section solver.
+ * Solves each section independently (same current through all — series chain),
+ * then aggregates results.
+ *
+ * @param {Array} sections — array of section objects
+ * @param {object} common — shared params (current, ambient, cooling, etc.)
+ * @param {object} systemSpecs — system specs fallback values
+ * @returns {{ perSection: Array, combined: object, bottleneckIdx: number }}
+ */
+export function solveMultiSection(sections, common, systemSpecs = {}) {
+  if (!sections || sections.length === 0) return null;
+
+  const perSection = [];
+  let anyValid = false;
+
+  for (let i = 0; i < sections.length; i++) {
+    const sec = sections[i];
+    const solverParams = buildSectionSolverParams(sec, common, systemSpecs);
+    const result = iterativeSolve(solverParams);
+
+    if (result) {
+      anyValid = true;
+      // Compute per-section status level
+      const Ta = solverParams.Ta;
+      const Tmax_allow = solverParams.Tmax_allow;
+      const tmax_abs = Ta + result.dT_total;
+      const viasOn = solverParams.vias_on;
+      let sectionLevel = 'safe';
+      if (result.dT_total > 200 || tmax_abs > Tmax_allow || result.CD > 15) {
+        sectionLevel = 'danger';
+      } else if (result.CD > CD_SAFE || result.dT_total > TRACE_SAFE_DT ||
+                 (viasOn && result.dT_via > VIA_SAFE_DT)) {
+        sectionLevel = 'warn';
+      }
+      perSection.push({
+        section: sec,
+        solverParams,
+        result,
+        level: sectionLevel,
+        tmax_abs,
+      });
+    } else {
+      perSection.push({
+        section: sec,
+        solverParams,
+        result: null,
+        level: 'danger',
+        tmax_abs: null,
+      });
+    }
+  }
+
+  if (!anyValid) return null;
+
+  // ── Aggregate across all valid sections ──
+  // Series chain: R adds, Vdrop adds, Ploss adds
+  // ΔT: each section is spatially independent → worst (max) is the thermal bottleneck
+  // CD: worst (max) across sections
+  // Imax: weakest (min) section limits the chain
+  let R_total = 0;
+  let Vdrop_total = 0;
+  let Ploss_total = 0;
+  let dT_worst = 0;
+  let dT_via_worst = 0;
+  let CD_worst_val = 0;
+  let Imax_min = Infinity;
+  let bottleneckIdx = 0;
+  let totalLength = 0;
+
+  for (let i = 0; i < perSection.length; i++) {
+    const { result, section } = perSection[i];
+    if (!result) continue;
+
+    R_total += result.R_total;
+    Vdrop_total += result.Vdrop;
+    Ploss_total += result.Ploss;
+    totalLength += (section.trace_length_mm ?? 0);
+
+    if (result.dT_total > dT_worst) {
+      dT_worst = result.dT_total;
+      bottleneckIdx = i;
+    }
+    if (result.dT_via > dT_via_worst) {
+      dT_via_worst = result.dT_via;
+    }
+    if (result.CD > CD_worst_val) {
+      CD_worst_val = result.CD;
+    }
+    if (result.Imax_total > 0 && result.Imax_total < Imax_min) {
+      Imax_min = result.Imax_total;
+    }
+  }
+
+  if (Imax_min === Infinity) Imax_min = 0;
+
+  const Ta = perSection[0].solverParams.Ta;
+  const Tmax_allow = perSection[0].solverParams.Tmax_allow;
+  const worstDt = Math.max(dT_worst, dT_via_worst);
+  const tmax_abs = Ta + dT_worst;
+  const margin = Tmax_allow - tmax_abs;
+  const Itot = perSection[0].solverParams.Itot;
+
+  const combined = {
+    R_total,
+    Vdrop_total,
+    Ploss_total,
+    dT_worst,
+    dT_via_worst,
+    CD_worst: CD_worst_val,
+    Imax_safe: Imax_min,
+    tmax_abs,
+    margin,
+    worstDt,
+    totalLength,
+    Ta,
+    Tmax_allow,
+    Itot,
+    sectionCount: sections.length,
+  };
+
+  return { perSection, combined, bottleneckIdx };
+}
+
+/**
+ * Status assessment for multi-section combined results.
+ */
+export function assessMultiSectionStatus(combined) {
+  if (!combined) return { level: 'safe', icon: '—', message: 'No data' };
+
+  const { dT_worst, dT_via_worst, CD_worst, tmax_abs, Tmax_allow, margin } = combined;
+
+  if (dT_worst > 1060) {
+    return { level: 'danger', icon: '💀', message: `OVERCURRENT — copper melting point exceeded (ΔT = ${dT_worst.toFixed(0)}°C). Redesign completely.` };
+  }
+  if (dT_worst > 200) {
+    return { level: 'danger', icon: '🔴', message: `TRACE FAILURE — bottleneck ΔT = ${dT_worst.toFixed(0)}°C exceeds FR4 laminate limits (~200°C).` };
+  }
+  if (dT_via_worst > 60) {
+    return { level: 'danger', icon: '🔴', message: `Via overheating: worst via ΔT is ${dT_via_worst.toFixed(1)}°C (critical > 60°C).` };
+  }
+  if (tmax_abs > Tmax_allow) {
+    return { level: 'danger', icon: '🔴', message: `Over limit: bottleneck conductor at ${tmax_abs.toFixed(1)}°C exceeds your ${Tmax_allow}°C maximum.` };
+  }
+  if (CD_worst > 15) {
+    return { level: 'danger', icon: '🔴', message: `Current density ${CD_worst.toFixed(1)} A/mm² is critically high at bottleneck section.` };
+  }
+  if (CD_worst > 8) {
+    return { level: 'warn', icon: '⚠️', message: `Current density ${CD_worst.toFixed(1)} A/mm² elevated at bottleneck. Conductor at ${tmax_abs.toFixed(1)}°C (${margin.toFixed(0)}°C margin).` };
+  }
+  if (dT_via_worst > VIA_SAFE_DT) {
+    return { level: 'warn', icon: '⚠️', message: `Via thermal rise elevated at ${dT_via_worst.toFixed(1)}°C (> ${VIA_SAFE_DT}°C) in worst section.` };
+  }
+  if (tmax_abs > Tmax_allow * 0.9 || margin < 10) {
+    return { level: 'warn', icon: '⚠️', message: `Close to limit — bottleneck conductor at ${tmax_abs.toFixed(1)}°C with only ${margin.toFixed(0)}°C margin.` };
+  }
+  if (dT_worst > 30) {
+    return { level: 'warn', icon: '⚠️', message: `Elevated ΔT of ${dT_worst.toFixed(1)}°C at bottleneck — ${tmax_abs.toFixed(1)}°C (${margin.toFixed(0)}°C margin).` };
+  }
+  return { level: 'safe', icon: '✓', message: `All sections safe. Peak conductor at ${tmax_abs.toFixed(1)}°C — ${margin.toFixed(0)}°C margin to ${Tmax_allow}°C.` };
+}
+
+/**
+ * Generate targeted recommendations for multi-section layout.
+ * Focuses on the bottleneck section since that limits the design.
+ */
+export function computeMultiSectionRecommendations(sections, common, systemSpecs, multiResult) {
+  if (!multiResult || !multiResult.combined) return [];
+  const { combined, bottleneckIdx, perSection } = multiResult;
+
+  // If already safe, no recommendations needed
+  const status = assessMultiSectionStatus(combined);
+  if (status.level === 'safe') return [];
+
+  // Get the bottleneck section and run single-section recommendations on it
+  const bottleneck = perSection[bottleneckIdx];
+  if (!bottleneck || !bottleneck.result) return [];
+
+  const singleRecos = computeRecommendations(bottleneck.solverParams, bottleneck.result);
+
+  // Tag each recommendation with the section name
+  const secName = bottleneck.section.name || `Section ${bottleneckIdx + 1}`;
+  return singleRecos.map(r => ({
+    ...r,
+    action: `[${secName}] ${r.action}`,
+    sectionIdx: bottleneckIdx,
+  }));
+}

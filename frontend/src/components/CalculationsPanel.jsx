@@ -221,7 +221,10 @@ export default function CalculationsPanel() {
         motor_specs: project.blocks.motor.specs || {},
         passives_overrides: project.blocks.passives.overrides || {},
         design_constants: project.design_constants || {},
-        pcb_trace_thermal_params: project.pcb_trace_thermal?.params || {},
+        pcb_trace_thermal_params: {
+          common: project.pcb_trace_thermal?.common || {},
+          sections: project.pcb_trace_thermal?.sections || [],
+        },
       }
 
       // Run primary MOSFET calculation

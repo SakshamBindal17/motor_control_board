@@ -101,12 +101,9 @@ const INITIAL_STATE = {
     comparison_results: null,
     design_constants: {},
     pcb_trace_thermal: {
-      params: {
+      common: {
         current_a: null,
         ambient_c: null,
-        trace_width_mm: 7,
-        trace_length_mm: 20,
-        copper_oz: 2,
         pcb_thickness_mm: 1.6,
         max_conductor_temp_c: 105,
         model: '2221',
@@ -117,15 +114,25 @@ const INITIAL_STATE = {
         hs_theta_sa: 5,
         hs_theta_int: 0.5,
         hs_contact_area_cm2: 10,
-        n_external_layers: 2,
-        n_internal_layers: 0,
-        vias_on: true,
-        n_vias: 10,
-        via_drill_mm: 0.3,
-        via_plating_um: 25,
         plane_dist_mm: 0,
         copper_fill_pct: 0,
       },
+      sections: [
+        {
+          id: 'sec_1',
+          name: 'Section 1',
+          trace_width_mm: 7,
+          trace_length_mm: 20,
+          copper_oz: 2,
+          n_external_layers: 2,
+          n_internal_layers: 0,
+          vias_on: true,
+          n_vias: 10,
+          via_drill_mm: 0.3,
+          via_plating_um: 25,
+          busbar_area_mm2: null,
+        }
+      ],
       results: null,
     },
     last_saved: null,
@@ -406,16 +413,117 @@ function reducer(state, action) {
         project: { ...state.project, comparison_results: action.payload },
       }
 
+    // ── Multi-section PCB Trace Thermal actions ──────────────────────
+    // SET_PCB_TRACE_PARAMS kept for backward compat (PassivesPanel Power Loop)
+    // — maps to updating common params + first section's trace dims
     case 'SET_PCB_TRACE_PARAMS': {
-      const newParams = { ...state.project.pcb_trace_thermal.params, ...action.payload }
+      const ptt = state.project.pcb_trace_thermal
+      // Figure out which keys are common vs section-specific
+      const commonKeys = new Set([
+        'current_a', 'ambient_c', 'pcb_thickness_mm', 'max_conductor_temp_c',
+        'model', 'cooling_mode', 'orientation', 'spreading_factor',
+        'air_velocity_ms', 'hs_theta_sa', 'hs_theta_int', 'hs_contact_area_cm2',
+        'plane_dist_mm', 'copper_fill_pct',
+      ])
+      const commonUpdates = {}
+      const sectionUpdates = {}
+      for (const [k, v] of Object.entries(action.payload)) {
+        if (commonKeys.has(k)) commonUpdates[k] = v
+        else sectionUpdates[k] = v
+      }
+      const newCommon = { ...ptt.common, ...commonUpdates }
+      let newSections = ptt.sections
+      if (Object.keys(sectionUpdates).length > 0 && newSections.length > 0) {
+        // Update the first section with any section-specific keys
+        newSections = newSections.map((s, i) =>
+          i === 0 ? { ...s, ...sectionUpdates } : s
+        )
+      }
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
+          pcb_trace_thermal: { ...ptt, common: newCommon, sections: newSections },
+        },
+      }
+    }
+
+    case 'SET_PCB_TRACE_COMMON': {
+      const ptt = state.project.pcb_trace_thermal
       return {
         ...state,
         project: {
           ...state.project,
           calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
           pcb_trace_thermal: {
-            ...state.project.pcb_trace_thermal,
-            params: newParams,
+            ...ptt,
+            common: { ...ptt.common, ...action.payload },
+          },
+        },
+      }
+    }
+
+    case 'SET_PCB_TRACE_SECTION': {
+      const { sectionId, ...updates } = action.payload
+      const ptt = state.project.pcb_trace_thermal
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
+          pcb_trace_thermal: {
+            ...ptt,
+            sections: ptt.sections.map(s =>
+              s.id === sectionId ? { ...s, ...updates } : s
+            ),
+          },
+        },
+      }
+    }
+
+    case 'ADD_PCB_TRACE_SECTION': {
+      const ptt = state.project.pcb_trace_thermal
+      const newId = 'sec_' + Date.now()
+      const template = action.payload || {}
+      const newSection = {
+        id: newId,
+        name: template.name || `Section ${ptt.sections.length + 1}`,
+        trace_width_mm: template.trace_width_mm ?? 7,
+        trace_length_mm: template.trace_length_mm ?? 20,
+        copper_oz: template.copper_oz ?? 2,
+        n_external_layers: template.n_external_layers ?? 2,
+        n_internal_layers: template.n_internal_layers ?? 0,
+        vias_on: template.vias_on ?? true,
+        n_vias: template.n_vias ?? 10,
+        via_drill_mm: template.via_drill_mm ?? 0.3,
+        via_plating_um: template.via_plating_um ?? 25,
+        busbar_area_mm2: template.busbar_area_mm2 ?? null,
+      }
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
+          pcb_trace_thermal: {
+            ...ptt,
+            sections: [...ptt.sections, newSection],
+          },
+        },
+      }
+    }
+
+    case 'REMOVE_PCB_TRACE_SECTION': {
+      const ptt = state.project.pcb_trace_thermal
+      if (ptt.sections.length <= 1) return state  // can't remove last section
+      return {
+        ...state,
+        project: {
+          ...state.project,
+          calcs_stale: state.project.calculations ? true : state.project.calcs_stale,
+          pcb_trace_thermal: {
+            ...ptt,
+            sections: ptt.sections.filter(s => s.id !== action.payload),
           },
         },
       }
@@ -467,6 +575,31 @@ function reducer(state, action) {
           restored.project = {
             ...restored.project,
             pcb_trace_thermal: INITIAL_STATE.project.pcb_trace_thermal,
+          }
+        }
+        // Migrate old flat params → new sections[] + common{} format
+        const ptt = restored.project.pcb_trace_thermal
+        if (ptt && ptt.params && !ptt.sections) {
+          const oldP = ptt.params
+          const commonKeys = new Set([
+            'current_a', 'ambient_c', 'pcb_thickness_mm', 'max_conductor_temp_c',
+            'model', 'cooling_mode', 'orientation', 'spreading_factor',
+            'air_velocity_ms', 'hs_theta_sa', 'hs_theta_int', 'hs_contact_area_cm2',
+            'plane_dist_mm', 'copper_fill_pct',
+          ])
+          const migratedCommon = {}
+          const migratedSection = { id: 'sec_1', name: 'Section 1' }
+          for (const [k, v] of Object.entries(oldP)) {
+            if (commonKeys.has(k)) migratedCommon[k] = v
+            else migratedSection[k] = v
+          }
+          restored.project = {
+            ...restored.project,
+            pcb_trace_thermal: {
+              common: { ...INITIAL_STATE.project.pcb_trace_thermal.common, ...migratedCommon },
+              sections: [{ ...INITIAL_STATE.project.pcb_trace_thermal.sections[0], ...migratedSection }],
+              results: ptt.results,
+            },
           }
         }
         return restored
