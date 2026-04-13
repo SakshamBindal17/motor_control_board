@@ -820,8 +820,15 @@ export default function ThermalTracePanel({ config }) {
           return { name, l_mm, w_mm, cu_oz, L_nH: 0, valid: false }
         })
 
+        const extBusbarNh = parseFloat(ovr.ext_busbar_nh) || 0
         const validSecs = perSecL.filter(s => s.valid)
-        const totalLoopNh = validSecs.length > 0 ? validSecs.reduce((sum, s) => sum + s.L_nH, 0) : null
+        let totalLoopNh = validSecs.length > 0 ? validSecs.reduce((sum, s) => sum + s.L_nH, 0) : null
+        
+        if (totalLoopNh != null) {
+          totalLoopNh += extBusbarNh
+        } else if (extBusbarNh > 0) {
+          totalLoopNh = extBusbarNh
+        }
 
         let loopSt = 'unknown', loopColor = 'var(--txt-4)'
         if (totalLoopNh != null) {
@@ -854,13 +861,15 @@ export default function ThermalTracePanel({ config }) {
               </div>
             </div>
 
-            {/* Unique inputs only: gate trace width + power clearance */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+            {/* Unique inputs only: gate trace width + power clearance + external bus bar */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
               {[
                 { label: 'Gate Trace Width', unit: 'mm', val: ovr.gate_trace_w_mm ?? '', onChg: v => setOvrLocal('gate_trace_w_mm', v), ph: '0.3',
-                  note: 'Gate drive signal trace — minimum for controlled impedance' },
+                  note: 'Gate drive signal trace' },
                 { label: 'Power Clearance', unit: 'mm', val: ovr.power_clearance_mm ?? '', onChg: v => setOvrLocal('power_clearance_mm', v), ph: '1.0',
-                  note: 'High-voltage spacing between power traces' },
+                  note: 'High-voltage spacing' },
+                { label: 'Ext. Bus Bar L', unit: 'nH', val: ovr.ext_busbar_nh ?? '', onChg: v => setOvrLocal('ext_busbar_nh', v), ph: 'e.g. 2.0',
+                  note: 'External boltable bus bar inductance' },
               ].map(f => (
                 <div key={f.label}>
                   <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--txt-3)', marginBottom: 3 }}>
@@ -924,8 +933,16 @@ export default function ThermalTracePanel({ config }) {
                           </tr>
                         )
                       })}
+                      {extBusbarNh > 0 && (
+                        <tr style={{ background: 'rgba(100,181,246,.05)', borderTop: '1px solid var(--border-1)' }}>
+                          <td style={{ padding: '5px 8px', fontWeight: 600, color: '#64b5f6' }}>External Bus Bar</td>
+                          <td colSpan={3} style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--txt-4)' }}>Manual Override</td>
+                          <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#64b5f6' }}>{fmtNum(extBusbarNh, 2)}</td>
+                          <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--txt-3)' }}>{fmtNum((extBusbarNh / totalLoopNh) * 100, 0)}%</td>
+                        </tr>
+                      )}
                       {/* Total row */}
-                      {validSecs.length > 1 && (
+                      {(validSecs.length > 1 || extBusbarNh > 0) && (
                         <tr style={{ borderTop: '2px solid var(--border-2)', background: 'var(--bg-3)' }}>
                           <td style={{ padding: '5px 8px', fontWeight: 700, color: loopColor }}>TOTAL</td>
                           <td colSpan={3} />
@@ -949,7 +966,7 @@ export default function ThermalTracePanel({ config }) {
               marginBottom: 10,
             }}>
               <div style={{ fontSize: 10, color: 'var(--txt-3)', marginBottom: 4 }}>
-                Half-Bridge Power Loop Inductance {validSecs.length > 1 ? `(${validSecs.length} sections, series sum)` : ''}
+                Half-Bridge Power Loop Inductance
               </div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                 <span style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: totalLoopNh != null ? loopColor : 'var(--txt-4)' }}>
@@ -964,7 +981,7 @@ export default function ThermalTracePanel({ config }) {
               </div>
               {totalLoopNh != null && (
                 <div style={{ fontSize: 10, color: 'var(--txt-4)', marginTop: 4 }}>
-                  Target &lt; 5.0 nH · L = Σ L_section · L_section ≈ 0.4 × l × [ln(4l/(w+t)) + 0.5] nH
+                  Target &lt; 5.0 nH · L = Σ L_section + L_ext · L_section ≈ 0.4 × l × [ln(4l/(w+t)) + 0.5] nH
                 </div>
               )}
               {totalLoopNh == null && (
@@ -980,7 +997,7 @@ export default function ThermalTracePanel({ config }) {
                 { label: 'Bus Bar Resistance', val: busBarR != null ? `${fmtNum(busBarR, 3)} mΩ` : '—', note: 'Total series R' },
                 { label: 'Bus Bar Vdrop', val: busBarVdrop != null ? `${fmtNum(busBarVdrop, 2)} mV` : '—', note: 'I × R_total' },
                 { label: 'Bus Bar Power Loss', val: busBarPloss != null ? `${fmtNum(busBarPloss, 3)} W` : '—', note: 'I² × R' },
-                { label: 'Loop Inductance', val: totalLoopNh != null ? `${fmtNum(totalLoopNh, 2)} nH` : '—', note: 'Σ L_section' },
+                { label: 'Loop Inductance', val: totalLoopNh != null ? `${fmtNum(totalLoopNh, 2)} nH` : '—', note: 'Σ L_section + L_ext' },
               ].map(r => (
                 <div key={r.label} style={{ background: 'var(--bg-3)', borderRadius: 7,
                   padding: '8px 10px', border: '1px solid var(--border-1)' }}>
@@ -996,8 +1013,8 @@ export default function ThermalTracePanel({ config }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                 {[
                   { label: 'Power trace (rec.)', val: pcbg.power_trace_w_mm != null ? `${fmtNum(pcbg.power_trace_w_mm, 2)} mm` : '—' },
-                  { label: 'Gate trace width', val: pcbg.gate_trace_w_mm != null ? `${fmtNum(pcbg.gate_trace_w_mm, 2)} mm` : '—' },
-                  { label: 'Power clearance', val: pcbg.power_clearance_mm != null ? `${fmtNum(pcbg.power_clearance_mm, 1)} mm` : '—' },
+                  { label: 'Gate trace width', val: ovr.gate_trace_w_mm != null ? `${fmtNum(ovr.gate_trace_w_mm, 2)} mm` : `${fmtNum(pcbg.gate_trace_w_mm, 2)} mm` },
+                  { label: 'Power clearance', val: ovr.power_clearance_mm != null ? `${fmtNum(ovr.power_clearance_mm, 1)} mm` : `${fmtNum(pcbg.power_clearance_mm, 1)} mm` },
                 ].map(r => (
                   <div key={r.label} style={{ background: 'var(--bg-3)', borderRadius: 7,
                     padding: '8px 10px', border: '1px solid var(--border-1)' }}>

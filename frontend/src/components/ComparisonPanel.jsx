@@ -6,18 +6,6 @@ import './ComparisonPanel.css'
 
 const MAX_UPLOADS = 12
 
-const GD_PRESETS = {
-  custom: { src: 4, snk: 4, vgs: 12 },
-  ucc27311a: { src: 4, snk: 4, vgs: 12 },
-  ucc27201a: { src: 4, snk: 4, vgs: 12 },
-  ir2110: { src: 2, snk: 2, vgs: 12 },
-  irs2110: { src: 2, snk: 2, vgs: 12 },
-  ncp51561: { src: 5, snk: 5, vgs: 12 },
-  adp3120a: { src: 2, snk: 3, vgs: 12 },
-  si8271: { src: 4, snk: 4, vgs: 12 },
-  adum4135: { src: 4, snk: 4, vgs: 15 },
-  drv8343: { src: 1.7, snk: 1.7, vgs: 12 },
-}
 
 function makeId() {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
@@ -187,8 +175,8 @@ function calcTiming(p, sys) {
   const t_on_tot = td_on + t_rise
   const t_off_tot = td_off + t_fall
 
-  const Ig_on_pk = (sys.vgs / Rg_on) * 1000
-  const Ig_off_pk = (sys.vgs / Rg_off) * 1000
+  const Ig_on_pk = (sys.vgs / (Rg_on / N)) * 1000
+  const Ig_off_pk = (sys.vgs / (Rg_off / N)) * 1000
 
   const dt_min = Math.max(t_fall * 1.3, t_rise * 1.3, 100e-9)
   const dt_rec = dt_min * 1.25
@@ -199,9 +187,9 @@ function calcTiming(p, sys) {
   const Vboot = sys.vgs - sys.vf
   const Cb_act = sys.cb * 1e-6
   const dVb_act = Qg / Cb_act
-  const Rboot = 10
+  const Rboot = sys.rboot || 10
   const t_rech = 5 * Rboot * Cb_act
-  const D_max = Math.min((1 - t_rech * sys.fsw) * 100, 99)
+  const D_max = Math.max(0, Math.min((1 - t_rech * sys.fsw) * 100, 99))
   const cbOk = (sys.cb * 1000) >= Cb_min_nF
 
   return {
@@ -317,7 +305,7 @@ export default function ComparisonPanel() {
     cb: 0.1,
     vf: 0.5,
     npar: defaultNpar,
-    gd_ic: 'custom',
+    rboot: 10,
   })
 
   const doneItems = useMemo(
@@ -346,11 +334,6 @@ export default function ComparisonPanel() {
   function updateCfg(key, value) {
     const parsed = toNum(value)
     setCfg(prev => ({ ...prev, [key]: Number.isFinite(parsed) ? parsed : prev[key] }))
-  }
-
-  function applyDriverPreset(v) {
-    const p = GD_PRESETS[v] || GD_PRESETS.custom
-    setCfg(prev => ({ ...prev, gd_ic: v, idr_src: p.src, idr_snk: p.snk, vgs: p.vgs }))
   }
 
   function onFileInput(filesList) {
@@ -618,29 +601,13 @@ export default function ComparisonPanel() {
             <FormInput label="Phase Current RMS [A] (total)" value={cfg.irms} onChange={(v) => updateCfg('irms', v)} />
             <FormInput label="Switching Freq [Hz]" value={cfg.fsw} onChange={(v) => updateCfg('fsw', v)} />
             <FormInput label="Parallel MOSFETs / switch" value={cfg.npar} onChange={(v) => updateCfg('npar', Math.max(1, Math.min(12, parseInt(v || '1', 10) || 1)))} />
-            <SelectInput
-              label="Gate Driver IC"
-              value={cfg.gd_ic}
-              onChange={(v) => applyDriverPreset(v)}
-              options={[
-                { value: 'custom', label: 'Custom / Manual Entry' },
-                { value: 'ucc27311a', label: 'UCC27311A (TI) — 4A/4A' },
-                { value: 'ucc27201a', label: 'UCC27201A (TI) — 4A/4A' },
-                { value: 'ir2110', label: 'IR2110 — 2A/2A' },
-                { value: 'irs2110', label: 'IRS2110 — 2A/2A' },
-                { value: 'ncp51561', label: 'NCP51561 — 5A/5A' },
-                { value: 'adp3120a', label: 'ADP3120A — 2A/3A' },
-                { value: 'si8271', label: 'Si8271 — 4A/4A' },
-                { value: 'adum4135', label: 'ADuM4135 — 4A/4A' },
-                { value: 'drv8343', label: 'DRV8343 — 1.7A' },
-              ]}
-            />
+            <FormInput label="Bootstrap Resistor Rboot [Ω]" value={cfg.rboot} onChange={(v) => updateCfg('rboot', v)} />
             <FormInput label="Gate Drive Voltage Vgs [V]" value={cfg.vgs} onChange={(v) => updateCfg('vgs', v)} />
             <FormInput label="Turn-ON Gate Rg_on [Ω] (per MOSFET)" value={cfg.rg_on} onChange={(v) => updateCfg('rg_on', v)} />
             <FormInput label="Turn-OFF Gate Rg_off [Ω] (per MOSFET)" value={cfg.rg_off} onChange={(v) => updateCfg('rg_off', v)} />
             <FormInput label="Driver Source Current [A]" value={cfg.idr_src} onChange={(v) => updateCfg('idr_src', v)} />
             <FormInput label="Driver Sink Current [A]" value={cfg.idr_snk} onChange={(v) => updateCfg('idr_snk', v)} />
-            <FormInput label="Bootstrap Cap Cb [µF]" value={cfg.cb} onChange={(v) => updateCfg('cb', v)} />
+            <FormInput label="Bootstrap Cap Cb [μF]" value={cfg.cb} onChange={(v) => updateCfg('cb', v)} />
             <FormInput label="Bootstrap Diode Vf [V]" value={cfg.vf} onChange={(v) => updateCfg('vf', v)} />
           </div>
 
@@ -918,10 +885,19 @@ export default function ComparisonPanel() {
   )
 }
 
+function renderLabel(labelText) {
+  if (!labelText) return null
+  return labelText.split(/(\[.*?\])/g).map((p, i) =>
+    p.startsWith('[') && p.endsWith(']') ? <span key={i} style={{ textTransform: 'none' }}>{p}</span> : p
+  )
+}
+
 function FormInput({ label, value, onChange }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 10, color: 'var(--txt-3)', textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>{label}</span>
+      <span style={{ fontSize: 10, color: 'var(--txt-3)', textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>
+        {renderLabel(label)}
+      </span>
       <input className="inp inp-mono" type="number" step="any" value={value} onChange={(e) => onChange(e.target.value)} />
     </label>
   )
@@ -930,7 +906,9 @@ function FormInput({ label, value, onChange }) {
 function SelectInput({ label, value, onChange, options }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <span style={{ fontSize: 10, color: 'var(--txt-3)', textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>{label}</span>
+      <span style={{ fontSize: 10, color: 'var(--txt-3)', textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>
+        {renderLabel(label)}
+      </span>
       <select className="inp" value={value} onChange={(e) => onChange(e.target.value)}>
         {options.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
       </select>

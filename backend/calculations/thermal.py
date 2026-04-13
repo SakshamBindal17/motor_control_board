@@ -303,6 +303,16 @@ class ThermalMixin:
 
             if per_section_L:
                 loop_inductance_nh = round(sum(s["L_nH"] for s in per_section_L), 1)
+
+            try: ext_bus_nh = float(self.ovr.get("ext_busbar_nh", 0))
+            except (TypeError, ValueError): ext_bus_nh = 0
+
+            if loop_inductance_nh is not None:
+                loop_inductance_nh += ext_bus_nh
+            elif ext_bus_nh > 0:
+                loop_inductance_nh = ext_bus_nh
+                
+            if loop_inductance_nh is not None:
                 if loop_inductance_nh <= L_LOOP_TARGET:
                     loop_status = "OK"
                 elif loop_inductance_nh <= 10.0:
@@ -310,6 +320,8 @@ class ThermalMixin:
                 else:
                     loop_status = "CRITICAL"
                 sec_desc = " + ".join(f"{s['name']}({s['l_mm']:.0f}mm×{s['w_mm']:.1f}mm)" for s in per_section_L)
+                if ext_bus_nh > 0:
+                    sec_desc += f" + Ext({ext_bus_nh:.1f}nH)"
                 self.audit_log.append(
                     f"[PCB] Half-bridge loop inductance: {loop_inductance_nh:.1f}nH "
                     f"({sec_desc}). "
