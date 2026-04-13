@@ -104,78 +104,98 @@ class GateDriveMixin:
             if manual_input:
                 sizing_basis = "manual_override"
                 rg_on_std    = rg_on_manual
-                rg_on_raw    = rg_on_manual
                 rg_off_std   = rg_off_manual
+                rg_on_raw    = rg_on_manual
                 rg_off_raw   = rg_off_manual
+                rg_on_total  = rg_on_std + rg_int
+                rg_off_total = rg_off_std + rg_int
+                
+                # Calculate actual switching times based on forced Rg
+                if use_miller_basis:
+                    t_rise_actual_ns = (rg_on_total * qgd / max(vdrv - vgs_pl_eff, 0.2)) * 1e9
+                    t_fall_actual_ns = (rg_off_total * qgd / max(vgs_pl_eff, 0.2)) * 1e9
+                else:
+                    t_rise_actual_ns = (rg_on_total * qg / max(vdrv - vgs_th, 0.2)) * 1e9
+                    t_fall_actual_ns = (rg_off_total * qg / max(vgs_th, 0.2)) * 1e9
+                    
                 if is_hs:
                     self.audit_log.append(f"[Gate Drive] HS Manual override: Rg_on={rg_on_std}Ω, Rg_off={rg_off_std}Ω.")
             else:
                 if use_miller_basis:
                     rg_total_from_time = (vdrv - vgs_pl_eff) / (qgd / t_rise)
-                    rg_drv_min         = (vdrv - vgs_pl_eff) / io_src
                     sizing_basis = "miller_charge"
                 else:
                     rg_total_from_time = (vdrv - vgs_th) / (qg / t_rise)
-                    rg_drv_min         = (vdrv - vgs_th) / io_src
                     sizing_basis = "total_qg_fallback"
 
+                # Peak turn-on driver current occurs at Vgs=0
+                rg_drv_min  = vdrv / io_src
                 rg_total_on = max(rg_total_from_time, rg_drv_min)
                 rg_on_raw   = max(rg_total_on - rg_int, 0.1)
                 rg_on_std   = _nearest_e(rg_on_raw)
+                rg_on_total = rg_on_std + rg_int
+                
+                # Compute actual rise time and dV/dt to size Rg_off
+                if use_miller_basis:
+                    t_rise_actual_ns = (rg_on_total * qgd / max(vdrv - vgs_pl_eff, 0.2)) * 1e9
+                else:
+                    t_rise_actual_ns = (rg_on_total * qg / max(vdrv - vgs_th, 0.2)) * 1e9
+                    
+                dv_dt_v_ns = self.v_bus / t_rise_actual_ns if t_rise_actual_ns > 0 else 0
                 
                 # Auto-size Rg_off
                 crss = self._get(self.mosfet, "MOSFET", "crss", None)
-                ciss = self._get(self.mosfet, "MOSFET", "ciss", None)
-                cgs  = ciss - crss if ciss and crss and ciss > crss else None
-
-                if crss and cgs:
-                    # Shoot-through protection: standard physical heuristic
-                    miller_ratio_limit = (cgs / crss) * rg_on_std * 0.7
+                if crss and dv_dt_v_ns > 0:
+                    # Rigorous Shoot-through protection based on induced Miller current
+                    # I_miller = Crss * dV/dt
+                    # V_gs_induced = I_miller * Rg_off_total
+                    # Constraint: V_gs_induced < V_th * 0.8 (20% safety margin for high Tj)
+                    i_miller = crss * (dv_dt_v_ns * 1e9)
+                    rg_off_max_total = (vgs_th * 0.8) / i_miller if i_miller > 0 else float('inf')
+                    miller_limit_raw = rg_off_max_total - rg_int
                     
-                    # Also respect t_fall_target
                     if use_miller_basis:
                         rg_off_target = (t_fall_target_ns * 1e-9) * vgs_pl_eff / qgd
                     else:
                         rg_off_target = (t_fall_target_ns * 1e-9) * vgs_th / qg
                     rg_off_target -= rg_int
                     
-                    rg_off_raw = min(rg_on_std * 0.9, miller_ratio_limit, max(0.1, rg_off_target))
+                    rg_off_raw = min(rg_on_std * 0.9, miller_limit_raw, max(0.1, rg_off_target))
                 else:
                     rg_off_raw  = rg_on_std * 0.5
                 
                 rg_off_std  = _nearest_e(rg_off_raw)
-                rg_off_min  = (vgs_pl_eff / io_snk) if use_miller_basis else (vdrv / io_snk)
-                if rg_off_std < rg_off_min:
-                    rg_off_std = _nearest_e(rg_off_min)
-
-            rg_on_total  = rg_on_std + rg_int
-            rg_off_total = rg_off_std + rg_int
-
-            if use_miller_basis:
-                t_rise_actual_ns = (rg_on_total * qgd / max(vdrv - vgs_pl_eff, 0.2)) * 1e9
-                t_fall_actual_ns = (rg_off_total * qgd / max(vgs_pl_eff, 0.2)) * 1e9
-            else:
-                t_rise_actual_ns = (rg_on_total * qg / max(vdrv - vgs_th, 0.2)) * 1e9
-                t_fall_actual_ns = (rg_off_total * qg / max(vgs_th, 0.2)) * 1e9
+                # Fast turn-off is limited by driver sink capability at Vgs=Vdrv
+                rg_off_min  = vdrv / io_snk
+                if (rg_off_std + rg_int) < rg_off_min:
+                    rg_off_std = _nearest_e(rg_off_min - rg_int)
+                    
+                rg_off_total = rg_off_std + rg_int
                 
-            # Dual dV/dt (Improvement 5)
+                if use_miller_basis:
+                    t_fall_actual_ns = (rg_off_total * qgd / max(vgs_pl_eff, 0.2)) * 1e9
+                else:
+                    t_fall_actual_ns = (rg_off_total * qg / max(vgs_th, 0.2)) * 1e9
+
+            # Dual dV/dt Metrics
             dv_dt_bus = 0 if t_rise_actual_ns <= 0 else self.v_bus / (t_rise_actual_ns * 1e-9) / 1e6
             v_peak = getattr(self, "v_peak", self.v_bus * 1.5)
             dv_dt_peak = 0 if t_rise_actual_ns <= 0 else v_peak / (t_rise_actual_ns * 1e-9) / 1e6
 
-            # Switching loss (Improvement 4)
+            # Switching loss approximations for component trace analysis
             n_parallel = max(1.0, float(self.num_fets) / 6.0)
             i_load = self.i_max / n_parallel
             e_on = 0.5 * self.v_bus * i_load * (t_rise_actual_ns * 1e-9)
             e_off = 0.5 * self.v_bus * i_load * (t_fall_actual_ns * 1e-9)
             p_sw = (e_on + e_off) * self.fsw
             
-            # Peak gate currents (Improvement 5)
-            i_peak_on = (vdrv - vgs_pl_eff) / rg_on_total if use_miller_basis else (vdrv - vgs_th) / rg_on_total
-            i_peak_off = vgs_pl_eff / rg_off_total if use_miller_basis else vgs_th / rg_off_total
+            # Peak gate currents (Absolute Max at Start of Switching)
+            i_peak_on = vdrv / rg_on_total
+            i_peak_off = vdrv / rg_off_total
 
-            # Resistor power dissipation
+            # Gate Resistor Power Dissipation
             p_gate_total = qg * vdrv * self.fsw
+            # Split power between On and Off paths based on relative resistance
             rg_path = ((rg_on_std + rg_off_std) / 2) + rg_int
             rg_fraction = ((rg_on_std + rg_off_std) / 2) / rg_path if rg_path > 0 else 0.5
             p_per_rg = p_gate_total * rg_fraction
@@ -268,86 +288,128 @@ class GateDriveMixin:
     def calc_bootstrap_cap(self) -> dict:
         self._current_module = "bootstrap_cap"
         # _get already returns SI (Coulombs) — do NOT multiply by 1e-9 again
-        qg     = self._get(self.mosfet, "MOSFET", "qg", 92e-9)   # C  (SI)
-        vgs_th = self._get(self.mosfet, "MOSFET", "vgs_th", 3.0)  # V
-        vdrv   = self.v_drv
+        qg    = self._get(self.mosfet, "MOSFET", "qg", 92e-9)   # C (SI)
+        vdrv  = self.v_drv
+        fsw   = self.fsw  # Hz — from system params
 
-        # Allow 0.5V droop
-        droop    = float(self.ovr.get("bootstrap_droop_v", 0.5))
+        # ── 1. Leakage budget (coupled from driver datasheet) ─────────────────
+        idd_q_raw = self._get(self.driver, "DRIVER", "idd_quiescent", None)
+        if idd_q_raw is not None and idd_q_raw > 0:
+            driver_ua   = idd_q_raw * 1e6    # A → µA
+            i_leakage_ua = driver_ua + 1.0   # +1µA for MOSFET gate leakage
+            self.audit_log.append(f"[Bootstrap] Leakage: {i_leakage_ua:.1f}µA (driver {driver_ua:.1f}µA + 1µA gate).")
+        else:
+            i_leakage_ua = 3.0
+            self.audit_log.append("[Bootstrap] WARNING: Driver quiescent current missing. Defaulting to 3µA.")
+        i_leak_a = i_leakage_ua * 1e-6
+
+        # ── 2. Total per-cycle charge requirement ─────────────────────────────
+        # C_boot must supply: Qg (gate switching charge) + leakage over one switching period
+        q_leak_per_cycle = i_leak_a / fsw   # leakage charge per PWM cycle (Coulombs)
+        q_total          = qg + q_leak_per_cycle
+        self.audit_log.append(
+            f"[Bootstrap] Q_total = {q_total*1e9:.3f}nC  "
+            f"(Qg={qg*1e9:.2f}nC + Q_leak={q_leak_per_cycle*1e12:.1f}pC/cycle @ {fsw/1000:.0f}kHz)"
+        )
+
+        # ── 3. User droop target ───────────────────────────────────────────────
+        droop = float(self.ovr.get("bootstrap_droop_v", 0.5))
         if "bootstrap_droop_v" not in self.ovr:
-            self._log_hc("bootstrap_cap", "Bootstrap droop target", f"{droop} V", "Acceptable voltage sag during HS on-time")
+            self._log_hc("bootstrap_cap", "Bootstrap droop target", f"{droop} V",
+                         "Max allowable HS gate voltage sag per PWM cycle")
         if droop <= 0:
-            self.audit_log.append("[Bootstrap] WARNING: Bootstrap droop cannot be 0 or negative. Using 0.5V default.")
+            self.audit_log.append("[Bootstrap] WARNING: droop ≤ 0. Using 0.5V default.")
             droop = 0.5
-        c_boot   = qg / droop          # exact required capacitance (Farads)
-        c_boot_nf= c_boot * 1e9
 
-        # Snap to nearest E12 standard cap value (nF), with safety margin
+        # ── 4. Minimum capacitance (charge-budget limited) ────────────────────
+        # C_min = Q_total / ΔV_droop — exact charge-balance equation
+        c_boot_min_f  = q_total / droop      # Farads
+        c_boot_min_nf = c_boot_min_f * 1e9  # nF (what is displayed as "required")
+
+        # ── 5. E12 snap with configurable safety margin ───────────────────────
         boot_margin_mult = self._dc("boot.safety_margin")
-        c_boot_with_margin = c_boot_nf * boot_margin_mult
+        c_boot_with_margin = c_boot_min_nf * boot_margin_mult
         E12_nF = [1,1.2,1.5,1.8,2.2,2.7,3.3,3.9,4.7,5.6,6.8,8.2,
                   10,12,15,18,22,27,33,39,47,56,68,82,
                   100,120,150,180,220,270,330,470,680,1000]
         c_std_nf = float(next((v for v in E12_nF if v >= c_boot_with_margin), E12_nF[-1]))
         boot_min_cap = self._dc("boot.min_cap")
         c_std_nf = max(boot_min_cap, c_std_nf)
-        self._log_hc("bootstrap_cap", "Min practical boot cap", f"{boot_min_cap} nF", "Floor for bootstrap capacitor value", "boot.min_cap")
-        self._log_hc("bootstrap_cap", "Safety margin", f"{boot_margin_mult}x", f"C_boot multiplied by {boot_margin_mult}x before E12 snap", "boot.safety_margin")
+        c_std_f  = c_std_nf * 1e-9
 
-        # Bootstrap diode Vf
+        self._log_hc("bootstrap_cap", "Min practical boot cap", f"{boot_min_cap} nF",
+                     "Floor for bootstrap capacitor value", "boot.min_cap")
+        self._log_hc("bootstrap_cap", "Safety margin", f"{boot_margin_mult}x",
+                     f"C_boot multiplied by {boot_margin_mult}x before E12 snap", "boot.safety_margin")
+
+        # ── 6. Actual droop on the chosen E12 cap ────────────────────────────
+        # With a larger cap than C_min, actual droop is smaller than target
+        droop_actual = q_total / c_std_f if c_std_f > 0 else 999.0
+
+        # ── 7. Bootstrap supply voltage ───────────────────────────────────────
         vf_diode = self._dc("gate.bootstrap_vf")
-        self._log_hc("bootstrap_cap", "Schottky diode Vf", f"{vf_diode} V", "Assumed forward drop for bootstrap diode", "gate.bootstrap_vf")
-        v_boot   = vdrv - vf_diode
+        self._log_hc("bootstrap_cap", "Schottky diode Vf", f"{vf_diode} V",
+                     "Assumed forward drop for bootstrap diode", "gate.bootstrap_vf")
+        v_boot     = vdrv - vf_diode
+        v_boot_min = v_boot - droop_actual   # worst-case gate voltage at end of HS on-time
 
-        # Minimum high-side on-time to refresh bootstrap
-        # C_boot must recharge through R_boot(10Ω) from supply
+        # ── 8. Series resistor & RC time constant ─────────────────────────────
         r_boot = float(self.ovr.get("rg_bootstrap_ohm", self._dc("gate.rg_bootstrap")))
-        self.audit_log.append(f"[Bootstrap] Series bootstrap resistor = {r_boot}Ω.")
-        self._log_hc("bootstrap_cap", "Series boot resistor", f"{r_boot} Ω", "Limits peak charging current", "gate.rg_bootstrap")
-        tau_boot = r_boot * c_std_nf * 1e-9   # RC time constant
-        
-        # 1. Initial Pre-Charge Time (startup from 0V to ~95%)
-        t_precharge_us = (3 * tau_boot) * 1e6
-        
-        # 2. Recurring Refresh Time (replenishing Qg and leakage per cycle)
-        # The driving voltage difference is strictly the droop. I_charge = droop / R_boot.
-        # Time to replenish Qg = Qg / I_charge = Qg * R_boot / droop.
-        t_refresh_us = (qg * r_boot / droop) * 1e6
+        self._log_hc("bootstrap_cap", "Series boot resistor", f"{r_boot} Ω",
+                     "Limits peak bootstrap diode charging current", "gate.rg_bootstrap")
+        tau_boot = r_boot * c_std_f   # seconds
 
-        # Bootstrap leakage budget
-        # Try extracting Idd(quiescent) from driver datasheet, plus physical gate leakage (~1µA)
-        # Driver quiescent current is often the primary leakage path for the bootstrap cap
-        idd_q_raw = self._get(self.driver, "DRIVER", "idd_quiescent", None)
-        if hasattr(self, 'audit_log') and getattr(self, 'audit_log', None) is not None:
-            pass # safe
-            
-        if idd_q_raw is not None and idd_q_raw > 0:
-            driver_ua = idd_q_raw * 1e6  # convert from A to µA
-            i_leakage_ua = driver_ua + 1.0  # +1µA for MOSFET gate limit
-            self.audit_log.append(f"[Bootstrap] Computed leakage ({i_leakage_ua:.1f}µA) using driver quiescent current ({driver_ua:.1f}µA) + 1µA FET gate leakage.")
-        else:
-            i_leakage_ua = 3.0
-            self.audit_log.append("[Bootstrap] WARNING: Driver Quiescent Current missing. Assumed 3µA standard default for bootstrap leakage.")
+        # ── 9. Pre-charge time (initial startup, cap from 0V → 95% V_boot) ───
+        # Standard 3τ = 95% settling: V(t) = V_boot × (1 − exp(−t/τ))
+        # At t = 3τ: V = V_boot × (1 − e⁻³) ≈ 0.950 × V_boot
+        t_precharge_us = 3.0 * tau_boot * 1e6
 
-        # Time until droop = C_boot × ΔV / I_leak
-        t_hold_ms = (c_std_nf * 1e-9 * droop / (i_leakage_ua * 1e-6)) * 1000
+        # ── 10. Per-cycle refresh time (min LS on-time) ──────────────────────
+        # During LS on-time the cap charges from (V_boot − droop_actual) back toward V_boot.
+        # The exponential recovery analysis:
+        #   Q_restored = C × droop_actual × (1 − exp(−t / τ))
+        #   Since C × droop_actual = Q_total exactly, solving for 95% recovery:
+        #   0.95 × Q_total = Q_total × (1 − exp(−t / τ))
+        #   → exp(−t / τ) = 0.05
+        #   → t_refresh = −τ × ln(0.05) = τ × ln(20) ≈ 3τ
+        # This result (3τ) is INDEPENDENT of capacitor size or droop target.
+        # Physical meaning: you need 3 RC time constants per cycle to maintain 95% charge.
+        t_refresh_s  = -tau_boot * math.log(0.05)   # = 3τ exactly for any C_std
+        t_refresh_us = t_refresh_s * 1e6
+        t_refresh_ns = t_refresh_s * 1e9
+        self.audit_log.append(
+            f"[Bootstrap] τ = {tau_boot*1e6:.2f}µs → t_precharge = t_refresh = 3τ = {t_refresh_us:.2f}µs"
+        )
+
+        # ── 11. Hold time (max continuous HS-ON duration before UVLO risk) ───
+        # t_hold = C_boot × ΔV / I_leakage
+        # Uses droop_actual (actual droop budget from chosen cap)
+        t_hold_ms = (c_std_f * droop_actual / i_leak_a) * 1000 if i_leak_a > 0 else 99999.0
 
         return {
-            "c_boot_calculated_nf":     round(c_boot_nf,    1),
-            "c_boot_recommended_nf":    c_std_nf,
-            "c_boot_v_rating_v":        int(self.ovr.get("cboot_v_rating_v", 25)),
-            "c_boot_dielectric":        "X7R MLCC",
-            "c_boot_qty":               int(self.num_fets // 2),  # 1 per high-side switch; fixed by topology
-            "v_bootstrap_v":            round(v_boot,       2),
-            "bootstrap_diode":          "B0540W (40V/500mA Schottky)",
-            "r_boot_series_ohm":        r_boot,
-            "boot_precharge_us":        round(t_precharge_us, 1),
-            "min_refresh_us":           round(t_refresh_us, 3),
-            "bootstrap_hold_time_ms":   round(t_hold_ms,    1),
+            "c_boot_calculated_nf":   round(c_boot_min_nf,  1),   # from Q_total/droop
+            "c_boot_recommended_nf":  c_std_nf,                    # E12-snapped with margin
+            "c_boot_v_rating_v":      int(self.ovr.get("cboot_v_rating_v", 25)),
+            "c_boot_dielectric":      "X7R MLCC",
+            "c_boot_qty":             int(self.num_fets // 2),      # 1 per HS switch; topology-fixed
+            "safety_margin_x":        boot_margin_mult,
+            "q_total_nc":             round(q_total * 1e9, 3),
+            "q_leak_pc":              round(q_leak_per_cycle * 1e12, 2),
+            "i_leakage_ua":           round(i_leakage_ua, 1),
+            "droop_target_v":         droop,
+            "droop_actual_v":         round(droop_actual, 3),      # actual droop on chosen E12 cap
+            "v_bootstrap_v":          round(v_boot,       2),
+            "v_boot_min_v":           round(v_boot_min,   2),      # worst-case gate voltage
+            "r_boot_series_ohm":      r_boot,
+            "tau_us":                 round(tau_boot * 1e6, 2),
+            "boot_precharge_us":      round(t_precharge_us, 1),
+            "min_refresh_us":         round(t_refresh_us,  2),     # kept for PassivesPanel compat
+            "min_hs_on_time_ns":      round(t_refresh_ns,  1),     # for reverse solver & CalculationsPanel
+            "bootstrap_hold_time_ms": round(t_hold_ms,     1),
             "notes": {
-                "100pct_duty":   "100% duty cycle requires external charge pump or VCC regulator",
-                "refresh":       f"High-side must turn ON ≥ {round(t_refresh_us,3):.3f}µs per PWM cycle",
-                "derating":      "Use 25V cap at 12V drive — only 50% voltage derating",
+                "100pct_duty": "100% duty cycle requires external charge pump — passive bootstrap cannot sustain this.",
+                "refresh":     f"Min LS on-time/cycle: {round(t_refresh_ns, 0):.0f}ns = 3τ (95% Q_total replenishment via exponential RC charging).",
+                "derating":    f"Use ≥{int(vdrv*2)}V rated cap at {int(vdrv)}V drive for 50% voltage derating (combats MLCC DC-bias droop).",
             },
             "_meta": self._module_meta.get("bootstrap_cap", {"hardcoded": [], "fallbacks": []}),
         }

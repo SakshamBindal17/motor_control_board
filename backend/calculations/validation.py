@@ -166,10 +166,13 @@ class ValidationMixin:
 
         # PWM period and available sampling window
         t_pwm_us = (1.0 / self.fsw) * 1e6         # full PWM period in µs
-        # Center-aligned: sample at PWM center, need at least ~10% of half-period
+        # Center-aligned PWM sampling must occur during the zero-vector (V0).
+        # At theoretical maximum duty cycle limitation, the low-side switches
+        # are only continuously ON for the remaining percent of the half-period.
+        max_duty_cycle = self._dc("adc.max_duty_cycle")
         t_half_us = t_pwm_us / 2.0
-        t_window_us = t_half_us * 0.1              # conservative: 10% of half-period
-        self._log_hc("adc_timing", "Sampling window", "10% of half-period", "Conservative center-aligned sampling")
+        t_window_us = t_half_us * (1.0 - max_duty_cycle)
+        self._log_hc("adc_timing", "Max Duty Cycle Limit", f"{max_duty_cycle*100}%", "Assumed maximum duty cycle limiting the V0 sampling window", "adc.max_duty_cycle")
         results["pwm_period_us"] = round(t_pwm_us, 2)
         results["sampling_window_us"] = round(t_window_us, 2)
 

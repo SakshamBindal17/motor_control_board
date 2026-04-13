@@ -240,6 +240,26 @@ function calcLosses(p, sys, tc) {
   const P3ph = Ptot * 6
   const Pout = sys.vbus * sys.irms
 
+  // System cooling method (from UI or project config)
+  const coolingRth = {
+    'natural': 40.0,
+    'enhanced_pcb': 20.0,
+    'forced_air': 10.0,
+    'heatsink': 5.0
+  }[sys.cooling || 'natural'] || 40.0
+
+  const rth_jc = p.rth_jc || 0.4
+  const rth_cs = 0.5 // Default case-to-PCB/sink TIM
+  const rth_sa = coolingRth
+  
+  // Power per device is Ptot / N
+  const p_dev = Ptot / N
+  // In our updated backend physics, shared cooling methods (like heatsinks)
+  // dissipate the heat of ALL 6 switch positions. Wait, let's keep it aligned with simplified per-FET Rth_sa equivalent model used in COOLING_TIERS
+  const dtj = (p_dev * (rth_jc + rth_cs + rth_sa)).toFixed(1)
+  const t_junc = (tc + p_dev * (rth_jc + rth_cs + rth_sa)).toFixed(1)
+  const dtj_jc = (p_dev * rth_jc).toFixed(1)
+
   return {
     cond: Pcond.toFixed(2),
     sw_on: Psw_on.toFixed(3),
@@ -250,7 +270,9 @@ function calcLosses(p, sys, tc) {
     total: Ptot.toFixed(2),
     total3ph: P3ph.toFixed(1),
     eff: (Pout > 0 ? (Pout / (Pout + P3ph)) * 100 : 0).toFixed(2),
-    dtj: ((Ptot / N) * (p.rth_jc || 0.4)).toFixed(1),
+    dtj: dtj,
+    t_junc: t_junc,
+    dtj_jc: dtj_jc,
     rds: (Rds * 1000).toFixed(3),
   }
 }
@@ -766,7 +788,8 @@ export default function ComparisonPanel() {
                     { label: `TOTAL / switch-pos [W]${cfg.npar > 1 ? ` (${cfg.npar}× MOSFET)` : ''}`, formula: 'Σ rows 1–6', key: 'total', lowerBetter: true, cls: 'rgba(30,144,255,0.10)' },
                     { label: '3-phase total [W] (×6 positions)', formula: '×6 switch positions', key: 'total3ph', lowerBetter: true },
                     { label: 'Efficiency [%]', formula: 'Pout/(Pout+Ploss)', key: 'eff', lowerBetter: false, cls: 'rgba(0,230,118,0.10)' },
-                    { label: 'ΔTj per MOSFET [°C]', formula: '(Ptot÷N)×RthJC', key: 'dtj', lowerBetter: true },
+                    { label: 'Est. Junction Temp Tj [°C]', formula: `Tamb + P_dev×(RthJC+RthCS+RthSA[${sys.cooling || 'natural'}])`, key: 't_junc', lowerBetter: true, cls: 'rgba(255,171,0,0.10)' },
+                    { label: 'ΔTj (J-C) per MOSFET [°C]', formula: 'P_dev × RthJC', key: 'dtj_jc', lowerBetter: true },
                     { label: `RDS parallel [mΩ] ×${currentTemp === 85 ? '1.55' : '1.0'}`, formula: 'RDS_single÷N × Tderate', key: 'rds', lowerBetter: true },
                   ].map(row => {
                     const vals = losses.map(l => l[row.key])

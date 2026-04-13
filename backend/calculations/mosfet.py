@@ -70,11 +70,18 @@ class MosfetMixin:
             delta_i = (self.v_bus * 0.25) / (lph * self.fsw)  # ΔI at D=0.5
             i_ripple_rms = delta_i / (2 * math.sqrt(3))  # triangular wave RMS
             ripple_ratio = delta_i / self.i_max if self.i_max > 0 else 0
+            
+            # ── CORRECT RIPPLE WEIGHTING ──
+            # Ripple flows through top or bottom switch depending on PWM state.
+            # On average across the fundamental cycle, the ripple current is shared
+            # 50/50 between the high-side and low-side FETs in the phase leg.
+            # Therefore, the effective (RMS) ripple passing through ONE switch is I_ripple / √2.
+            i_ripple_sw_rms = i_ripple_rms / math.sqrt(2.0)
 
-            # RMS includes both fundamental + ripple: I_rms² = I_fund² + I_ripple²
-            i_rms_sw = math.sqrt(i_fund_rms**2 + i_ripple_rms**2)
+            # Total Switch RMS includes both uncorrelated frequencies: I_rms² = I_fund² + I_ripple²
+            i_rms_sw = math.sqrt(i_fund_rms**2 + i_ripple_sw_rms**2)
             rms_method = (
-                f"Lph={float(lph_uh):.1f}µH — fund={i_fund_rms:.1f}A + ripple={i_ripple_rms:.1f}A "
+                f"Lph={float(lph_uh):.1f}µH — fund={i_fund_rms:.1f}A + ripple_sw={i_ripple_sw_rms:.1f}A "
                 f"(ΔI={delta_i:.1f}A, {ripple_ratio*100:.0f}% of I_load, M={M_spwm})"
             )
 
@@ -122,10 +129,10 @@ class MosfetMixin:
                 rds_derating = (((tj_est + 273.15) / t_ref) ** alpha_rds)
                 rds_hot = rds * rds_derating
                 p_cond_est = i_rms_sw ** 2 * rds_hot
-                # Rough total loss estimate for Tj iteration (sw + gate + rr as fixed)
                 p_other_est = self.v_bus * self.i_max * (tr + tf) * self.fsw / math.pi + qg * self.v_drv * self.fsw + qrr * self.v_bus * self.fsw
                 p_total_est = p_cond_est + p_other_est
-                tj_est = self.t_amb + p_total_est * rth_total
+                p_total_est_dev = p_total_est / n_parallel
+                tj_est = self.t_amb + p_total_est_dev * rth_total
             rds_derating = round(rds_derating, 3)
             tj_for_rds = round(tj_est, 1)
             self.audit_log.append(
@@ -138,6 +145,14 @@ class MosfetMixin:
         # P_cond(per-device) = I_device_rms² × Rds(on)
         p_cond  = i_rms_sw_dev**2 * rds_hot
 
+        # ─── Temperature Derating for Switching Parameters ───
+        # Switching charges increase with temperature (Vth drop, carrier mobility)
+        qrr_coeff = self._dc("waveform.qrr_temp_coeff")
+        qgd_coeff = self._dc("waveform.qgd_temp_coeff")
+        tj_rise = max(0, tj_for_rds - 25.0)
+        qrr_hot = qrr * (1.0 + qrr_coeff * tj_rise)
+        qgd_hot = qgd * (1.0 + qgd_coeff * tj_rise)
+
         # ─── Switching loss — use actual Rg from gate_resistors if available ───
         rg_int = self._get(self.mosfet, "MOSFET", "rg_int", None)  # Ω
         io_src = self._get(self.driver, "DRIVER", "io_source", None)  # A
@@ -146,7 +161,7 @@ class MosfetMixin:
         # Sinusoidal averaging factor: over a half-cycle, avg(sin θ) = 2/π
         sin_avg = 2.0 / math.pi
 
-        if vgs_plateau is not None and qgd > 0 and rg_int is not None:
+        if vgs_plateau is not None and qgd_hot > 0 and rg_int is not None:
             # ─── Qgd-based switching loss (most accurate) ───
             # Try to use actual calculated Rg from gate_resistors module
             try:
@@ -171,7 +186,7 @@ class MosfetMixin:
                 )
             else:
                 # Fallback: estimate from rise-time target
-                rg_ext_est = max(1.0, self._dc("gate.rise_time_target") * 1e-9 * (self.v_drv - vgs_plateau) / qgd if qgd > 0 else 2.0)
+                rg_ext_est = max(1.0, self._dc("gate.rise_time_target") * 1e-9 * (self.v_drv - vgs_plateau) / qgd_hot if qgd_hot > 0 else 2.0)
                 rg_total_on = rg_int + rg_ext_est
                 rg_total_off = rg_total_on  # symmetric fallback
                 rg_source = f"estimated (40ns rise target → Rg_ext={rg_ext_est:.1f}Ω)"
@@ -207,8 +222,8 @@ class MosfetMixin:
                 i_gate_off = i_gate_off_ideal
 
             # Voltage transition time during Miller plateau
-            t_miller_on = qgd / i_gate_on if i_gate_on > 0 else tr
-            t_miller_off = qgd / i_gate_off if i_gate_off > 0 else tf
+            t_miller_on = qgd_hot / i_gate_on if i_gate_on > 0 else tr
+            t_miller_off = qgd_hot / i_gate_off if i_gate_off > 0 else tf
 
             # Sinusoidally-averaged switching energy: E = 0.5 × V × I_avg × t
             e_on = 0.5 * self.v_bus * i_max_dev * sin_avg * t_miller_on
@@ -225,7 +240,7 @@ class MosfetMixin:
                 f"Overlap model: {p_sw_overlap:.3f}W"
             )
             self.audit_log.append(
-                f"[MOSFET] Qgd switching loss: "
+                f"[MOSFET] Qgd switching loss (derated to {tj_for_rds}°C): "
                 f"Ig_on={i_gate_on:.2f}A, Ig_off={i_gate_off:.2f}A, "
                 f"t_miller_on={t_miller_on*1e9:.1f}ns, t_miller_off={t_miller_off*1e9:.1f}ns. "
                 f"P_sw={p_sw:.3f}W vs overlap={p_sw_overlap:.3f}W."
@@ -239,7 +254,13 @@ class MosfetMixin:
 
         # ─── Reverse recovery loss ────────────────────────────────────
         # Body diode recovers against V_bus (not peak with transients)
-        p_rr = qrr * self.v_bus * self.fsw
+        p_rr = qrr_hot * self.v_bus * self.fsw
+        
+        self.audit_log.append(
+            f"[MOSFET] Qrr temperature derating: raw Qrr={qrr*1e9:.0f}nC, "
+            f"hot Qrr({tj_for_rds}°C)={qrr_hot*1e9:.0f}nC (+{qrr_coeff*100}%/°C). "
+            f"P_rr = {p_rr:.3f}W."
+        )
 
         # ─── Gate drive charge loss ───────────────────────────────────
         p_gate = qg * self.v_drv * self.fsw

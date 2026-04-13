@@ -106,12 +106,35 @@ class ThermalMixin:
         thermal_shutdown_drv = self._get(self.driver, "DRIVER", "thermal_shutdown", None)
         driver_thermal = {}
         if rth_ja_drv is not None:
-            # Driver power dissipation estimate: gate charge losses for the MOSFETs it drives
-            # For a half-bridge driver: 2 MOSFETs per driver, 3 drivers total
-            # P_driver ≈ Qg × Vdrv × fsw × 2 (for both HS and LS) + quiescent
+            # Rigorous Driver power dissipation:
+            # P_total_charge = Qg × Vdrv × fsw per FET
+            # Half-bridge driver handles 'fets_per_driver' (2 for 6-FET design, 4 for 12-FET, etc)
+            fets_per_driver = self.num_fets / 3.0
             qg_drv = self._get(self.mosfet, "MOSFET", "qg", 92e-9)
-            p_driver_gate = qg_drv * self.v_drv * self.fsw * 2  # 2 MOSFETs per driver
-            p_driver_quiescent = 0.05  # ~50mW typical quiescent
+            p_gate_total_per_fet = qg_drv * self.v_drv * self.fsw
+            
+            # Power dissipates proportionally across Driver Rds(on) and External Rg.
+            # Pull precise external resistor dissipation from gate_resistors phase!
+            gate_res = self._cached_results.get("gate_resistors", {})
+            hs_rg_power = gate_res.get("hs_rg_power_w", 0)
+            ls_rg_power = gate_res.get("ls_rg_power_w", 0)
+            avg_rg_power_per_fet = (hs_rg_power + ls_rg_power) / 2.0
+            
+            if avg_rg_power_per_fet > 0:
+                p_internal_per_fet = max(0.001, p_gate_total_per_fet - avg_rg_power_per_fet)
+            else:
+                # Fallback if gate drive module failed: assume 50/50 split
+                p_internal_per_fet = p_gate_total_per_fet * 0.5
+                
+            p_driver_gate = p_internal_per_fet * fets_per_driver
+            
+            # Quiescent driver internal power
+            idd_q = self._get(self.driver, "DRIVER", "idd_quiescent", None)
+            if idd_q and idd_q > 0:
+                p_driver_quiescent = idd_q * self.v_drv
+            else:
+                p_driver_quiescent = 0.05  # 50mW typical fallback
+                
             p_driver_total = p_driver_gate + p_driver_quiescent
             tj_driver = self.t_amb + p_driver_total * rth_ja_drv
 
@@ -134,14 +157,24 @@ class ThermalMixin:
 
             self.audit_log.append(f"[Thermal] Driver IC: P={p_driver_total:.3f}W, Rth_ja={rth_ja_drv:.1f}°C/W, Tj_est={tj_driver:.0f}°C.")
 
-        # IPC-2152 trace width approximation for external layer, normalized to 3oz Cu with 30°C rise.
-        # Original formula for 1oz: A_mils² = (I / (0.048 × ΔT^0.44))^(1/0.725)
-        # For 3oz Cu: divide cross-sectional area by 3×1.4mil (thickness). Results are conservative;
-        # for currents >30A, use solid copper pours instead of traces.
-        self._log_hc("thermal", "IPC-2152 derating", "3oz Cu, 30°C rise", "External layer trace width calculation")
+        # IPC trace width approximation for external layer, normalized to 3oz Cu with 30°C rise.
+        # Get selected IPC model from the PCB Trace Thermal params if available:
+        trace_params = getattr(self, 'pcb_trace_params', {}) or {}
+        common_cfg = trace_params.get("common", {})
+        model_token = str(common_cfg.get("model", "2221")).replace("_", "").replace("-", "")
+        
+        is_2152 = "2152" in model_token
+        model_name = "IPC-2152" if is_2152 else "IPC-2221B"
+        
+        self._log_hc("thermal", f"{model_name} approx", "3oz Cu, 30°C rise", "External layer trace width baseline")
         i_trace = self.i_max
-        area_mil2 = ((i_trace / (0.048 * (30**0.44))) ** (1/0.725))
-        width_mm  = (area_mil2 / (3 * 1.4)) * 0.0254  # 3oz = 3×1.4mil thick, width_mil = area/thickness, ×0.0254 → mm
+        
+        # Original formula for 1oz: A_mils² = (I / (0.048 × ΔT^0.44))^(1/0.725)
+        # For IPC-2152, planar heat spreading usually provides ~0.45x Cf thermal reduction multiplier on dT
+        effective_dt = 30.0 / 0.45 if is_2152 else 30.0
+        
+        area_mil2 = ((i_trace / (0.048 * (effective_dt**0.44))) ** (1/0.725))
+        width_mm  = (area_mil2 / (3 * 1.4)) * 0.0254  # 3oz = 3×1.4mil thick
         trace_w_basic = max(3.0, round(width_mm, 1))
         trace_w = trace_w_basic
 
@@ -152,12 +185,16 @@ class ThermalMixin:
                 trace_w = round(tt_width, 1)
                 self.audit_log.append(
                     f"[Thermal] Trace width updated from PCB Trace Thermal tab: "
-                    f"{tt_width:.1f}mm (user-specified, wider than IPC-2152 minimum {trace_w_basic}mm)."
+                    f"{tt_width:.1f}mm (user-specified, wider than {model_name} minimum {trace_w_basic}mm)."
                 )
 
         # Copper pour area for MOSFET pad: rule of thumb — 1 in² (645.16 mm²) of 1oz Cu
-        # dissipates ~1W with 30°C rise in still-air convection. Results are conservative.
-        cu_area_mm2 = p_fet * 645 / 30
+        # dissipates ~1W with 30°C rise in still-air convection. 
+        # Only relevant if the PCB itself is the primary heatsink.
+        if cooling_method in ("natural", "enhanced_pcb"):
+            cu_area_mm2 = p_fet * 645.16 / 30.0
+        else:
+            cu_area_mm2 = 0.0  # Heatsink or Forced Air dominates thermal dissipation
         vias_per_fet = int(self._dc("thermal.vias_per_fet"))
         via_drill = 0.3
         cu_oz = 3
@@ -197,7 +234,7 @@ class ThermalMixin:
             "thermal_margin_c":         round(margin,         1),
             "thermal_safe":             safe,
             "power_trace_width_mm":     trace_w,
-            "trace_width_note":         f"IPC-2152 approx: 3oz Cu, 30°C rise, external layer. For >{i_trace:.0f}A use solid copper pours.",
+            "trace_width_note":         f"{model_name} approx: 3oz Cu, 30°C rise, external layer. For >{i_trace:.0f}A use solid copper pours.",
             "copper_area_per_fet_mm2":  round(cu_area_mm2,    0),
             "thermal_vias_per_fet":     vias_per_fet,
             "via_drill_mm":             via_drill,
@@ -216,7 +253,7 @@ class ThermalMixin:
             "_meta": self._module_meta.get("thermal", {"hardcoded": [], "fallbacks": []}),
         }
         if driver_thermal:
-            result["driver_thermal"] = driver_thermal
+            result.update(driver_thermal)
 
         self._cached_results["thermal"] = result
         return result

@@ -1064,11 +1064,7 @@ export default function CalculationsPanel() {
                             )}
                           </div>
                         )}
-                        {d.notes && (
-                          <div className="note-box blue" style={{ marginTop: 'auto', paddingTop: 10 }}>
-                            {Object.values(d.notes).slice(0, 3).map((n, i) => <div key={i}>· {n}</div>)}
-                          </div>
-                        )}
+
                       </div>
                     </div>
                   )
@@ -1086,41 +1082,41 @@ const SECTIONS = [
   {
     key: 'mosfet_rating_check', label: 'MOSFET Rating Check', icon: '🛡️',
     rows: [
-      { key: 'vds_max_v', label: 'Vds max (rated)', full: 'Maximum Drain-to-Source Voltage', unit: 'V', dec: 1, explain: 'Maximum drain-source voltage from MOSFET datasheet' },
-      { key: 'v_peak_v', label: 'V peak (system)', full: 'Peak System Bus Voltage', unit: 'V', dec: 1, explain: 'Peak bus voltage from system specs' },
-      { key: 'voltage_margin_pct', label: 'Voltage margin', full: 'MOSFET Voltage Safety Margin', unit: '%', dec: 1, warn: 25, danger: 10, explain: '(Vds_max - V_peak) / Vds_max × 100 — need ≥ 20%' },
-      { key: 'id_cont_a', label: 'Id cont (rated)', full: 'Continuous Drain Current', unit: 'A', dec: 1, explain: 'Continuous drain current rating from MOSFET datasheet' },
-      { key: 'i_max_a', label: 'I max (system)', full: 'Maximum Phase Current', unit: 'A', dec: 1, explain: 'Maximum phase current from system specs' },
-      { key: 'current_margin_pct', label: 'Current margin', full: 'MOSFET Current Safety Margin', unit: '%', dec: 1, warn: 30, danger: 10, explain: '(Id_cont - I_max) / Id_cont × 100' },
-      { key: 'avalanche_energy_mj', label: 'Eas (rated)', full: 'Single-Pulse Avalanche Energy', unit: 'mJ', dec: 1, explain: 'Maximum energy withstand during an inductive kickback event' },
-      { key: 'ias_source', label: 'Ias source', full: 'Avalanche Current Source', string: true, explain: 'Source of the Ias rating — from the datasheet directly or estimated using the motor Lph (Ias = √(2·Eas/Lph))' },
-      { key: 'ias_av_a', label: 'Ias (avalanche)', full: 'Peak Avalanche Current', unit: 'A', dec: 1, explain: 'Maximum current to safely survive an avalanche breakdown.' },
-      { key: 'avalanche_margin_pct', label: 'Ias margin', full: 'Avalanche Current Safety Margin', unit: '%', dec: 1, warn: 25, danger: 10, explain: '(Ias - I_max) / Ias × 100 — should be ≥ 25% for ruggedness' },
+      { key: 'vds_max_v', label: 'Vds max (rated)', full: 'Maximum Drain-to-Source Voltage', unit: 'V', dec: 1, explain: 'Absolute max voltage before avalanche breakdown. Rated at 25°C, V_breakdown often has a positive temperature coefficient.' },
+      { key: 'v_peak_v', label: 'V peak (system)', full: 'Peak System Bus Voltage', unit: 'V', dec: 1, explain: 'Expected peak DC bus voltage under worst-case regeneration or ringing. User-specified.' },
+      { key: 'voltage_margin_pct', label: 'Voltage margin', full: 'MOSFET Voltage Margin', unit: '%', dec: 1, warn: 25, danger: 10, explain: 'Formula: (Vds_max - V_peak) / Vds_max. Industry best practice is ≥ 20% to absorb severe inductive kickbacks and transient ringing.' },
+      { key: 'id_cont_a', label: 'Id cont (rated)', full: 'Continuous Drain Current', unit: 'A', dec: 1, explain: 'Theoretical max DC current from datasheet (often Tc=25°C with infinite heatsink). NOT a practical continuous limit on an FR4 board.' },
+      { key: 'i_max_a', label: 'I max (system)', full: 'Maximum Phase Current', unit: 'A', dec: 1, explain: 'Worst-case peak operational phase current.' },
+      { key: 'current_margin_pct', label: 'Current margin', full: 'MOSFET Current Margin', unit: '%', dec: 1, warn: 30, danger: 10, explain: 'Formula: (Id_cont - I_max) / Id_cont. Because Tc=25°C ratings are extremely optimistic, ≥ 25% margin is crucial to avoid thermal runaway.' },
+      { key: 'avalanche_energy_mj', label: 'Eas (rated)', full: 'Single-Pulse Avalanche Energy', unit: 'mJ', dec: 1, explain: 'Maximum energy (E_AS) the die can safely dissipate during unclamped inductive switching before fracturing.' },
+      { key: 'ias_source', label: 'Ias source', full: 'Avalanche Current Source', string: true, explain: 'Indicates if the peak avalanche current (Ias) was extracted from the datasheet or mathematically estimated using the Motor L_ph.' },
+      { key: 'ias_av_a', label: 'Ias (avalanche)', full: 'Peak Avalanche Current', unit: 'A', dec: 1, explain: 'Absolute peak current for avalanche survivability. Formula (if estimated): Ias = √((2·Eas / L_ph) · (Vds / (Vds - Vbus)))' },
+      { key: 'avalanche_margin_pct', label: 'Ias margin', full: 'Avalanche Current Margin', unit: '%', dec: 1, warn: 25, danger: 10, explain: 'Formula: (Ias - I_max) / Ias. Margin required to ensure survival against hard faults driving unclamped inductive switching. ≥ 25% recommended.' },
     ],
   },
   {
     key: 'driver_compatibility', label: 'Driver Compatibility', icon: '🔗',
     rows: [
-      { key: 'vcc_min_v', label: 'VCC min', full: 'Driver Minimum Supply Voltage', unit: 'V', dec: 1, explain: 'Minimum supply voltage for gate driver IC' },
-      { key: 'vcc_max_v', label: 'VCC max', full: 'Driver Maximum Supply Voltage', unit: 'V', dec: 1, explain: 'Maximum supply voltage for gate driver IC' },
-      { key: 'gate_drive_v', label: 'V_drive (system)', full: 'System Gate Drive Voltage', unit: 'V', dec: 1, explain: 'Gate drive voltage from system specs' },
-      { key: 'v_bootstrap_v', label: 'V bootstrap', full: 'Bootstrap Voltage', unit: 'V', dec: 2, explain: 'V_drive - diode Vf drop (0.5V Schottky)' },
-      { key: 'vbs_uvlo_v', label: 'VBS UVLO', full: 'Bootstrap UVLO Threshold', unit: 'V', dec: 2, explain: 'Bootstrap under-voltage lockout threshold' },
-      { key: 'bootstrap_margin_v', label: 'Boot margin', full: 'Bootstrap Voltage Margin', unit: 'V', dec: 2, warn: 1, danger: 0, explain: 'V_bootstrap - VBS_UVLO — must be positive' },
-      { key: 'vih_v', label: 'Driver VIH', full: 'Driver High-Level Input Threshold', unit: 'V', dec: 2, explain: 'High-level input voltage threshold on driver' },
-      { key: 'mcu_voh_v', label: 'MCU output high', full: 'MCU Output High Voltage', unit: 'V', dec: 1, explain: 'MCU output voltage (from VDD range or assumed 3.3V)' },
+      { key: 'vcc_min_v', label: 'VCC min', full: 'Driver Minimum Supply Voltage', unit: 'V', dec: 1, explain: 'Absolute minimum supply voltage required to operate the logic and gate drive stages. If V_drive < VCC_min, the driver enters UVLO and shuts down.' },
+      { key: 'vcc_max_v', label: 'VCC max', full: 'Driver Maximum Supply Voltage', unit: 'V', dec: 1, explain: 'Absolute maximum gate drive supply voltage before internal logic breakdown. V_drive must not exceed this.' },
+      { key: 'gate_drive_v', label: 'V_drive (system)', full: 'System Gate Drive Voltage', unit: 'V', dec: 1, explain: 'The nominal DC supply voltage fed to the gate driver VCC pin. Set in System Specs.' },
+      { key: 'v_bootstrap_v', label: 'V bootstrap', full: 'Bootstrap Voltage', unit: 'V', dec: 2, explain: 'Steady-state voltage across the high-side floating supply capacitor. Formula: V_drive - V_diode_drop. Assumes standard 1V drop for integrated diodes (configurable in Design Constants).' },
+      { key: 'vbs_uvlo_v', label: 'VBS UVLO', full: 'Bootstrap UVLO Threshold', unit: 'V', dec: 2, explain: 'Under-Voltage Lockout for the high-side supply. If V_bootstrap drops below this during a long ON-cycle, the driver shuts off to prevent linear-mode thermal destruction.' },
+      { key: 'bootstrap_margin_v', label: 'Boot margin', full: 'Bootstrap Voltage Margin', unit: 'V', dec: 2, warn: 1, danger: 0, explain: 'Safety headroom before hitting UVLO. Formula: V_bootstrap - VBS_UVLO. Margin must be > 0.5V to prevent nuisance tripping during sudden PWM transients.' },
+      { key: 'vih_v', label: 'Driver VIH', full: 'Driver High-Level Input Threshold', unit: 'V', dec: 2, explain: 'The absolute lowest voltage the gate driver will reliably interpret as a logic \'1\' on its PWM input pins.' },
+      { key: 'mcu_voh_v', label: 'MCU output high', full: 'MCU Output High Voltage', unit: 'V', dec: 1, explain: 'The expected voltage output from the MCU logic pins. If MCU VOH < Driver VIH, the driver cannot detect the PWM signal. Defauts to 3.3V.' },
     ],
   },
   {
     key: 'adc_timing', label: 'ADC Timing', icon: '📊',
     rows: [
-      { key: 'pwm_period_us', label: 'PWM period', full: 'PWM Switching Period', unit: 'µs', dec: 2, explain: '1 / f_sw' },
-      { key: 'sampling_window_us', label: 'Sample window', full: 'Center-Aligned Sampling Window', unit: 'µs', dec: 2, explain: '10% of half-period (center-aligned)' },
-      { key: 'adc_rate_msps', label: 'ADC rate', full: 'ADC Sampling Rate', unit: 'MSPS', dec: 2, explain: 'Extracted ADC sample rate from MCU datasheet' },
-      { key: 'adc_conversion_us', label: 'Conversion time', full: 'Single ADC Conversion Time', unit: 'µs', dec: 3, explain: '1 / ADC_rate — time for one sample' },
-      { key: 't_3_channel_us', label: '3-ch total time', full: '3-Channel Sequential Conversion Time', unit: 'µs', dec: 3, explain: '3 × conversion time (sequential sampling for 3-shunt)' },
-      { key: 'adc_channels', label: 'ADC channels', full: 'Available MCU ADC Channels', unit: 'ch', dec: 0, explain: 'Total ADC channels from MCU datasheet' },
-      { key: 'channels_needed', label: 'Channels needed', full: 'Required ADC Channels', unit: 'ch', dec: 0, explain: '3 current + bus V + 2 NTC + 1 BEMF = 7 min' },
+      { key: 'pwm_period_us', label: 'PWM period', full: 'PWM Switching Period', unit: 'µs', dec: 2, explain: 'Definition: Total duration of one PWM cycle. Formula: 1 / f_sw. Meaning: Dictates the absolute upper bound time limit for your FOC control loop execution.' },
+      { key: 'sampling_window_us', label: 'Sample window', full: 'Center-Aligned Sampling Window', unit: 'µs', dec: 2, explain: 'Definition: Center-aligned zero-vector sampling window. Formula: (Half-Period) × (1 - 0.90 D_max). At a 90% duty cycle, the low-side switch is ON for a very short time. Your ADC MUST finish sampling phase currents in this narrow quiet window before switching noise corrupts the reading.' },
+      { key: 'adc_rate_msps', label: 'ADC rate', full: 'ADC Sampling Rate', unit: 'MSPS', dec: 2, explain: 'Definition: Maximum ADC sampling rate extracted from the MCU datasheet.' },
+      { key: 'adc_conversion_us', label: 'Conversion time', full: 'Single ADC Conversion Time', unit: 'µs', dec: 3, explain: 'Definition: Theoretical minimum time to complete a single ADC conversion (ignoring multiplexer settling). Formula: 1 / ADC_rate.' },
+      { key: 't_3_channel_us', label: '3-ch total time', full: '3-Channel Sequential Conversion Time', unit: 'µs', dec: 3, explain: 'Definition: Time to sequentially sample all 3 phase shunts on a single ADC. Formula: 3 × Conversion_Time. Best Practice: If this exceeds the sampling window, you MUST use simultaneous sampling (multiple ADCs) or hardware DMA triggers.' },
+      { key: 'adc_channels', label: 'ADC channels', full: 'Available MCU ADC Channels', unit: 'ch', dec: 0, explain: 'Definition: Total analog-to-digital converter input pins available on the chosen microcontroller.' },
+      { key: 'channels_needed', label: 'Channels needed', full: 'Required ADC Channels', unit: 'ch', dec: 0, explain: 'Definition: Minimum recommended ADC channels for a fully protected FOC drive. Assumption: 3x Phase Shunts + 1x Bus Voltage + 2x Thermistors (FETs/Motor) + 1x Throttle/BEMF = 7 channels.' },
     ],
   },
   {
@@ -1139,39 +1135,48 @@ const SECTIONS = [
   {
     key: 'mosfet_losses', label: 'MOSFET Losses', icon: '🔥',
     rows: [
-      { key: 'i_rms_switch_a', label: 'I_rms / switch', full: 'RMS Current per Switch (total)', unit: 'A', dec: 2, explain: 'Per-switch RMS (fundamental + ripple if Lph known). SPWM formula: I_pk × √(1/8 + M/3π)' },
-      { key: 'i_rms_fundamental_a', label: 'I_rms (fund.)', full: 'Fundamental RMS per Switch', unit: 'A', dec: 2, explain: 'Fundamental-only: I_pk × √(1/8 + M/3π) — no ripple component' },
-      { key: 'conduction_loss_per_fet_w', label: 'Cond. Loss / FET', unit: 'W', dec: 3, explain: 'I_rms² × Rds(on) × 1.5 temp derating — NO /2 (I_rms already per-switch)' },
-      { key: 'switching_loss_per_fet_w', label: 'SW Loss / FET', unit: 'W', dec: 3, explain: 'Qgd-based Miller model using actual Rg from gate_resistors (driver-current-limited)' },
-      { key: 'recovery_loss_per_fet_w', label: 'Recovery Loss / FET', unit: 'W', dec: 3, explain: 'Qrr × V_peak × fsw' },
-      { key: 'body_diode_loss_per_fet_w', label: 'Body Diode / FET', unit: 'W', dec: 3, explain: 'Vf × I_avg × dt × fsw × 2 events — dead-time conduction loss' },
-      { key: 'total_loss_per_fet_w', label: 'Total / FET', unit: 'W', dec: 3, warn: 8, danger: 15, explain: 'P_cond + P_sw + P_rr + P_gate + P_coss + P_body_diode' },
-      { key: 'total_all_6_fets_w', label: 'Total (all FETs)', unit: 'W', dec: 1, warn: 40, danger: 60, explain: 'Total per FET × num_fets', dynamic: d => d?.num_fets ? `Total (×${d.num_fets} FETs)` : 'Total (all FETs)' },
-      { key: 'efficiency_mosfet_pct', label: 'Efficiency', unit: '%', dec: 2, explain: '100 × (P_out) / (P_out + Total_Loss)' },
+      { key: 'i_rms_switch_a', label: 'I_rms / switch', full: 'RMS Current per Switch (total)', unit: 'A', dec: 2, explain: 'Definition: Total RMS current passing through ONE switch in the half-bridge. Formula: √(I_fund² + (I_ripple / √2)²). The ripple component is divided by √2 because heating from high-frequency triangle ripple is shared 50/50 between the top and bottom switch across a fundamental cycle.' },
+      { key: 'i_rms_fundamental_a', label: 'I_rms (fund.)', full: 'Fundamental RMS per Switch', unit: 'A', dec: 2, explain: 'Definition: Fundamental sine wave RMS current. Formula: I_pk × √(1/8 + M/(3π)). Takes into account the pulse-width duty cycle weighting (Mohan textbook).' },
+      { key: 'conduction_loss_per_fet_w', label: 'Cond. Loss / FET', unit: 'W', dec: 3, explain: 'Definition: Resistive heating loss. Formula: I_rms_switch² × Rds_hot. Evaluates Rds(on) iteratively using a (Tj_est / 25°C)^2.1 scaling factor to model silicon carrier mobility degradation at high temperatures.' },
+      { key: 'switching_loss_per_fet_w', label: 'SW Loss / FET', unit: 'W', dec: 3, explain: 'Definition: Overlap energy loss during V/I transition. Formula: E_overlap × fsw. Uses Qgd / I_gate to determine exact Miller plateau time. NOTE: Qgd is dynamically scaled up based on junction temperature to model Vth droop.' },
+      { key: 'recovery_loss_per_fet_w', label: 'Recovery Loss / FET', unit: 'W', dec: 3, explain: 'Definition: Body diode reverse recovery energy. Formula: Qrr_hot × V_bus × fsw. NOTE: Qrr increases fiercely at high temperatures; the engine actively scales Qrr up by +0.5% per °C of estimated junction rise for rigorous safety.' },
+      { key: 'body_diode_loss_per_fet_w', label: 'Body Diode / FET', unit: 'W', dec: 3, explain: 'Definition: Diode conduction during dead-time. Formula: Vf × I_avg × t_dead × fsw × (2 events / 2 FETs). Current is sinusoidally averaged.' },
+      { key: 'total_loss_per_fet_w', label: 'Total / FET', unit: 'W', dec: 3, warn: 8, danger: 15, explain: 'Definition: Sum of Conduction, Switching, Recovery, Gate Charge, Coss, and Body Diode losses for a single MOSFET wrapper.' },
+      { key: 'total_all_6_fets_w', label: 'Total (all FETs)', unit: 'W', dec: 1, warn: 40, danger: 60, explain: 'Definition: Total thermal dissipation of the entire inverter power stage. Controls heatsink and cooling requirements.', dynamic: d => d?.num_fets ? `Total (×${d.num_fets} FETs)` : 'Total (all FETs)' },
+      { key: 'efficiency_mosfet_pct', label: 'Efficiency', unit: '%', dec: 2, explain: 'Definition: Efficiency of the silicon switching stage. Formula: 100 × P_out / (P_out + Total_Loss).' },
     ],
   },
   {
     key: 'gate_resistors', label: 'Gate Drive', icon: '⚡',
     rows: [
-      { key: 'rg_on_recommended_ohm', label: 'Rg ON', full: 'Recommended Turn-On Gate Resistor', unit: 'Ω', dec: 2, explain: 'MAX( (V_drv - V_th)/I_source,  (V_drv - V_th)/(Qg/t_rise_target) ) - R_g_internal' },
-      { key: 'rg_off_recommended_ohm', label: 'Rg OFF', full: 'Recommended Turn-Off Gate Resistor', unit: 'Ω', dec: 2, explain: 'MAX( V_drv/I_sink, Rg_on/2 ) - R_g_internal' },
-      { key: 'rg_bootstrap_ohm', label: 'Rg Bootstrap', full: 'Bootstrap Charging Resistor', unit: 'Ω', dec: 0, explain: 'Hardcoded standard value (10Ω) to limit peak charging current' },
-      { key: 'gate_rise_time_ns', label: 'Rise time', full: 'Actual Gate Rise Time', unit: 'ns', dec: 1, explain: 'Q_g / ( (V_drv - V_th) / Rg_on_total )' },
-      { key: 'gate_fall_time_ns', label: 'Fall time', full: 'Actual Gate Fall Time', unit: 'ns', dec: 1, explain: 'Q_g / ( V_drv / Rg_off_total )' },
-      { key: 'dv_dt_v_per_us', label: 'dV/dt', full: 'Drain-Source Voltage Slew Rate', unit: 'V/µs', dec: 1, explain: 'V_peak / t_rise_actual' },
+      { key: 'hs_rg_on_ohm', label: 'HS Rg ON', full: 'High-Side Turn-On Resistor', unit: 'Ω', dec: 2, explain: 'Definition: External gate resistor required for high-side turn-on. Formula: MAX( V_drv/I_source, (V_drv - V_pl) / (Q_gd / t_rise) ) - Rg_int. Physics: Sizes for specific rise target while strictly clamping absolute peak driver output current.' },
+      { key: 'hs_rg_off_ohm', label: 'HS Rg OFF', full: 'High-Side Turn-Off Resistor', unit: 'Ω', dec: 2, explain: 'Definition: External gate resistor required for high-side turn-off. Formula: Solves for induced Miller current (I_miller = Crss × dV/dt) and caps Rg_off to guarantee I_miller × Rg_off_total < V_th × 0.8. Physics: Rigorously prevents parasitic shoot-through at high dV/dt.' },
+      { key: 'ls_rg_on_ohm', label: 'LS Rg ON', full: 'Low-Side Turn-On Resistor', unit: 'Ω', dec: 2, explain: 'Definition: External gate resistor required for low-side turn-on, matching high-side topology.' },
+      { key: 'ls_rg_off_ohm', label: 'LS Rg OFF', full: 'Low-Side Turn-Off Resistor', unit: 'Ω', dec: 2, explain: 'Definition: External gate resistor required for low-side turn-off, sized with direct Miller threshold safety margin.' },
+      { key: 'rg_bootstrap_ohm', label: 'Rg Bootstrap', full: 'Bootstrap Charging Resistor', unit: 'Ω', dec: 1, explain: 'Definition: Current-limiting resistor in series with the bootstrap diode. Physics: Restricts peak C_boot charging surge (I_surge = V_drv / Rg_boot) to protect the 15V rail from brownouts.' },
+      { key: 'hs_gate_rise_time_ns', label: 'Actual Rise', full: 'Calculated Gate Rise Time', unit: 'ns', dec: 1, explain: 'Definition: Physical switching transition time. Formula: (Rg_on_total × Q_gd) / (V_drv - V_pl).' },
+      { key: 'hs_gate_fall_time_ns', label: 'Actual Fall', full: 'Calculated Gate Fall Time', unit: 'ns', dec: 1, explain: 'Definition: Physical switching transition time. Formula: (Rg_off_total × Q_gd) / V_pl.' },
+      { key: 'hs_dv_dt_bus', label: 'Switch dV/dt', full: 'Phase Node Slew Rate', unit: 'V/µs', dec: 1, warn: 40, danger: 65, explain: 'Definition: Voltage slew rate on the inverter phase leg. Formula: V_bus / t_rise_actual. Physics: Excessive dV/dt (>50 V/µs) triggers severe EMI, capacitive motor bearing currents, and false MOSFET triggering.' },
+      { key: 'hs_i_peak_on_a', label: 'I_peak Driver', full: 'Absolute Peak Gate Current', unit: 'A', dec: 2, warn: 2, danger: 3, explain: 'Definition: Maximum instantaneous current pulled from the driver. Formula: V_drv / Rg_on_total. Physics: Validates driver sizing (UCC27302 has a specific source/sink saturation limit).' },
+      { key: 'hs_rg_power_w', label: 'Rg Power Loss', full: 'Gate Resistor Dissipation', unit: 'W', dec: 3, warn: 0.125, danger: 0.25, explain: 'Definition: Thermal power dissipated specifically in the physical gate resistors. Formula: Q_g × V_drv × fsw, proportionally split. Physics: Verifies 0603/0805 package power limits.' },
     ],
   },
   {
     key: 'thermal', label: 'Thermal', icon: '🌡️',
     rows: [
-      { key: 't_junction_est_c', label: 'Tj estimated', full: 'Estimated Junction Temperature', unit: '°C', dec: 1, warn: 130, danger: 155, explain: 'T_ambient + (P_fet × (R_thJC + R_thCS + R_thSA))' },
-      { key: 'tj_max_rated_c', label: 'Tj max rated', full: 'Maximum Rated Junction Temperature', unit: '°C', dec: 0, explain: 'Absolute maximum junction temp from MOSFET datasheet' },
-      { key: 'thermal_margin_c', label: 'Thermal margin', full: 'Thermal Safety Margin', unit: '°C', dec: 1, warn: 30, danger: 0, explain: 'Tj_max_rated - Tj_estimated' },
-      { key: 'p_per_fet_w', label: 'P / FET', full: 'Power Dissipation per Switch', unit: 'W', dec: 3, explain: 'Total power dissipation per individual switch' },
-      { key: 'motor_copper_loss_w', label: 'Motor Cu loss', full: 'Motor Copper Stator Loss', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — motor winding copper loss (requires Rph in Motor tab)' },
-      { key: 'trace_conduction_loss_w', label: 'Trace Loss', full: 'Trace Conduction Ohmic Loss', unit: 'W', dec: 2, explain: 'Power dissipated by power traces via PCB thermal physics' },
-      { key: 'system_total_loss_w', label: 'System total', full: 'Total System Power Loss', unit: 'W', dec: 1, explain: 'MOSFET losses (×6) + motor copper loss — full system power budget' },
-      { key: 'copper_area_per_fet_mm2', label: 'Cu area / FET', full: 'Required PCB Copper Area per Switch', unit: 'mm²', dec: 0, explain: 'IPC-2152 estimate for required 3oz copper area to maintain steady state' },
+      { key: 't_junction_est_c', label: 'Tj estimated', full: 'Estimated Junction Temperature', unit: '°C', dec: 1, warn: 130, danger: 155, explain: 'Definition: Maximum steady-state temperature of the silicon die. Formula: T_ambient + P_fet × (R_thJC + R_thCS + R_thSA). Physics: Integrates the selected cooling method (e.g. Heatsinks drop R_thSA massively).' },
+      { key: 'tj_max_rated_c', label: 'Tj max rated', full: 'Maximum Rated Junction Temperature', unit: '°C', dec: 0, explain: 'Definition: Absolute maximum thermal limit from the manufacturer datasheet before catastrophic silicon failure.' },
+      { key: 'thermal_margin_c', label: 'Thermal margin', full: 'Thermal Safety Margin', unit: '°C', dec: 1, warn: 30, danger: 0, explain: 'Definition: Buffer between the estimated operating state and absolute failure. Formula: Tj_max_rated - Tj_estimated.' },
+      { key: 'p_per_fet_w', label: 'P / FET', full: 'Power Dissipation per Switch', unit: 'W', dec: 3, explain: 'Definition: Total thermal wattage dissipated by one MOSFET wrap. Matches the rigorous sum from the MOSFET Losses phase.' },
+      
+      { key: 'tj_driver_est_c', label: 'Driver Tj estimated', full: 'Estimated Gate Driver Junction Temperature', unit: '°C', dec: 1, warn: 125, danger: 145, explain: 'Definition: Thermal state of the Gate Driver IC. Formula: T_amb + P_driver × Rth_JA. P_driver rigorous calculated by subtracting external resistor heat from the total gate charge energy.' },
+      { key: 'p_driver_per_ic_w', label: 'Driver P / IC', full: 'Power Dissipation per Driver IC', unit: 'W', dec: 3, explain: 'Definition: Dissipation inside the Driver IC. Physics: Precisely computes Q_g × V_drv × fsw, dynamically scaled for parallel topologies, and actively subtracts heat burned cleanly in external gate resistors.' },
+
+      { key: 'motor_copper_loss_w', label: 'Motor Cu loss', full: 'Motor Copper Stator Loss', unit: 'W', dec: 1, explain: 'Definition: Ohmic heating strictly in the motor windings. Formula: 1.5 × I_max² × Rph. (Note: True 3-phase RMS sum). Physics: Dominant cause of motor thermal saturation.' },
+      { key: 'trace_conduction_loss_w', label: 'Trace Loss', full: 'Trace Conduction Ohmic Loss', unit: 'W', dec: 2, explain: 'Definition: Ohmic heating dissipated physically inside the PCB traces. Formula: Dynamically evaluated from your PCB Trace dimensions/vias. Crucial for system integration.' },
+      { key: 'system_total_loss_w', label: 'System total', full: 'Total System Power Loss', unit: 'W', dec: 1, explain: 'Definition: The true unified heat envelope of the drive. Formula: (P_fet × 6) + Cu_loss + Trace_loss + Driver_loss. Sizing metric for chassis cooling.' },
+      { key: 'copper_area_per_fet_mm2', label: 'Cu pad / FET', full: 'Required PCB Copper Area per Switch', unit: 'mm²', dec: 0, explain: 'Definition: Only relevant for natural/enhanced PCB cooling. Formula: IPC convective heuristic (P × 645mm² / 30°C rise). Physics: Mechanically nullified (displays 0) if forced air or heatsinks are selected in system specs.' },
+      { key: 'power_trace_width_mm', label: 'Min Trace Width', full: 'Baseline Minimum Power Trace Width', unit: 'mm', dec: 1, explain: 'Definition: Baseline trace width approximation. Physics: Actively switches between IPC-2221B and IPC-2152 depending on your System Config selection. Overrides automatically if PCB Trace module is used.' },
     ],
   },
   {
@@ -1189,10 +1194,20 @@ const SECTIONS = [
   {
     key: 'bootstrap_cap', label: 'Bootstrap', icon: '🔄',
     rows: [
-      { key: 'c_boot_calculated_nf', label: 'C_boot required', full: 'Calculated Minimum Bootstrap Capacitance', unit: 'nF', dec: 1, explain: '(Q_g + I_leakage×t_on) / dV_boot_droop' },
-      { key: 'c_boot_recommended_nf', label: 'C_boot standard', full: 'Recommended Standard Bootstrap Capacitor', unit: 'nF', dec: 0, explain: 'Calculated requirement buffered by 2x safety margin and snapped to E12 series' },
-      { key: 'v_bootstrap_v', label: 'V_bootstrap', full: 'Expected Bootstrap Bias Voltage', unit: 'V', dec: 2, explain: 'V_drive - V_diode_drop' },
-      { key: 'min_hs_on_time_ns', label: 'Min on-time', full: 'Minimum Low-Side On-Time', unit: 'ns', dec: 0, explain: '3 × R_boot × C_boot (time required to recharge bootstrap capacitor to ~95%)' },
+      { key: 'c_boot_calculated_nf', label: 'C_boot min', full: 'Charge-Budget Minimum Bootstrap Capacitance', unit: 'nF', dec: 1,
+        explain: 'Formula: C_min = Q_total / ΔV_droop_target. Q_total = Qg + I_leakage/fsw (gate charge + per-cycle leakage). This is the absolute physical minimum — below this, the gate will droop below the threshold threshold before the HS switch turns on.' },
+      { key: 'c_boot_recommended_nf', label: 'C_boot standard', full: 'Recommended E12 Bootstrap Capacitor', unit: 'nF', dec: 0,
+        explain: 'C_min × safety_margin (default 2×), then snapped UP to the nearest purchasable E12 standard value. The ×2 safety margin combats MLCC DC-bias capacitance derating and temperature degradation.' },
+      { key: 'droop_actual_v', label: 'Droop (actual)', full: 'Actual Per-Cycle Gate Voltage Droop', unit: 'V', dec: 3,
+        explain: 'droop_actual = Q_total / C_chosen. Since C_chosen > C_min, droop_actual < droop_target. This is the true gate voltage decay per switching cycle. Must leave sufficient margin above the driver VBS_UVLO threshold.' },
+      { key: 'v_bootstrap_v', label: 'V_bootstrap', full: 'Peak Bootstrap Bias Voltage', unit: 'V', dec: 2,
+        explain: 'V_boot = V_drive − Vf_diode. Maximum steady-state bootstrap voltage after the bootstrap diode. This is what the high-side MOSFET gate is driven to at the start of each HS on-time.' },
+      { key: 'v_boot_min_v', label: 'V_boot min', full: 'Worst-Case Gate Voltage at End of HS On-Time', unit: 'V', dec: 2,
+        explain: 'V_boot − droop_actual. Minimum gate voltage seen by the high-side MOSFET at end of maximum on-time. Must always exceed driver VBS_UVLO threshold (typically 5.3V for UCC27302A).' },
+      { key: 'min_hs_on_time_ns', label: 'Min LS on-time', full: 'Minimum Low-Side On-Time per PWM Cycle', unit: 'ns', dec: 0,
+        explain: 'Formula: t_refresh = 3τ = −τ × ln(0.05). Derived from exponential RC charging: Q_restored = C × droop_actual × (1 − exp(−t/τ)). Setting Q_restored = 95% × Q_total always yields exactly 3τ, independent of C or droop values. This is the hard duty-cycle constraint for bootstrap operation.' },
+      { key: 'bootstrap_hold_time_ms', label: 'Hold time', full: 'Maximum Continuous High-Side ON Duration', unit: 'ms', dec: 1,
+        explain: 't_hold = C_boot × droop_actual / I_leakage. Maximum time HS can remain continuously ON before the bootstrap cap droops below UVLO threshold. Directly coupled to driver quiescent current from the datasheet.' },
     ],
   },
   {

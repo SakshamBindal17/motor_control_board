@@ -554,10 +554,10 @@ export default function PassivesPanel() {
             value={ovr.mlcc_size_nf != null ? +(ovr.mlcc_size_nf / 1000).toFixed(4) : ''} defaultVal={0.1}
             onChange={v => setOvr('mlcc_size_nf', v !== '' ? +(parseFloat(v) * 1000).toFixed(2) : '')} onReset={() => resetOvr('mlcc_size_nf')}
             note="X7R recommended (100nF = 0.1µF)" />
-          <OvrField label="MLCC Z (Impedance)" unit="mΩ" min={0.1}
+          <OvrField label="MLCC ESR (Series Req)" unit="mΩ" min={0.1}
             value={ovr.mlcc_z_mohm ?? ''} defaultVal={2}
             onChange={v => setOvr('mlcc_z_mohm', v)} onReset={() => resetOvr('mlcc_z_mohm')}
-            note="|Z| from manufacturer datasheet graph exclusively exactly at switching frequency." />
+            note="Pure resistive Equivalent Series Resistance (ESR). The backend physics engine will analytically handle the huge capacitive reactance (Xc) for you!" />
           <OvrField label="MLCC V-Rating" unit="V"
             value={ovr.mlcc_v_rating_v ?? ''} defaultVal={50}
             onChange={v => setOvr('mlcc_v_rating_v', v)} onReset={() => resetOvr('mlcc_v_rating_v')}
@@ -574,10 +574,10 @@ export default function PassivesPanel() {
           <OvrField label="Film Size" unit="µF" min={0.1}
             value={ovr.film_size_uf ?? ''} defaultVal={4.7}
             onChange={v => setOvr('film_size_uf', v)} onReset={() => resetOvr('film_size_uf')} />
-          <OvrField label="Film Z (Impedance)" unit="mΩ" min={0.1}
+          <OvrField label="Film ESR" unit="mΩ" min={0.1}
             value={ovr.film_z_mohm ?? ''} defaultVal={5.0}
             onChange={v => setOvr('film_z_mohm', v)} onReset={() => resetOvr('film_z_mohm')}
-            note="|Z| derived directly from Film datasheet curve precisely at switching freq." />
+            note="Resistive ESR only. True Admittance (Y) splitting automatically accounts for capacitance." />
           <OvrField label="Film V-Rating" unit="V"
             value={ovr.film_v_rating_v ?? ''} defaultVal={100}
             onChange={v => setOvr('film_v_rating_v', v)} onReset={() => resetOvr('film_v_rating_v')} />
@@ -599,14 +599,14 @@ export default function PassivesPanel() {
         results={<>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="Ripple RMS" value={fmtNum(icap.i_ripple_rms_a, 2)} unit="A" src="auto" bold color="#ffab00"
-              tip="I_ripple = I_max × √(D×(1-D)) — The devastating high-frequency AC current that destroys capacitors!" />
+              tip={icap.ripple_method?.includes('Analytic') ? "Exact 3-phase SVPWM mathematical integral. Represents the true bulk chopped AC phase currents the DC-link must survive." : "Calculated ripple current entering the DC bus."} />
             <Row label="Required C" value={fmtNum(icap.c_bulk_required_uf, 1)} unit="µF" src="auto"
-              tip="C_bulk = I_ripple / (8 × fsw × ΔV) — Pure theoretical minimum to quench low-freq ripple." />
+              tip="C = I_max / (4 × fsw × ΔV_target). Minimum capacitance rigorously required to source the discrete charge displacement of a PWM cycle." />
             <Row label="Bulk caps" value={`${fv(icap.n_bulk_caps)}×`} bold src="auto" />
             <Row label="Per cap" value={`${fv(icap.c_per_bulk_cap_uf)}µF`} bold src="auto" />
             <Row label="V-ripple actual" value={fmtNum(icap.v_ripple_actual_v, 3)} unit="V" src="auto" />
             <Row label="ESR budget" value={fmtNum(icap.esr_budget_total_mohm, 1)} unit="mΩ" src="auto"
-              tip="ESR limit = ΔV / I_ripple — keeps voltage spike in check" />
+              tip="ESR limit = ΔV_allowable / I_max. Strict upper limit to ensure the instantaneous I×R voltage drop from phase switching does not exceed your target." />
           </div>
           <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
             letterSpacing:'.5px', textTransform:'uppercase' }}>MLCC</div>
@@ -614,9 +614,9 @@ export default function PassivesPanel() {
             <Row label="Count × Size" value={`${fv(icap.c_mlcc_qty)}× ${fv(icap.c_mlcc_nf != null ? +(icap.c_mlcc_nf / 1000).toFixed(4) : null)}µF`}
               src={ovr.mlcc_qty != null || ovr.mlcc_size_nf != null ? 'ovr' : 'auto'} />
             <Row label="‖ Impedance" value={fmtNum(icap.c_mlcc_parallel_z_mohm, 2)} unit="mΩ" bold src="auto"
-              tip="|Z_parallel| = |Z_single| / N. Total resistive equivalent at high freq." />
+              tip="True Vector Impedance Z = √(ESR² + Xc²). High-frequency AC current strictly splits via vector admittance, not just ESR." />
             <Row label="Power loss" value={fmtNum(icap.c_mlcc_power_loss_w, 4)} unit="W" src="auto" bold color={icap.c_mlcc_power_loss_w > 0.1 ? '#ff4444' : '#ffab00'}
-              tip="P_loss = I_mlcc² × |Z_parallel|. Heat physically burned right into the MLCC bodies." />
+              tip="P_loss = I_mlcc² × ESR_mlcc. Heat physically burned into the ceramics. If high, your MLCCs are sinking too much AC ripple!" />
             <Row label="DC Bias Limit" value={fv(icap.c_mlcc_v_rating)} unit="V" 
               src={ovr.mlcc_v_rating_v != null ? 'ovr' : 'auto'} />
           </div>
@@ -661,15 +661,15 @@ export default function PassivesPanel() {
           <OvrField label="Max Droop" unit="V"
             value={ovr.bootstrap_droop_v ?? ''} defaultVal={0.5}
             onChange={v => setOvr('bootstrap_droop_v', v)} onReset={() => resetOvr('bootstrap_droop_v')}
-            note="Overrides calculation. Sets static voltage drop allowed while HS is holding on." />
+            note="Target per-cycle gate voltage sag budget (ΔV). C_min = Q_total / ΔV. Smaller droop → larger required C_boot." />
           <OvrField label="C_boot V-Rating" unit="V"
             value={ovr.cboot_v_rating_v ?? ''} defaultVal={25}
             onChange={v => setOvr('cboot_v_rating_v', v)} onReset={() => resetOvr('cboot_v_rating_v')}
-            note="Overrides safety rule. ≥ 2× Vdrv recommended to combat MLCC DC-bias derating." />
+            note="Overrides safety rule. ≥ 2× V_boot recommended to combat MLCC DC-bias derating (X7R caps lose 50–70% C at rated voltage)." />
           <OvrField label="Rg_bootstrap" unit="Ω"
             value={ovr.rg_bootstrap_ohm ?? ''} defaultVal={10}
             onChange={v => setOvr('rg_bootstrap_ohm', v)} onReset={() => resetOvr('rg_bootstrap_ohm')}
-            note="Overrides base 10Ω limit. Protects bootstrap diode from massive initial inrush currents." />
+            note="Series resistor for bootstrap charging. τ = Rg × C_boot. Increasing Rg extends t_refresh = 3τ — read Min Refresh row to see impact." />
           {/* Reverse calculator */}
           <div style={{ ...fullSpan, paddingTop:4, borderTop:'1px solid rgba(255,255,255,.06)' }}>
             <div style={{ fontSize:10, fontWeight:700, color:'#00d4e8', letterSpacing:'.5px',
@@ -702,26 +702,31 @@ export default function PassivesPanel() {
         results={<>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="Rg_bootstrap" value={fmtNum(bcap.r_boot_series_ohm, 1)} unit="Ω" bold src={ovr.rg_bootstrap_ohm != null ? 'ovr': 'auto'}
-              tip="Resistor in series with the bootstrap diode. Limits initial charging inrush spike (I = (Vdrv - Vdrop) / Rg_boot) when LS turns on." />
-            <Row label="C_boot required (per phase)" value={fmtNum(bcap.c_boot_calculated_nf, 1)} unit="nF" src="auto"
-              tip="C_boot_min = Qg / ΔV_droop — Exact mathematical minimum capacitance needed to keep the HS gate open through one cycle." />
-            <Row label="C_boot ×10 (recommended)" value={fmtNum(bcap.c_boot_calculated_nf != null ? bcap.c_boot_calculated_nf * 10 : null, 0)} unit="nF" bold src="auto"
-              tip="Safety margin calculation: 10× minimum. This combats real-world DC-bias capacitance drop, temperature degradation, and driver quiescent leakage." />
-            <Row label="C_boot chosen (per phase)" value={fmtNum(bcap.c_boot_recommended_nf, 0)} unit="nF" bold
+              tip={`Resistor in series with bootstrap diode. Limits peak inrush current I_peak = V_drv / Rg_boot. τ = Rg_boot × C_boot — directly sets t_precharge and t_refresh.`} />
+            <Row label="C_boot min (per phase)" value={fmtNum(bcap.c_boot_calculated_nf, 1)} unit="nF" src="auto"
+              tip={`C_min = Q_total / ΔV_droop_target. Q_total = Qg + I_leak/fsw = ${bcap.q_total_nc != null ? bcap.q_total_nc.toFixed(3) : '?'}nC. Absolute minimum charge-budget capacitance.`} />
+            <Row label={`C_boot ×${bcap.safety_margin_x ?? 2} (with margin)`} value={fmtNum(bcap.c_boot_calculated_nf != null && bcap.safety_margin_x != null ? bcap.c_boot_calculated_nf * bcap.safety_margin_x : null, 0)} unit="nF" bold src="auto"
+              tip={`Applied ${bcap.safety_margin_x ?? 2}× safety margin (Design Constant: boot.safety_margin) before E12 snap to combat MLCC DC-bias droop and temperature derating.`} />
+            <Row label="C_boot chosen (E12, per phase)" value={fmtNum(bcap.c_boot_recommended_nf, 0)} unit="nF" bold
               src={ovr.bootstrap_droop_v != null ? 'ovr' : 'auto'}
-              tip="Snaps the recommendation up to the nearest purchasable E12 component size." />
+              tip={`Standard E12 component value → actual droop on this cap = Q_total / C_chosen = ${bcap.droop_actual_v != null ? bcap.droop_actual_v.toFixed(3) : '?'}V (lower than target droop — good!)`} />
+            <Row label="Droop (actual)" value={fmtNum(bcap.droop_actual_v, 3)} unit="V" src="auto"
+              tip={`droop_actual = Q_total / C_std = ${bcap.q_total_nc != null ? bcap.q_total_nc.toFixed(3) : '?'}nC / ${bcap.c_boot_recommended_nf != null ? bcap.c_boot_recommended_nf : '?'}nF. Must be < droop_target AND keep V_gate_min > UVLO threshold.`} />
             <Row label="V-rating" value={fv(bcap.c_boot_v_rating_v)} unit="V"
-              src={ovr.cboot_v_rating_v != null ? 'ovr' : 'auto'} />
-            <Row label="Quantity" value={fv(bcap.c_boot_qty)} unit={`pcs (1 per HS switch)`} src="auto"
-              tip="Topology constraint: Exactly 1 bootstrap capacitor is mechanically required per phase limb." />
+              src={ovr.cboot_v_rating_v != null ? 'ovr' : 'auto'}
+              tip={`Rule: Use ≥ 2× V_drive for MLCC DC-bias reliability. At ${bcap.v_bootstrap_v || 11}V, minimum rating = ${bcap.v_bootstrap_v != null ? (bcap.v_bootstrap_v * 2).toFixed(0) : 22}V.`} />
             <Row label="V_boot" value={fmtNum(bcap.v_bootstrap_v, 2)} unit="V" src="auto"
-              tip="V_boot = Vcc - Vd_boot_diode. This is the maximum voltage the capacitor can physically reach." />
+              tip="V_boot = Vcc − Vf_diode. Maximum achievable bootstrap voltage as the cap charges through the diode. High-side FET must turn on fully at this voltage." />
+            <Row label="V_boot min (after droop)" value={fmtNum(bcap.v_boot_min_v, 2)} unit="V" src="auto"
+              tip={`V_boot − droop_actual = ${bcap.v_bootstrap_v != null && bcap.droop_actual_v != null ? (bcap.v_bootstrap_v - bcap.droop_actual_v).toFixed(3) : '?'}V. Worst-case gate voltage at the end of HS on-time. Must exceed Driver VBS_UVLO threshold.`} />
+            <Row label="Quantity" value={fv(bcap.c_boot_qty)} unit="pcs (1 per HS switch)" src="auto"
+              tip="Topology constraint: exactly 1 bootstrap capacitor per high-side switch (one per phase limb). Total = num_fets / 2." />
             <Row label="Initial Pre-Charge" value={fmtNum(bcap.boot_precharge_us, 1)} unit="µs" bold src="auto"
-              tip="t_precharge = 3 × Rg_boot × C_boot. Long pulse required at startup (from 0V) before PWM begins." />
-            <Row label="Min Refresh Time" value={fmtNum(bcap.min_refresh_us, 3)} unit="µs" bold src="auto"
-              tip="t_refresh = Qg × Rg_boot / ΔV_droop. Short pulse required every PWM cycle to replenish lost gate charge." />
-            <Row label="Hold time" value={fmtNum(bcap.bootstrap_hold_time_ms, 1)} unit="ms" src="auto" 
-              tip="t_hold = (C_boot × ΔV_droop) / I_leakage. Maximum Time the High-Side can stay constantly ON." />
+              tip={`t_precharge = 3τ = 3 × Rg_boot × C_boot = 3 × ${bcap.r_boot_series_ohm || 10}Ω × ${bcap.c_boot_recommended_nf || '?'}nF = ${bcap.tau_us != null ? (bcap.tau_us * 3).toFixed(1) : '?'}µs. This is the minimum low-side on-time at startup (charging from 0V to 95% of V_boot).`} />
+            <Row label="Min Refresh (per cycle)" value={fmtNum(bcap.min_refresh_us, 2)} unit="µs" bold src="auto"
+              tip={`t_refresh = 3τ = −τ × ln(0.05) ≈ 3 × ${bcap.tau_us != null ? bcap.tau_us.toFixed(2) : '?'}µs. Exponential RC derivation: during LS on-time, Q_restored = C × droop_actual × (1 − e^(−t/τ)). Solving for 95% recovery gives exactly 3τ, independent of capacitor size. This is the minimum LS duty-cycle constraint.`} />
+            <Row label="Hold time" value={fmtNum(bcap.bootstrap_hold_time_ms, 1)} unit="ms" src="auto"
+              tip={`t_hold = C_boot × droop_actual / I_leakage = ${bcap.c_boot_recommended_nf || '?'}nF × ${bcap.droop_actual_v != null ? bcap.droop_actual_v.toFixed(3) : '?'}V / ${bcap.i_leakage_ua != null ? bcap.i_leakage_ua.toFixed(1) : '?'}µA. Max safe HS-ON duration before gate voltage droops below UVLO.`} />
           </div>
         </>}
       />
