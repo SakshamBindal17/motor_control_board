@@ -8,7 +8,7 @@ import json, io, traceback, logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from claude_service import extract_parameters_from_pdf
+from claude_service import extract_parameters_from_pdf, _pdf_page_count, _pick_model
 from calc_engine import CalculationEngine
 from report_generator import generate_pdf_report, generate_excel_report
 from spice_export import generate_spice_netlist
@@ -29,7 +29,7 @@ app.add_middleware(
 async def extract_datasheet(
     block_type: str,
     file: UploadFile = File(...),
-    x_api_key: str = Header(..., alias="X-API-Key"),
+    x_api_key: str = Header(default="", alias="X-API-Key"),
 ):
     if block_type not in ("mcu", "driver", "mosfet"):
         raise HTTPException(400, f"Unknown block type: {block_type}")
@@ -39,10 +39,12 @@ async def extract_datasheet(
     pdf_bytes = await file.read()
     if len(pdf_bytes) == 0:
         raise HTTPException(400, "Uploaded file is empty")
-    if len(pdf_bytes) > 50 * 1024 * 1024:
-        raise HTTPException(400, "PDF too large (max 50 MB)")
+    if len(pdf_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(400, "PDF too large (max 20 MB) — use a component-specific datasheet, not a full reference manual")
 
-    logger.info(f"Extracting {block_type} from {file.filename} ({len(pdf_bytes)//1024} KB)")
+    pages = _pdf_page_count(pdf_bytes)
+    model = _pick_model(pages)
+    logger.info(f"Extracting {block_type} from {file.filename} ({len(pdf_bytes)//1024} KB, {pages} pages) → {model}")
 
     try:
         result = await extract_parameters_from_pdf(pdf_bytes, block_type, x_api_key)
@@ -53,7 +55,7 @@ async def extract_datasheet(
         # Sanitize: never leak API keys or auth tokens in responses
         if "api_key" in error_msg.lower() or "sk-" in error_msg or "authentication" in error_msg.lower():
             logger.error(f"Extraction auth error (details suppressed for security)")
-            raise HTTPException(500, "Authentication error — check your API key in Settings")
+            raise HTTPException(500, "Authentication error — ensure Claude CLI is logged in (run: claude auth login)")
         logger.error(f"Extraction error: {type(e).__name__}: {error_msg}")
         raise HTTPException(500, f"{type(e).__name__}: {error_msg}")
 

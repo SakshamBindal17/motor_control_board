@@ -20,6 +20,7 @@ export async function extractDatasheet(blockType, file, apiKey) {
     method: 'POST',
     headers: { 'X-API-Key': apiKey },
     body: form,
+    signal: AbortSignal.timeout(370_000),  // 370s — slightly over backend limit
   })
   return (await res.json()).data
 }

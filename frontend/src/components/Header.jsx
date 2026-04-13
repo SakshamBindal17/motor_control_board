@@ -95,15 +95,6 @@ export default function Header() {
           <span style={{ fontFamily: 'var(--font-mono)' }}>{done}/3</span> sheets
         </span>
         {project.calculations && <span className="badge badge-done">Calculated</span>}
-        {!settings.api_key && (
-          <span
-            className="badge badge-error"
-            style={{ cursor: 'pointer' }}
-            onClick={() => dispatch({ type: 'TOGGLE_SETTINGS' })}
-          >
-            ⚠ No API key
-          </span>
-        )}
       </div>
 
       {/* Actions */}
@@ -128,7 +119,7 @@ export default function Header() {
             icon: <Settings size={15} />,
             tip: 'Settings',
             fn: () => dispatch({ type: 'TOGGLE_SETTINGS' }),
-            highlight: !settings.api_key,
+            highlight: false,
           },
         ].map((btn, i) => (
           <button

@@ -1,16 +1,22 @@
 """
-Claude PDF extraction service — v3
-- Essential parameters only (shorter prompts, fewer tokens)
+Claude PDF extraction service — v4
+- Uses Claude CLI (claude -p) instead of Anthropic API
+  → works with Claude Pro subscription, no API credits needed
 - SHA-256 hash-based disk cache (backend/cache/{block_type}/)
-- Sync client in asyncio.to_thread to avoid event loop blocking
+- Sync subprocess in asyncio.to_thread to avoid event loop blocking
 """
-import anthropic
 import asyncio
-import base64
 import hashlib
+import io
 import json
 import os
 import re
+import subprocess
+import sys
+import tempfile
+import time
+
+from pypdf import PdfReader
 
 # ─── In-flight dedup ─────────────────────────────────────────────────────────
 # Prevents duplicate API calls when the same PDF is uploaded concurrently
@@ -48,6 +54,19 @@ def _pdf_hash(pdf_bytes: bytes) -> str:
     # Include PROMPT_VERSION in hash so any prompt change invalidates old cache entries
     versioned = pdf_bytes + PROMPT_VERSION.encode()
     return hashlib.sha256(versioned).hexdigest()
+
+def _pdf_page_count(pdf_bytes: bytes) -> int:
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        return len(reader.pages)
+    except Exception:
+        return 0  # unknown — caller will default to sonnet to be safe
+
+def _pick_model(page_count: int) -> str:
+    """Use Haiku for small datasheets (≤120 pages), Sonnet for large ones."""
+    if page_count > 0 and page_count <= 120:
+        return "claude-haiku-4-5-20251001"
+    return "claude-sonnet-4-6"
 
 
 # ─── Prompts ─────────────────────────────────────────────────────────────────
@@ -492,7 +511,7 @@ id="dma_channels"
 
 # ─── Main extraction function ─────────────────────────────────────────────────
 
-async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key: str) -> dict:
+async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key: str = "") -> dict:
     prompts = {"mosfet": MOSFET_PROMPT, "driver": DRIVER_PROMPT, "mcu": MCU_PROMPT}
     if block_type not in prompts:
         raise ValueError(f"Unknown block type: {block_type}")
@@ -522,33 +541,85 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
         _inflight[dedup_key] = done_event
 
     try:
-        prompt  = prompts[block_type]
-        pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+        prompt = prompts[block_type]
+        page_count = _pdf_page_count(pdf_bytes)
+        model = _pick_model(page_count)
 
         def _call_claude():
-            client = anthropic.Anthropic(api_key=api_key, timeout=120.0)
-            return client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=16000,
-                extra_headers={"anthropic-beta": "pdfs-2024-09-25"},
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "document",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "application/pdf",
-                                "data": pdf_b64,
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }],
-            )
+            # Save PDF to a temp file
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                f.write(pdf_bytes)
+                pdf_path = f.name
 
-        response = await asyncio.wait_for(asyncio.to_thread(_call_claude), timeout=150)
-        raw = response.content[0].text.strip()
+            # Output file — Claude will write JSON here directly
+            output_path = pdf_path.replace(".pdf", "_result.json")
+
+            # Write full instructions to a temp file to avoid Windows 8191-char
+            # command-line length limit (prompts are ~25 KB, well over the cap).
+            instructions = (
+                f"Read the PDF at: {pdf_path}\n\n"
+                f"{prompt}\n\n"
+                "FINAL INSTRUCTION: Write the resulting JSON object to the file: "
+                f"{output_path}\n"
+                "The file must contain ONLY the raw JSON object — no markdown, "
+                "no explanation, no text before or after the JSON."
+            )
+            with tempfile.NamedTemporaryFile(suffix=".md", delete=False,
+                                             mode='w', encoding='utf-8') as f:
+                f.write(instructions)
+                instructions_path = f.name
+
+            try:
+                short_prompt = f"Follow all instructions in the file at: {instructions_path}"
+                proc = subprocess.Popen(
+                    ["claude", "--dangerously-skip-permissions", "--model", model, "-p", short_prompt],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    shell=(sys.platform == "win32"),
+                )
+
+                # Poll for the output file every 500 ms, up to 10 minutes
+                poll_interval = 0.5
+                max_wait = 600
+                elapsed = 0.0
+                while elapsed < max_wait:
+                    if os.path.exists(output_path):
+                        time.sleep(0.3)          # let the write finish
+                        with open(output_path, "r", encoding="utf-8") as f:
+                            content = f.read().strip()
+                        if content:
+                            proc.terminate()
+                            return content
+                    # Check if process died
+                    ret = proc.poll()
+                    if ret is not None:
+                        # Give a brief moment for any in-flight file write to flush
+                        time.sleep(0.3)
+                        if os.path.exists(output_path):
+                            # File appeared after exit — pick it up next iteration
+                            continue
+                        stderr = proc.stderr.read().decode(errors="replace").strip()
+                        stdout = proc.stdout.read().decode(errors="replace").strip()
+                        detail = stderr or stdout or "(no output)"
+                        raise RuntimeError(
+                            f"Claude CLI exited with code {ret} before writing output: {detail}"
+                        )
+                    time.sleep(poll_interval)
+                    elapsed += poll_interval
+
+                proc.terminate()
+                raise TimeoutError(
+                    f"Claude CLI did not write output within {max_wait}s — "
+                    "PDF may be too large or complex."
+                )
+            finally:
+                for path in [pdf_path, instructions_path, output_path]:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+
+        raw = await asyncio.wait_for(asyncio.to_thread(_call_claude), timeout=660)
 
         # Strip markdown fences if present
         raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE).strip()

@@ -158,23 +158,6 @@ export default function Sidebar({ blocks }) {
         ))}
       </nav>
 
-      {/* API key warning */}
-      {!state.settings.api_key && (
-        <div
-          onClick={() => dispatch({ type: 'TOGGLE_SETTINGS' })}
-          style={{
-            padding: '8px 14px',
-            background: 'rgba(255,68,68,.08)',
-            borderTop: '1px solid rgba(255,68,68,.2)',
-            fontSize: 10,
-            color: 'var(--red)',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 6,
-          }}
-        >
-          ⚠ No API key — click to add
-        </div>
-      )}
     </aside>
   )
 }

@@ -140,11 +140,6 @@ export default function BlockPanel({ blockKey, config }) {
   if (!blockState) return null
 
   async function doExtract(file) {
-    if (!settings.api_key) {
-      toast.error('Add your Anthropic API key in Settings first')
-      dispatch({ type: 'TOGGLE_SETTINGS' })
-      return
-    }
     dispatch({ type: 'SET_BLOCK_STATUS', payload: { block: activeBlockKey, status: 'uploading' } })
     toast.loading(`Uploading ${file.name}…`, { id: 'ex' })
     try {
