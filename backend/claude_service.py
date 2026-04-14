@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import subprocess
@@ -16,7 +17,8 @@ import sys
 import tempfile
 import time
 
-from pypdf import PdfReader
+logger = logging.getLogger(__name__)
+
 
 # ─── In-flight dedup ─────────────────────────────────────────────────────────
 # Prevents duplicate API calls when the same PDF is uploaded concurrently
@@ -57,16 +59,33 @@ def _pdf_hash(pdf_bytes: bytes) -> str:
 
 def _pdf_page_count(pdf_bytes: bytes) -> int:
     try:
+        from pypdf import PdfReader
         reader = PdfReader(io.BytesIO(pdf_bytes))
-        return len(reader.pages)
-    except Exception:
-        return 0  # unknown — caller will default to sonnet to be safe
+        count = len(reader.pages)
+        logger.info(f"pypdf page count: {count}")
+        return count
+    except ImportError:
+        logger.warning("pypdf not installed — falling back to size-based model selection")
+        return 0
+    except Exception as e:
+        logger.warning(f"pypdf failed to read PDF ({type(e).__name__}: {e}) — falling back to size-based")
+        return 0
 
-def _pick_model(page_count: int) -> str:
-    """Use Haiku for small datasheets (≤80 pages), Sonnet for large ones."""
-    if page_count > 0 and page_count <= 80:
-        return "claude-haiku-4-5-20251001"
-    return "claude-sonnet-4-6"
+def _pick_model(pdf_bytes: bytes) -> tuple[str, int]:
+    """
+    Returns (model_name, page_count).
+    Uses Haiku for ≤80 pages, Sonnet for larger.
+    Falls back to file-size estimate if pypdf fails (≈50 KB/page average).
+    """
+    page_count = _pdf_page_count(pdf_bytes)
+    if page_count > 0:
+        model = "claude-haiku-4-5-20251001" if page_count <= 80 else "claude-sonnet-4-6"
+        return model, page_count
+
+    # pypdf failed — estimate from file size
+    estimated_pages = len(pdf_bytes) / (50 * 1024)
+    model = "claude-haiku-4-5-20251001" if estimated_pages <= 80 else "claude-sonnet-4-6"
+    return model, 0  # 0 signals page count was unknown
 
 
 # ─── Prompts ─────────────────────────────────────────────────────────────────
@@ -542,8 +561,7 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
 
     try:
         prompt = prompts[block_type]
-        page_count = _pdf_page_count(pdf_bytes)
-        model = _pick_model(page_count)
+        model, page_count = _pick_model(pdf_bytes)
 
         def _call_claude():
             # Save PDF to a temp file
@@ -572,7 +590,10 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
             try:
                 short_prompt = f"Follow all instructions in the file at: {instructions_path}"
                 proc = subprocess.Popen(
-                    ["claude", "--dangerously-skip-permissions", "--model", model, "-p", short_prompt],
+                    ["claude", "--dangerously-skip-permissions",
+                     "--model", model,
+                     "--output-format", "json",
+                     "-p", short_prompt],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     shell=(sys.platform == "win32"),
@@ -596,13 +617,22 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
                         # Give a brief moment for any in-flight file write to flush
                         time.sleep(0.3)
                         if os.path.exists(output_path):
-                            # File appeared after exit — pick it up next iteration
                             continue
-                        stderr = proc.stderr.read().decode(errors="replace").strip()
                         stdout = proc.stdout.read().decode(errors="replace").strip()
-                        detail = stderr or stdout or "(no output)"
+                        stderr = proc.stderr.read().decode(errors="replace").strip()
+                        # Fallback: model responded via stdout instead of writing file
+                        # --output-format json wraps response as {"result": "...", "is_error": false}
+                        if stdout:
+                            logger.info("Output file not written — extracting from stdout JSON envelope")
+                            try:
+                                envelope = json.loads(stdout)
+                                if not envelope.get("is_error") and envelope.get("result"):
+                                    return envelope["result"]
+                            except (json.JSONDecodeError, KeyError):
+                                pass
+                            return stdout  # last resort: return raw stdout
                         raise RuntimeError(
-                            f"Claude CLI exited with code {ret} before writing output: {detail}"
+                            f"Claude CLI exited with code {ret} before writing output: {stderr or '(no output)'}"
                         )
                     time.sleep(poll_interval)
                     elapsed += poll_interval

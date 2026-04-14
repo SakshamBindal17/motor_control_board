@@ -8,7 +8,7 @@ import json, io, traceback, logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from claude_service import extract_parameters_from_pdf, _pdf_page_count, _pick_model
+from claude_service import extract_parameters_from_pdf, _pick_model
 from calc_engine import CalculationEngine
 from report_generator import generate_pdf_report, generate_excel_report
 from spice_export import generate_spice_netlist
@@ -42,9 +42,9 @@ async def extract_datasheet(
     if len(pdf_bytes) > 20 * 1024 * 1024:
         raise HTTPException(400, "PDF too large (max 20 MB) — use a component-specific datasheet, not a full reference manual")
 
-    pages = _pdf_page_count(pdf_bytes)
-    model = _pick_model(pages)
-    logger.info(f"Extracting {block_type} from {file.filename} ({len(pdf_bytes)//1024} KB, {pages}pp) → {model}")
+    model, pages = _pick_model(pdf_bytes)
+    pages_str = f"{pages}pp" if pages > 0 else "?pp (size-based)"
+    logger.info(f"Extracting {block_type} from {file.filename} ({len(pdf_bytes)//1024} KB, {pages_str}) → {model}")
 
     try:
         result = await extract_parameters_from_pdf(pdf_bytes, block_type, x_api_key)
