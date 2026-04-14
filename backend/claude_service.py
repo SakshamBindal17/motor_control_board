@@ -63,8 +63,8 @@ def _pdf_page_count(pdf_bytes: bytes) -> int:
         return 0  # unknown — caller will default to sonnet to be safe
 
 def _pick_model(page_count: int) -> str:
-    """Use Haiku for small datasheets (≤120 pages), Sonnet for large ones."""
-    if page_count > 0 and page_count <= 120:
+    """Use Haiku for small datasheets (≤80 pages), Sonnet for large ones."""
+    if page_count > 0 and page_count <= 80:
         return "claude-haiku-4-5-20251001"
     return "claude-sonnet-4-6"
 

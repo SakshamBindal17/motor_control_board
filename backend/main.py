@@ -44,7 +44,7 @@ async def extract_datasheet(
 
     pages = _pdf_page_count(pdf_bytes)
     model = _pick_model(pages)
-    logger.info(f"Extracting {block_type} from {file.filename} ({len(pdf_bytes)//1024} KB, {pages} pages) → {model}")
+    logger.info(f"Extracting {block_type} from {file.filename} ({len(pdf_bytes)//1024} KB, {pages}pp) → {model}")
 
     try:
         result = await extract_parameters_from_pdf(pdf_bytes, block_type, x_api_key)
