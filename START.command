@@ -28,18 +28,9 @@ if ! command -v claude &>/dev/null; then
     read -rp " Press Enter to exit..." && exit 1
 fi
 
-if ! claude -p "hi" &>/dev/null 2>&1; then
-    echo ""
-    echo " WARNING: Claude CLI is not signed in."
-    echo " Please open Terminal and run:"
-    echo ""
-    echo "   claude"
-    echo ""
-    echo " Sign in with your browser, then run this file again."
-    echo ""
-    read -rp " Press Enter to exit..." && exit 1
-fi
 echo " Claude CLI .............. OK"
+echo " NOTE: Make sure you have signed in to Claude CLI at least once."
+echo " If PDF upload fails, open Terminal and run: claude"
 
 # ── 2. Python venv setup ─────────────────────────────────────
 echo " [2/4] Checking Python environment..."

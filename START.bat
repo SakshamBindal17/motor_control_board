@@ -23,22 +23,9 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-
-:: Check Claude is authenticated (silent test call)
-claude -p "hi" >nul 2>&1
-if errorlevel 1 (
-    echo.
-    echo  WARNING: Claude CLI is not signed in.
-    echo  Please open a terminal and run:
-    echo.
-    echo    claude
-    echo.
-    echo  Sign in with your browser, then run this file again.
-    echo.
-    pause
-    exit /b 1
-)
 echo  Claude CLI .............. OK
+echo  NOTE: Make sure you have signed in to Claude CLI at least once.
+echo  If PDF upload fails, open a terminal and run: claude
 
 :: ── 2. Python venv setup ─────────────────────────────────────
 echo  [2/4] Checking Python environment...
