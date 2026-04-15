@@ -40,7 +40,6 @@ class MosfetMixin:
         rds_mohm  = rds  * 1e3
         qg_nc     = qg   * 1e9
         qrr_nc    = qrr  * 1e9
-
         # ─── RMS switch current ───────────────────────────────────────
         # If motor Lph is available, refine with actual current ripple
         lph_uh = (self.motor or {}).get("lph_uh", "")
