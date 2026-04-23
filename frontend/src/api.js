@@ -2,25 +2,42 @@
 
 const BASE = import.meta.env.VITE_API_URL || ''  // URL from env in prod, proxied in dev
 
-async function _req(url, opts = {}) {
-  const res = await fetch(BASE + url, opts)
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    try { const j = await res.json(); msg = j.detail || j.message || msg } catch { }
-    throw new Error(msg)
+// Long timeout for PDF extraction (Gemini can take several minutes)
+const EXTRACT_TIMEOUT_MS = 660_000  // 11 min (backend times out at 10 min)
+const DEFAULT_TIMEOUT_MS = 30_000
+
+async function _req(url, opts = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(BASE + url, { ...opts, signal: controller.signal })
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`
+      try {
+        const j = await res.json()
+        msg = j.detail || j.message || msg
+      } catch { /* response body not JSON — keep HTTP status message */ }
+      throw new Error(msg)
+    }
+    return res
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error('Request timed out — check your connection or try again')
+    throw err
+  } finally {
+    clearTimeout(timer)
   }
-  return res
 }
 
-/** Extract parameters from a PDF datasheet */
-export async function extractDatasheet(blockType, file, apiKey) {
+/** Extract parameters from a PDF datasheet — apiKeys can be a string or string[] */
+export async function extractDatasheet(blockType, file, apiKeys) {
+  const keys = Array.isArray(apiKeys) ? apiKeys : [apiKeys]
   const form = new FormData()
   form.append('file', file)
-  const res = await _req(`/api/extract/${blockType}`, {
-    method: 'POST',
-    headers: { 'X-API-Key': apiKey },
-    body: form,
-  })
+  const res = await _req(
+    `/api/extract/${blockType}`,
+    { method: 'POST', headers: { 'X-API-Keys': keys.filter(Boolean).join(',') }, body: form },
+    EXTRACT_TIMEOUT_MS,
+  )
   return (await res.json()).data
 }
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { Upload, RefreshCw, CheckCircle, AlertCircle, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -11,7 +11,7 @@ import UnitPicker from './UnitPicker.jsx'
 
 // ── ESSENTIAL PARAMS ────────────────────────────────────────────────────────
 // These are required for calculations and board design.
-// If Claude fails to extract any of these they appear in the Missing Params
+// If Gemini fails to extract any of these they appear in the Missing Params
 // section so the user can enter them manually.
 const EXPECTED_PARAMS = {
   // 21 essential MOSFET params — cover all switching, thermal, gate-charge, and snubber calcs
@@ -131,17 +131,44 @@ export default function BlockPanel({ blockKey, config }) {
   const { state, dispatch } = useProject()
   const { settings } = state
   const [collapsed, setCollapsed] = useState({})
+  const [extractMsg, setExtractMsg] = useState('Gemini is reading the datasheet…')
+  const extractTimerRef = useRef(null)
   const isMosfet = blockKey === 'mosfet'
 
   const activeBlockKey = blockKey
   const activeConfig = config
 
   const blockState = state.project.blocks[activeBlockKey]
+  const { status } = blockState || {}
+
+  useEffect(() => {
+    if (status === 'extracting') {
+      setExtractMsg('Gemini is reading the datasheet…')
+      const msgs = [
+        { at: 30, msg: 'Still working — large datasheets take time…' },
+        { at: 60, msg: 'Gemini servers busy — retrying automatically…' },
+        { at: 90, msg: 'Still retrying — please wait…' },
+        { at: 150, msg: 'Taking longer than usual — servers under high load…' },
+      ]
+      const timers = msgs.map(({ at, msg }) =>
+        setTimeout(() => setExtractMsg(msg), at * 1000)
+      )
+      extractTimerRef.current = timers
+      return () => timers.forEach(clearTimeout)
+    } else {
+      setExtractMsg('Gemini is reading the datasheet…')
+      if (extractTimerRef.current) {
+        extractTimerRef.current.forEach(clearTimeout)
+        extractTimerRef.current = null
+      }
+    }
+  }, [status])
+
   if (!blockState) return null
 
   async function doExtract(file) {
-    if (!settings.api_key) {
-      toast.error('Add your Anthropic API key in Settings first')
+    if (!settings.gemini_api_keys?.some(k => k.trim())) {
+      toast.error('Add your Gemini API key in Settings first')
       dispatch({ type: 'TOGGLE_SETTINGS' })
       return
     }
@@ -149,9 +176,9 @@ export default function BlockPanel({ blockKey, config }) {
     toast.loading(`Uploading ${file.name}…`, { id: 'ex' })
     try {
       dispatch({ type: 'SET_BLOCK_STATUS', payload: { block: activeBlockKey, status: 'extracting' } })
-      toast.loading('Claude is reading the datasheet…', { id: 'ex' })
+      toast.loading('Gemini is reading the datasheet…', { id: 'ex' })
       const extractionType = activeConfig.extractionType || activeBlockKey
-      const data = await extractDatasheet(extractionType, file, settings.api_key)
+      const data = await extractDatasheet(extractionType, file, settings.gemini_api_keys)
       dispatch({ type: 'SET_BLOCK_DATA', payload: { block: activeBlockKey, filename: file.name, raw_data: data } })
       const cacheNote = data._from_cache ? ' (from cache)' : ''
       toast.success(`Extracted ${data.parameters?.length || 0} parameters — ${data.component_name}${cacheNote}`, { id: 'ex', duration: 5000 })
@@ -166,7 +193,7 @@ export default function BlockPanel({ blockKey, config }) {
     onDrop, accept: { 'application/pdf': ['.pdf'] }, multiple: false,
   })
 
-  const { status, filename, raw_data, error } = blockState
+  const { filename, raw_data, error } = blockState
 
   // Group extracted params by category
   const groups = {}
@@ -261,7 +288,7 @@ export default function BlockPanel({ blockKey, config }) {
                 {isDragActive ? 'Drop PDF here' : `Upload ${activeConfig.fullLabel} Datasheet`}
               </div>
               <div style={{ fontSize: 12, color: 'var(--txt-3)' }}>
-                PDF only · Claude Haiku extracts all parameters with test conditions
+                PDF only · Gemini 2.5 Flash (gemini-3-flash-preview) extracts all parameters with test conditions
               </div>
             </div>
             {error && (
@@ -285,7 +312,7 @@ export default function BlockPanel({ blockKey, config }) {
             </div>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--txt-1)', marginBottom: 4 }}>
-                {status === 'uploading' ? 'Uploading…' : 'Claude is reading the datasheet…'}
+                {status === 'uploading' ? 'Uploading…' : extractMsg}
               </div>
               <div style={{ fontSize: 12, color: 'var(--txt-3)' }}>
                 {filename} · Large datasheets may take 15–30s
@@ -577,7 +604,10 @@ function MissingParamsSection({ missingIds, blockKey, color, collapsed, setColla
 
   function commit(id) {
     const v = parseFloat(vals[id])
-    if (isNaN(v)) return
+    if (isNaN(v) || !isFinite(v)) {
+      toast.error('Enter a valid number')
+      return
+    }
     dispatch({ type: 'SET_MANUAL_PARAM', payload: { block: blockKey, param_id: id, value: v, unit: units[id] || '' } })
     setVals(p => { const n = { ...p }; delete n[id]; return n })
   }
