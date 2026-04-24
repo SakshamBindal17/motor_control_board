@@ -58,7 +58,7 @@ mc-designer-v2/
 ├── frontend/
 │   ├── index.html
 │   ├── package.json
-│   ├── vite.config.js       # dev proxy: /api → http://localhost:8000
+│   ├── vite.config.js       # dev proxy: /api → http://localhost:8472
 │   ├── tailwind.config.js
 │   ├── postcss.config.js
 │   └── src/
@@ -110,7 +110,7 @@ mc-designer-v2/
 - **Parameter IDs** are fixed strings from extraction (e.g. `rds_on`, `qg`, `io_source`, `pwm_deadtime_res`). See `BlockPanel.jsx` `EXPECTED_PARAMS` and `CALC_CRITICAL`; `ProjectContext.jsx` has `PARAM_LABELS_CTX` in sync.
 - **Selected value:** For each param, frontend uses `selected_params[param_id].override` if set, else the selected condition’s `selected` (typ → max → min).
 - **System specs** live in `project.system_specs` (bus_voltage, peak_voltage, power, max_phase_current, pwm_freq_hz, ambient_temp_c, gate_drive_voltage). Editable in Settings modal.
-- **API base:** All frontend API calls go through `api.js` using `BASE = import.meta.env.VITE_API_URL || ''`. Local dev: BASE is '' and Vite proxies `/api` to 8000. Production: must set `VITE_API_URL` to the Render backend URL.
+- **API base:** All frontend API calls go through `api.js` using `BASE = import.meta.env.VITE_API_URL || ''`. Local dev: BASE is '' and Vite proxies `/api` to 8472. Production: must set `VITE_API_URL` to the Render backend URL.
 
 ---
 
@@ -142,8 +142,8 @@ mc-designer-v2/
 
 ## How to run locally
 
-1. **Backend:** `cd backend && python -m venv .venv && .venv\Scripts\activate` (or `source .venv/bin/activate`), `pip install -r requirements.txt`, `uvicorn main:app --reload --port 8000`.
-2. **Frontend:** `cd frontend && npm install && npm run dev`. Open http://localhost:5173. No `VITE_API_URL` needed; Vite proxies `/api` to 8000.
+1. **Backend:** `cd backend && python -m venv .venv && .venv\Scripts\activate` (or `source .venv/bin/activate`), `pip install -r requirements.txt`, `uvicorn main:app --reload --port 8472`.
+2. **Frontend:** `cd frontend && npm install && npm run dev`. Open http://localhost:5742. No `VITE_API_URL` needed; Vite proxies `/api` to 8472.
 3. **Settings:** In the app, add Anthropic API key (Settings) and confirm system specs.
 
 ---
