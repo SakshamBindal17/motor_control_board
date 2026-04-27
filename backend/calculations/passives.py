@@ -322,6 +322,21 @@ class PassivesMixin:
                 "note":           "3-phase topology allows simultaneous phase current sampling. Best for FOC.",
             }
 
+        # Anti-alias shunt capacitor (across shunt resistor, E12-snapped)
+        # Target: f_c = fsw/10 to reject switching noise while passing current signal
+        r_shunt_ohm = active["value_mohm"] * 1e-3
+        f_c_target = self.fsw / 10.0
+        c_shunt_ideal_pf = 1e12 / (2 * math.pi * r_shunt_ohm * f_c_target) if r_shunt_ohm > 0 else 0
+        E12_pF = [1.0, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3, 3.9, 4.7, 5.6, 6.8, 8.2,
+                  10, 12, 15, 18, 22, 27, 33, 39, 47, 56, 68, 82,
+                  100, 120, 150, 180, 220, 270, 330, 470, 680, 1000,
+                  1200, 1500, 1800, 2200, 2700, 3300, 4700, 6800, 10000]
+        c_shunt_pf = _nearest_e(c_shunt_ideal_pf, E12_pF) if c_shunt_ideal_pf > 0 else 100.0
+        self.audit_log.append(
+            f"[Shunts] Anti-alias C_shunt: f_c target = fsw/10 = {f_c_target/1e3:.1f}kHz → "
+            f"{c_shunt_ideal_pf:.0f}pF ideal → {c_shunt_pf:.0f}pF E12."
+        )
+
         return {
             "topology_mode":   topology,
             "csa_gain":        csa_gain,
@@ -329,6 +344,8 @@ class PassivesMixin:
                                else ("datasheet" if csa_gain_ds else "default"),
             "adc_reference_v": adc_ref,
             "ideal_r_mohm":    round(r_ideal_mohm, 3),
+            "c_shunt_ideal_pf": round(c_shunt_ideal_pf, 1),
+            "c_shunt_recommended_pf": c_shunt_pf,
             "active":          active,
             # Legacy keys kept for backward compatibility
             "single_shunt":    active if topology == "single" else {

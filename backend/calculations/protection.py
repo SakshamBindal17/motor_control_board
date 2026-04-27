@@ -86,7 +86,11 @@ class ProtectionMixin:
         i_divider_ovp_ua = (self.v_peak / (r1_ovp + r2_ovp_std)) * 1e6
 
         # TVS Diode Sizing (Bus Clamping)
-        v_rwm_suggested = round(v_ovp_trip * 1.05, 1)
+        # Snap standoff voltage to nearest standard TVS working voltage above trip point
+        _TVS_STD_V = [5.1, 6.2, 6.8, 8.2, 9.1, 10, 12, 15, 18, 20, 22,
+                      24, 27, 30, 33, 36, 43, 51, 58, 62, 68, 75, 82, 90, 100]
+        v_rwm_ideal = v_ovp_trip * 1.05
+        v_rwm_suggested = next((v for v in _TVS_STD_V if v >= v_rwm_ideal), _TVS_STD_V[-1])
         v_clamp_typ = round(v_rwm_suggested * 1.6, 1)
 
         # RC Filter Capacitor Sizing (Target Fc = 2kHz to reject 20kHz PWM)
@@ -145,6 +149,9 @@ class ProtectionMixin:
         v_ntc_80  = v_ref * r_ntc_80 / (r_pullup + r_ntc_80)
         r_ntc_100 = ntc_r25 * math.exp(b_ntc * (1.0/t_100_k - 1.0/t_25_k))
         v_ntc_100 = v_ref * r_ntc_100 / (r_pullup + r_ntc_100)
+        # Recommended pullup: geometric mean of NTC at warn and shutdown → midpoint sensing
+        r_pullup_opt = math.sqrt(r_ntc_80 * r_ntc_100)  # geometric mean → ≈ Vref/2 midpoint
+        r_pullup_std_kohm = _nearest_e(r_pullup_opt / 1e3, E24)
 
         return {
             "ovp": {
@@ -186,20 +193,21 @@ class ProtectionMixin:
                 "mechanism":            "Driver IC OCP (hw) + MCU comparator (sw)",
             },
             "otp": {
-                "ntc_value_at_25c_kohm": ntc_r25_kohm,
-                "ntc_b_coefficient":    int(b_ntc),
-                "r_pullup_kohm":        ntc_pullup_kohm,
-                "warning_temp_c":       otp_warn,
-                "shutdown_temp_c":      otp_shut,
-                "v_ntc_at_80c_v":       round(v_ntc_80,  3),
-                "v_ntc_at_100c_v":      round(v_ntc_100, 3),
-                "ntc_part":             f"Murata NCP15 {ntc_r25_kohm:.0f}kΩ B{int(ntc_b_coeff)}, 0402",
+                "ntc_value_at_25c_kohm":   ntc_r25_kohm,
+                "ntc_b_coefficient":        int(b_ntc),
+                "r_pullup_kohm":            ntc_pullup_kohm,
+                "r_pullup_recommended_kohm":r_pullup_std_kohm,
+                "warning_temp_c":           otp_warn,
+                "shutdown_temp_c":          otp_shut,
+                "v_ntc_at_80c_v":           round(v_ntc_80,  3),
+                "v_ntc_at_100c_v":          round(v_ntc_100, 3),
+                "ntc_part":                 f"Murata NCP15 {ntc_r25_kohm:.0f}kΩ B{int(ntc_b_coeff)}, 0402",
             },
             "tvs": {
-                "standoff_v":           round(self.v_peak * 1.0, 0),
-                "clamping_v":           round(self.v_peak * 1.35, 0),
+                "standoff_v":           v_rwm_suggested,
+                "clamping_v":           v_clamp_typ,
                 "power_rating_w":       600,
-                "part":                 f"SMBJ{round(self.v_peak * 1.0)}A or P6KE{round(self.v_peak * 1.1)}A",
+                "part":                 f"SMBJ{int(v_rwm_suggested)}A or P6KE{int(v_rwm_suggested)}A",
                 "qty":                  2,
                 "placement":            "Across bus capacitors, close to bridge",
             },
