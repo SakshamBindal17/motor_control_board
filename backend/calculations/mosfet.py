@@ -124,19 +124,26 @@ class MosfetMixin:
             alpha_rds = 2.1
             t_ref = 300.0  # 27°C in Kelvin (datasheet Rds(on) reference)
             tj_est = 100.0  # initial guess in °C
-            for _ in range(5):  # converges in 2-3 iterations
+            tj_iters = 0
+            for _ in range(20):
+                tj_iters += 1
                 rds_derating = (((tj_est + 273.15) / t_ref) ** alpha_rds)
                 rds_hot = rds * rds_derating
                 p_cond_est = i_rms_sw ** 2 * rds_hot
                 p_other_est = self.v_bus * self.i_max * (tr + tf) * self.fsw / math.pi + qg * self.v_drv * self.fsw + qrr * self.v_bus * self.fsw
                 p_total_est = p_cond_est + p_other_est
                 p_total_est_dev = p_total_est / n_parallel
-                tj_est = self.t_amb + p_total_est_dev * rth_total
+                tj_new = self.t_amb + p_total_est_dev * rth_total
+                if abs(tj_new - tj_est) < 0.1:
+                    tj_est = tj_new
+                    break
+                tj_est = tj_new
             rds_derating = round(rds_derating, 3)
             tj_for_rds = round(tj_est, 1)
             self.audit_log.append(
                 f"[MOSFET] Iterative Rds(on) derating: {rds_derating}x at estimated Tj={tj_for_rds}°C "
-                f"(α={alpha_rds}, Tref={t_ref-273.15:.0f}°C). Override via design constant 'thermal.rds_derating'."
+                f"(α={alpha_rds}, Tref={t_ref-273.15:.0f}°C, converged in {tj_iters} iterations). "
+                f"Override via design constant 'thermal.rds_derating'."
             )
 
         self._log_hc("mosfet_losses", "Rds(on) thermal derating", f"{rds_derating}x",

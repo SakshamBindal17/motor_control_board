@@ -426,6 +426,26 @@ class PassivesMixin:
             rs_recommend = max(1.0, min(100.0, round(rs_std, 0)))
             cs_recommend = cs_pf_std
 
+        # ── Snubber response time check: 3τ must be < 0.5/fsw ──────────────────
+        # The RC time constant τ = Rs × Cs must settle within the half-period so
+        # the snubber cap is discharged before the next switching event recharges it.
+        # If 3τ ≥ 0.5/fsw the snubber cannot reset each cycle → energy accumulates.
+        tau_snub = rs_recommend * (cs_recommend * 1e-12)
+        half_period_s = 0.5 / self.fsw
+        snubber_too_slow = (3 * tau_snub) >= half_period_s
+        snubber_response_warning = None
+        if snubber_too_slow:
+            snubber_response_warning = (
+                f"⚠ Snubber too slow: 3τ = {3*tau_snub*1e9:.0f} ns ≥ T/2 = {half_period_s*1e9:.0f} ns "
+                f"(fsw = {self.fsw/1e3:.0f} kHz). Snubber cap cannot reset each cycle. "
+                f"Reduce Rs ({rs_recommend:.0f}→{rs_recommend*0.5:.0f}Ω) or Cs ({cs_recommend:.0f}→{cs_recommend/2:.0f}pF)."
+            )
+            self.audit_log.append(f"[Snubber] WARNING: {snubber_response_warning}")
+        else:
+            self.audit_log.append(
+                f"[Snubber] Response check OK: 3τ = {3*tau_snub*1e9:.0f} ns < T/2 = {half_period_s*1e9:.0f} ns."
+            )
+
         # Cap V-rating must withstand V_peak PLUS the overshoot transient
         cap_v_rating = int((self.v_peak + v_overshoot) * snub_v_mult)
         # Dynamic snubber cap label
@@ -471,6 +491,11 @@ class PassivesMixin:
             "p_total_all_snubbers_w":     round(p_snubber_total, 3),
             "p_total_6_snubbers_w":       round(p_snubber_total, 3),  # backward compat
             "rs_power_rating":            "0.1W minimum (0402)",
+            "snubber_tau_ns":             round(tau_snub * 1e9, 1),
+            "snubber_3tau_ns":            round(3 * tau_snub * 1e9, 1),
+            "half_period_ns":             round(half_period_s * 1e9, 1),
+            "snubber_too_slow":           snubber_too_slow,
+            "snubber_response_warning":   snubber_response_warning,
             "notes": {
                 "rs_placement":   "Place Cs physically closest to MOSFET D-S pins",
                 "v_rating":       f"Snubber cap voltage rating: {cap_v_rating}V minimum ({snub_v_mult:.1f}×(Vpeak+Vovershoot))",
