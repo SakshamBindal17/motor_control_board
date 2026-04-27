@@ -547,7 +547,7 @@ class MosfetMixin:
         # Pull actual circuit switching times if gate_resistors already computed
         gate_res = self._cached_results.get("gate_resistors", {})
         if gate_res:
-            tr_s = gate_res.get("hs_gate_rise_time_ns", gate_res.get("gate_rise_time_ns", (tr_s or 30e-9) * 1e9)) * 1e-9
+            tr_s = gate_res.get("hs_gate_rise_time_ns", gate_res.get("gate_rise_time_ns",  (tr_s or 30e-9) * 1e9)) * 1e-9
             tf_s = gate_res.get("hs_gate_fall_time_ns", gate_res.get("gate_fall_time_ns", (tf_s or 20e-9) * 1e9)) * 1e-9
 
         if tr_s is not None and tf_s is not None:

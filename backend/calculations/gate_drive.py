@@ -309,9 +309,10 @@ class GateDriveMixin:
         # Turn-on path
         rg_on_ext_frac  = rg_on_hs  / (rg_on_hs  + rg_int) if (rg_on_hs  + rg_int) > 0 else 0.5
         rg_off_ext_frac = rg_off_hs / (rg_off_hs + rg_int) if (rg_off_hs + rg_int) > 0 else 0.5
-        # Gate charge splits 50/50 between turn-on and turn-off paths (Qg total)
-        p_rg_on_ext  = (1/3) * p_gate_total * rg_on_ext_frac
-        p_rg_off_ext = (1/3) * p_gate_total * rg_off_ext_frac
+        # Gate charge splits 50/50 between turn-on and turn-off paths (Qg total).
+        # Each half: external Rg dissipates rg_ext_frac of that half-cycle energy.
+        p_rg_on_ext  = 0.5 * p_gate_total * rg_on_ext_frac
+        p_rg_off_ext = 0.5 * p_gate_total * rg_off_ext_frac
         p_driver_gate = p_gate_total - p_rg_on_ext - p_rg_off_ext  # IC dissipation
 
         # Scale for all 6 FETs driven (3 HS + 3 LS, each with its own charge path)
