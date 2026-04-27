@@ -90,12 +90,12 @@ pip3 install -r requirements.txt --user
 
 ```bash
 # Still inside mc-designer-v2/backend/
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8472
 ```
 
 You should see:
 ```
-INFO:     Uvicorn running on http://127.0.0.1:8000
+INFO:     Uvicorn running on http://127.0.0.1:8472
 INFO:     Application startup complete.
 ```
 
@@ -121,12 +121,12 @@ npm run dev
 You should see:
 ```
 VITE v5.x  ready in 400ms
-➜  Local:   http://localhost:5173/
+➜  Local:   http://localhost:5742/
 ```
 
 ### Step 5 — Open the app
 
-Go to: **http://localhost:5173**
+Go to: **http://localhost:5742**
 
 ### Step 6 — Add your API key
 
@@ -210,12 +210,12 @@ Note: The application uses a robust extraction prompt and allows up to `16000` m
 
 **Extraction fails:**
 - Check your API key is correct (starts with `sk-ant-`)
-- Check backend is running on port 8000
+- Check backend is running on port 8472
 - Large PDFs (>50MB) are rejected — use compressed PDFs
 
 **"CORS error" in browser:**
-- Make sure both servers are running (port 8000 and 5173)
-- Don't open `index.html` directly — use `http://localhost:5173`
+- Make sure both servers are running (port 8472 and 5742)
+- Don't open `index.html` directly — use `http://localhost:5742`
 
 **Values look wrong after extraction:**
 - Click the parameter row to expand all test conditions

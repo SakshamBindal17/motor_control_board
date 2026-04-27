@@ -407,8 +407,8 @@ export default function ComparisonPanel() {
   }
 
   async function runAnalysis() {
-    if (!settings.api_key) {
-      toast.error('Add Anthropic API key in Settings first')
+    if (!settings.gemini_api_keys?.some(k => k.trim())) {
+      toast.error('Add your Gemini API key in Settings first')
       dispatch({ type: 'TOGGLE_SETTINGS' })
       return
     }
@@ -434,7 +434,7 @@ export default function ComparisonPanel() {
 
       setFiles(prev => prev.map(f => f.id === item.id ? { ...f, status: 'extracting', error: null } : f))
       try {
-        const data = await extractDatasheet('mosfet', item.file, settings.api_key)
+        const data = await extractDatasheet('mosfet', item.file, settings.gemini_api_keys)
         const norm = normalizeExtracted(data, item.name)
         setFiles(prev => prev.map(f => f.id === item.id ? {
           ...f,
@@ -788,7 +788,7 @@ export default function ComparisonPanel() {
                     { label: `TOTAL / switch-pos [W]${cfg.npar > 1 ? ` (${cfg.npar}× MOSFET)` : ''}`, formula: 'Σ rows 1–6', key: 'total', lowerBetter: true, cls: 'rgba(30,144,255,0.10)' },
                     { label: '3-phase total [W] (×6 positions)', formula: '×6 switch positions', key: 'total3ph', lowerBetter: true },
                     { label: 'Efficiency [%]', formula: 'Pout/(Pout+Ploss)', key: 'eff', lowerBetter: false, cls: 'rgba(0,230,118,0.10)' },
-                    { label: 'Est. Junction Temp Tj [°C]', formula: `Tamb + P_dev×(RthJC+RthCS+RthSA[${sys.cooling || 'natural'}])`, key: 't_junc', lowerBetter: true, cls: 'rgba(255,171,0,0.10)' },
+                    { label: 'Est. Junction Temp Tj [°C]', formula: `Tamb + P_dev×(RthJC+RthCS+RthSA[${project.system_specs.cooling || 'natural'}])`, key: 't_junc', lowerBetter: true, cls: 'rgba(255,171,0,0.10)' },
                     { label: 'ΔTj (J-C) per MOSFET [°C]', formula: 'P_dev × RthJC', key: 'dtj_jc', lowerBetter: true },
                     { label: `RDS parallel [mΩ] ×${currentTemp === 85 ? '1.55' : '1.0'}`, formula: 'RDS_single÷N × Tderate', key: 'rds', lowerBetter: true },
                   ].map(row => {

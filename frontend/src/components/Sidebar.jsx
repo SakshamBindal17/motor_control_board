@@ -159,7 +159,7 @@ export default function Sidebar({ blocks }) {
       </nav>
 
       {/* API key warning */}
-      {!state.settings.api_key && (
+      {!state.settings.gemini_api_keys?.some(k => k.trim()) && (
         <div
           onClick={() => dispatch({ type: 'TOGGLE_SETTINGS' })}
           style={{
@@ -172,7 +172,7 @@ export default function Sidebar({ blocks }) {
             display: 'flex', alignItems: 'center', gap: 6,
           }}
         >
-          ⚠ No API key — click to add
+          ⚠ No Gemini API key — click to add
         </div>
       )}
     </aside>

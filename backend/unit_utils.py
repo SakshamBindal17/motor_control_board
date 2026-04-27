@@ -127,9 +127,14 @@ def to_si(value: float, unit: str) -> float:
            .replace("\u03bc", "\u00b5"))  # GREEK MU μ → MICRO SIGN µ
     mult = _MULTIPLIERS.get(key)
     if mult is None:
-        # Fallback: try raw lowercased key
         key2 = unit.strip().lower()
-        mult = _MULTIPLIERS.get(key2, 1.0)
+        mult = _MULTIPLIERS.get(key2)
+    if mult is None:
+        import logging
+        logging.getLogger(__name__).warning(
+            "to_si: unknown unit %r — treating as SI base unit (×1.0). Value may be wrong.", unit
+        )
+        mult = 1.0
     return float(value) * mult
 
 

@@ -59,7 +59,8 @@ function UnitCell({ unit, onEdit }) {
 function fmtCell(v) {
   if (v === null || v === undefined) return null
   const n = parseFloat(v)
-  return isNaN(n) ? String(v) : n.toLocaleString(undefined, { maximumFractionDigits: 4 })
+  if (isNaN(n) || !isFinite(n)) return String(v)
+  return n.toLocaleString(undefined, { maximumFractionDigits: 4 })
 }
 
 export default function ParameterTable({ params, blockKey, color = '#1e90ff', calcCritical = null }) {

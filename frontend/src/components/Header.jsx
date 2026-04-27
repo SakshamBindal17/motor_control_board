@@ -16,7 +16,7 @@ export default function Header() {
     try {
       const exportData = {
         version: 2,
-        state: { ...state, settings: { ...state.settings, api_key: '' } }
+        state: { ...state, settings: { ...state.settings, gemini_api_keys: [] } }
       }
       const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
@@ -95,13 +95,13 @@ export default function Header() {
           <span style={{ fontFamily: 'var(--font-mono)' }}>{done}/3</span> sheets
         </span>
         {project.calculations && <span className="badge badge-done">Calculated</span>}
-        {!settings.api_key && (
+        {!settings.gemini_api_keys?.some(k => k.trim()) && (
           <span
             className="badge badge-error"
             style={{ cursor: 'pointer' }}
             onClick={() => dispatch({ type: 'TOGGLE_SETTINGS' })}
           >
-            ⚠ No API key
+            ⚠ No Gemini key
           </span>
         )}
       </div>
@@ -128,7 +128,7 @@ export default function Header() {
             icon: <Settings size={15} />,
             tip: 'Settings',
             fn: () => dispatch({ type: 'TOGGLE_SETTINGS' }),
-            highlight: !settings.api_key,
+            highlight: !settings.gemini_api_keys?.some(k => k.trim()),
           },
         ].map((btn, i) => (
           <button

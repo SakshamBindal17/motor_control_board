@@ -72,7 +72,7 @@ const DEFAULT_MOTOR_SPECS = {
 const DEFAULT_BLOCK = {
   status: 'idle',        // idle | uploading | extracting | done | error
   filename: null,
-  raw_data: null,        // full JSON from Claude
+  raw_data: null,        // full JSON from Gemini
   selected_params: {},   // param_id → { condition_index, override }
   error: null,
 }
@@ -80,9 +80,9 @@ const DEFAULT_BLOCK = {
 const INITIAL_STATE = {
   // Settings
   settings: {
-    api_key: '',
+    gemini_api_keys: [''],
     theme: 'dark',
-    model: 'claude-haiku-4-5-20251001',
+    model: 'gemini-2.0-flash',
   },
   // Project
   project: {
@@ -668,15 +668,30 @@ export function ProjectProvider({ children }) {
       const saved = localStorage.getItem('mc_designer_state')
       if (saved) {
         const parsed = JSON.parse(saved)
-        return { ...init, settings: parsed.settings || init.settings }
+        const s = parsed.settings || {}
+        // Migrate: old gemini_api_key (string) → new gemini_api_keys (array)
+        if (s.gemini_api_key !== undefined && s.gemini_api_keys === undefined) {
+          s.gemini_api_keys = s.gemini_api_key ? [s.gemini_api_key] : ['']
+          delete s.gemini_api_key
+        }
+        if (!Array.isArray(s.gemini_api_keys) || s.gemini_api_keys.length === 0) {
+          s.gemini_api_keys = ['']
+        }
+        return { ...init, settings: { ...init.settings, ...s } }
       }
-    } catch { }
+    } catch (err) {
+      console.error('[MC Designer] Failed to restore settings from localStorage — starting fresh:', err)
+    }
     return init
   })
 
   // Persist settings to localStorage
   useEffect(() => {
-    localStorage.setItem('mc_designer_state', JSON.stringify({ settings: state.settings }))
+    try {
+      localStorage.setItem('mc_designer_state', JSON.stringify({ settings: state.settings }))
+    } catch (err) {
+      console.error('[MC Designer] Failed to save settings to localStorage:', err)
+    }
     // Apply theme explicitly so user selection wins over OS/browser preference.
     const isDark = state.settings.theme === 'dark'
     const root = document.documentElement

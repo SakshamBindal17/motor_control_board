@@ -1,13 +1,17 @@
 import React, { useState } from 'react'
-import { X, Eye, EyeOff, Save } from 'lucide-react'
+import { X, Eye, EyeOff, Save, Plus, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject } from '../context/ProjectContext.jsx'
 
 export default function SettingsModal() {
   const { state, dispatch } = useProject()
   const { settings, project } = state
-  const [showKey, setShowKey] = useState(false)
-  const [localKey, setLocalKey] = useState(settings.api_key)
+  const [showKeys, setShowKeys] = useState({})  // index → bool
+  const [localKeys, setLocalKeys] = useState(
+    Array.isArray(settings.gemini_api_keys) && settings.gemini_api_keys.length > 0
+      ? settings.gemini_api_keys
+      : ['']
+  )
   const [localSpecs, setLocalSpecs] = useState({ ...project.system_specs })
 
   function close() { dispatch({ type: 'TOGGLE_SETTINGS' }) }
@@ -23,10 +27,32 @@ export default function SettingsModal() {
       num_fets: 6 * parsedParallel,
     }
 
-    dispatch({ type: 'SET_SETTINGS', payload: { api_key: localKey.trim() } })
+    // Clean keys: strip whitespace, keep non-empty, always at least one slot
+    const cleanedKeys = localKeys.map(k => k.trim()).filter(Boolean)
+    dispatch({ type: 'SET_SETTINGS', payload: { gemini_api_keys: cleanedKeys.length ? cleanedKeys : [''] } })
     dispatch({ type: 'SET_SYSTEM_SPECS', payload: syncedSpecs })
     toast.success('Settings saved')
     close()
+  }
+
+  function updateKey(idx, val) {
+    setLocalKeys(prev => prev.map((k, i) => i === idx ? val : k))
+  }
+
+  function addKey() {
+    setLocalKeys(prev => [...prev, ''])
+  }
+
+  function removeKey(idx) {
+    setLocalKeys(prev => {
+      const next = prev.filter((_, i) => i !== idx)
+      return next.length ? next : ['']
+    })
+    setShowKeys(prev => {
+      const next = { ...prev }
+      delete next[idx]
+      return next
+    })
   }
 
   function updateSpec(key, val) {
@@ -137,39 +163,63 @@ export default function SettingsModal() {
 
         <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 24 }}>
 
-          {/* ── API Key ── */}
+          {/* ── API Keys ── */}
           <section>
-            <div style={sectionTitle}>🔑 Anthropic API Key</div>
-            <div style={{ position: 'relative' }}>
-              <input
-                type={showKey ? 'text' : 'password'}
-                className="inp inp-mono"
-                placeholder="sk-ant-api03-..."
-                value={localKey}
-                onChange={e => setLocalKey(e.target.value)}
-                style={{ paddingRight: 40 }}
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey(v => !v)}
-                style={{
-                  position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'var(--txt-3)',
-                }}
-              >
-                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
+            <div style={sectionTitle}>🔑 Gemini API Keys</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {localKeys.map((key, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <div style={{ position: 'relative', flex: 1 }}>
+                    <input
+                      type={showKeys[idx] ? 'text' : 'password'}
+                      className="inp inp-mono"
+                      placeholder={`Key ${idx + 1} — AIzaSy…`}
+                      value={key}
+                      onChange={e => updateKey(idx, e.target.value)}
+                      style={{ paddingRight: 40, width: '100%' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowKeys(prev => ({ ...prev, [idx]: !prev[idx] }))}
+                      style={{
+                        position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                        background: 'none', border: 'none', cursor: 'pointer', color: 'var(--txt-3)',
+                      }}
+                    >
+                      {showKeys[idx] ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                  {localKeys.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeKey(idx)}
+                      className="btn btn-ghost btn-icon"
+                      title="Remove this key"
+                    >
+                      <Trash2 size={13} style={{ color: 'var(--red)' }} />
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
-            <p style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 6, lineHeight: 1.5 }}>
-              Get your key at{' '}
-              <a href="https://console.anthropic.com" target="_blank" rel="noreferrer"
+            <button
+              type="button"
+              onClick={addKey}
+              className="btn btn-ghost"
+              style={{ marginTop: 8, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}
+            >
+              <Plus size={12} /> Add another key
+            </button>
+            <p style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 8, lineHeight: 1.5 }}>
+              Get keys at{' '}
+              <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer"
                 style={{ color: 'var(--accent)', textDecoration: 'underline' }}>
-                console.anthropic.com
+                aistudio.google.com/apikey
               </a>.
+              {' '}If one key's quota is exhausted the app automatically rotates to the next.
               {' '}Stored locally in your browser only.{' '}
-              Model: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--cyan)' }}>claude-haiku-4-5-20251001</code>
-              {' '}(~$0.01 per 3 datasheets).
+              Model: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--cyan)' }}>gemini-3-flash-preview</code>{' '}
+              (Gemini 2.5 Flash) — handles up to 500-page datasheets.
             </p>
           </section>
 
