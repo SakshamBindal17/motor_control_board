@@ -1,4 +1,4 @@
-﻿"""Motor Controller Hardware Design — Mosfet Calculations"""
+"""Motor Controller Hardware Design — Mosfet Calculations"""
 import math
 import re
 
