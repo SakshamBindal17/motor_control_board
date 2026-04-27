@@ -276,7 +276,8 @@ def _build_bom(calculations, project=None) -> list:
 
 
 def _make_table(data):
-    t = Table(data, hAlign="LEFT")
+    safe = [[str(v) if v is not None else "—" for v in row] for row in data]
+    t = Table(safe, hAlign="LEFT")
     style = TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), BLUE),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),

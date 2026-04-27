@@ -32,6 +32,16 @@ class ErrorBoundary extends React.Component {
   }
   render() {
     if (this.state.hasError) {
+      if (this.props.inline) {
+        return (
+          <div style={{ padding: 32, color: 'var(--txt-3)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <p>Failed to load panel. Refresh to retry.</p>
+            <button className="btn btn-ghost" style={{ alignSelf: 'flex-start' }} onClick={() => window.location.reload()}>
+              Refresh
+            </button>
+          </div>
+        )
+      }
       return (
         <div style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -205,9 +215,11 @@ export default function App() {
             flexDirection: 'column',
             minWidth: 0,
           }}>
-            <Suspense fallback={<div style={{ padding: 20, color: 'var(--txt-3)' }}>Loading panel...</div>}>
-              {renderPanel()}
-            </Suspense>
+            <ErrorBoundary inline>
+              <Suspense fallback={<div style={{ padding: 20, color: 'var(--txt-3)' }}>Loading panel...</div>}>
+                {renderPanel()}
+              </Suspense>
+            </ErrorBoundary>
           </main>
         </div>
         {state.settings_open && <SettingsModal />}
