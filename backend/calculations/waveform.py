@@ -223,16 +223,34 @@ class WaveformMixin:
         # ── FIX 3: Ring parameters (Lstray–Coss LC resonance) ─────────
         # After turn-on Miller: small ring around Vds_on (body-diode recovery)
         # After turn-off Id snap: large spike + ring above Vbus (Lstray × dI/dt)
+        vds_overshoot_danger = False
+        vds_overshoot_warning = None
+
         if l_stray > 0 and coss > 0:
             f_ring     = 1.0 / (2 * math.pi * math.sqrt(l_stray * coss))
             Q_ring     = 8.0   # typical PCB power stage (no external snubber)
             tau_ring   = Q_ring / (math.pi * f_ring)
             omega_ring = 2 * math.pi * f_ring
             # V_overshoot = I × sqrt(L/C) — peak spike above Vbus at turn-off
-            # Cap at Vds_max (MOSFET breakdown) if extracted, else 3× Vbus
-            v_overshoot_off = i_load * math.sqrt(l_stray / max(coss, 1e-15))
+            v_overshoot_raw = i_load * math.sqrt(l_stray / max(coss, 1e-15))
+
+            # Avalanche danger check — must happen on the raw (unclamped) value
+            if vds_max_val is not None and vds_max_val > 0:
+                danger_threshold = vds_max_val * 0.85
+                if v_overshoot_raw >= danger_threshold:
+                    vds_overshoot_danger = True
+                    vds_overshoot_warning = (
+                        f"⚠ Vds overshoot {v_bus + v_overshoot_raw:.0f} V "
+                        f"({v_overshoot_raw:.0f} V above bus) reaches "
+                        f"{v_overshoot_raw / vds_max_val * 100:.0f}% of Vds_max "
+                        f"({vds_max_val:.0f} V) — avalanche risk. "
+                        f"Reduce L_stray, add snubber, or choose higher Vds_max MOSFET."
+                    )
+                    self.audit_log.append(f"[Waveform] DANGER: {vds_overshoot_warning}")
+
+            # Cap display at Vds_max × 0.9 (MOSFET breakdown) if extracted, else 3× Vbus
             _vds_cap = (vds_max_val * 0.9) if (vds_max_val is not None and vds_max_val > 0) else (v_bus * 3.0)
-            v_overshoot_off = min(v_overshoot_off, _vds_cap)
+            v_overshoot_off = min(v_overshoot_raw, _vds_cap)
             # Turn-on ring is smaller — mainly from complementary body-diode recovery
             v_ring_on  = v_overshoot_off * 0.15
             self.audit_log.append(
@@ -393,6 +411,8 @@ class WaveformMixin:
             "vgs_threshold_v":      round(vgs_th, 2),
             "ring_freq_mhz":        round(f_ring / 1e6, 0) if f_ring > 0 else None,
             "v_overshoot_v":        round(sampled_v_overshoot, 1) if f_ring > 0 else None,
+            "vds_overshoot_danger": vds_overshoot_danger,
+            "vds_overshoot_warning": vds_overshoot_warning,
         }
 
         # ── Parameters used (shown in UI transparency panel) ──────────
@@ -464,6 +484,8 @@ class WaveformMixin:
                 "Validate against oscilloscope — real Ciss is nonlinear (~5× "
                 "over Vds range), actual region durations may differ."
             ),
+            "vds_overshoot_danger":  vds_overshoot_danger,
+            "vds_overshoot_warning": vds_overshoot_warning,
             "_meta": self._module_meta.get("waveform", {"hardcoded": [], "fallbacks": []}),
         }
 
