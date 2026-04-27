@@ -346,6 +346,24 @@ class GateDriveMixin:
                 "Upload gate driver datasheet to enable driver thermal check."
             )
 
+        # ── Simple dV/dt from MOSFET datasheet tr/tf (§12b) ─────────────────
+        # Uses MOSFET-intrinsic switching times, independent of gate resistor choice.
+        tr_s = self._get(self.mosfet, "MOSFET", "tr", None)
+        tf_s = self._get(self.mosfet, "MOSFET", "tf", None)
+        _EMC_LIMIT_V_PER_NS = 50.0
+        dvdt_on = dvdt_off = None
+        if tr_s and tr_s > 0:
+            dvdt_on = self.v_bus / (tr_s * 1e9)  # V/ns
+            result["dvdt_on_v_per_ns"] = round(dvdt_on, 2)
+            result["dvdt_on_emc_ok"] = bool(dvdt_on < _EMC_LIMIT_V_PER_NS)
+        if tf_s and tf_s > 0:
+            dvdt_off = self.v_bus / (tf_s * 1e9)  # V/ns
+            result["dvdt_off_v_per_ns"] = round(dvdt_off, 2)
+            result["dvdt_off_emc_ok"] = bool(dvdt_off < _EMC_LIMIT_V_PER_NS)
+        if dvdt_on is not None and dvdt_off is not None:
+            result["dvdt_emc_limit_v_per_ns"] = _EMC_LIMIT_V_PER_NS
+            result["dvdt_emc_pass"] = bool(max(dvdt_on, dvdt_off) < _EMC_LIMIT_V_PER_NS)
+
         return result
 
     # ═══════════════════════════════════════════════════════════════════

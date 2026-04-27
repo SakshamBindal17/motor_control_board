@@ -1170,6 +1170,8 @@ const SECTIONS = [
       { key: 'hs_dv_dt_bus', label: 'Switch dV/dt', full: 'Phase Node Slew Rate', unit: 'V/µs', dec: 1, warn: 40, danger: 65, explain: 'Definition: Voltage slew rate on the inverter phase leg. Formula: V_bus / t_rise_actual. Physics: Excessive dV/dt (>50 V/µs) triggers severe EMI, capacitive motor bearing currents, and false MOSFET triggering.' },
       { key: 'hs_i_peak_on_a', label: 'I_peak Driver', full: 'Absolute Peak Gate Current', unit: 'A', dec: 2, warn: 2, danger: 3, explain: 'Definition: Maximum instantaneous current pulled from the driver. Formula: V_drv / Rg_on_total. Physics: Validates driver sizing (UCC27302 has a specific source/sink saturation limit).' },
       { key: 'hs_rg_power_w', label: 'Rg Power Loss', full: 'Gate Resistor Dissipation', unit: 'W', dec: 3, warn: 0.125, danger: 0.25, explain: 'Definition: Thermal power dissipated specifically in the physical gate resistors. Formula: Q_g × V_drv × fsw, proportionally split. Physics: Verifies 0603/0805 package power limits.' },
+      { key: 'dvdt_on_v_per_ns', label: 'dV/dt Turn-On', full: 'MOSFET Turn-On Slew Rate (datasheet tr)', unit: 'V/ns', dec: 2, warn: 30, danger: 50, explain: 'Definition: Voltage slew rate from MOSFET datasheet rise time. Formula: V_bus / tr. Physics: MOSFET-intrinsic bound — independent of gate resistor. EMC guideline: <50 V/ns.' },
+      { key: 'dvdt_off_v_per_ns', label: 'dV/dt Turn-Off', full: 'MOSFET Turn-Off Slew Rate (datasheet tf)', unit: 'V/ns', dec: 2, warn: 30, danger: 50, explain: 'Definition: Voltage slew rate from MOSFET datasheet fall time. Formula: V_bus / tf. Physics: MOSFET-intrinsic bound — independent of gate resistor. EMC guideline: <50 V/ns.' },
     ],
   },
   {
