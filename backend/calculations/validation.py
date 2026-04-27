@@ -35,9 +35,11 @@ class ValidationMixin:
         if rpm is not None and pole_pairs is not None and pole_pairs > 0:
             f_e = (rpm * pole_pairs) / 60.0
             fsw_ratio = self.fsw / f_e if f_e > 0 else float('inf')
+            samples_per_cycle = self.fsw / f_e if f_e > 0 else float('inf')
             results["f_electrical_hz"] = round(f_e, 1)
             results["fsw_to_fe_ratio"] = round(fsw_ratio, 1)
             results["fsw_ratio_ok"] = fsw_ratio >= 10
+            results["samples_per_elec_cycle"] = round(samples_per_cycle, 1)
 
             if fsw_ratio < 10:
                 warnings.append(
@@ -49,7 +51,14 @@ class ValidationMixin:
             else:
                 self.audit_log.append(f"[Motor] PWM frequency ratio f_sw/f_e = {fsw_ratio:.1f}x — OK (>= 10x).")
 
+            if samples_per_cycle < 6:
+                warnings.append(
+                    f"DANGER: Only {samples_per_cycle:.0f} PWM samples per electrical cycle. "
+                    f"Current control loop WILL be unstable. Need ≥10 for FOC, ≥6 for 6-step."
+                )
+
         # ── 2. Back-EMF vs Bus Voltage ────────────────────────────
+        v_bemf = None
         if ke is not None and rpm is not None and ke > 0:
             v_bemf = ke * (rpm / 1000.0)
             bemf_margin_pct = ((self.v_bus - v_bemf) / self.v_bus) * 100 if self.v_bus > 0 else 0
@@ -69,6 +78,17 @@ class ValidationMixin:
                     f"Very limited voltage headroom for current control."
                 )
                 self.audit_log.append(f"[Motor] WARNING: V_BEMF={v_bemf:.1f}V is within 10% of V_bus={self.v_bus}V — limited headroom.")
+
+            # Regenerative overvoltage estimate
+            if v_bemf < self.v_bus:
+                v_regen_worst = self.v_bus + (v_bemf * 0.3)
+                results["v_regen_estimate_v"] = round(v_regen_worst, 1)
+                if v_regen_worst > self.v_peak:
+                    warnings.append(
+                        f"WARNING: Regenerative braking may push bus to ~{v_regen_worst:.0f}V "
+                        f"(Vbus + 30% of BEMF), exceeding V_peak setting ({self.v_peak}V). "
+                        f"Verify brake resistor or DC bus capacitor sizing."
+                    )
 
         # ── 3. Kt current cross-check ────────────────────────────
         if kt is not None and kt > 0 and rated_tq is not None:
@@ -146,6 +166,92 @@ class ValidationMixin:
                     f"power ({i_from_power:.1f}A = {self.power}W / ({self.v_bus}V × 0.95 × 0.866)). "
                     f"Verify max_phase_current setting."
                 )
+
+        # ── 7. Stall current (worst-case: RPM=0, no back-EMF) ────
+        if rph_mohm is not None and rph_mohm > 0:
+            rph = rph_mohm * 1e-3
+            v_phase_max = self.v_bus / math.sqrt(3)  # SVPWM max phase voltage
+            i_stall = v_phase_max / rph
+            results["i_stall_a"] = round(i_stall, 1)
+            results["stall_ratio"] = round(i_stall / self.i_max, 2) if self.i_max > 0 else None
+            results["stall_ok"] = i_stall <= self.i_max
+            if i_stall > self.i_max:
+                warnings.append(
+                    f"⚠ STALL CURRENT: Motor stall current ({i_stall:.0f}A) exceeds "
+                    f"system max_phase_current ({self.i_max}A) by {i_stall/self.i_max:.1f}×. "
+                    f"Firmware MUST implement software current limiting. Without OCP, "
+                    f"MOSFETs will see {i_stall:.0f}A — likely exceeding SOA."
+                )
+                self.audit_log.append(f"[Motor] WARNING: Stall current {i_stall:.0f}A > I_max {self.i_max}A. OCP must trip before stall.")
+            elif i_stall > self.i_max * 0.8:
+                warnings.append(
+                    f"NOTE: Stall current ({i_stall:.0f}A) is {i_stall/self.i_max*100:.0f}% "
+                    f"of max_phase_current ({self.i_max}A). Limited margin for startup under load."
+                )
+
+        # ── 8. MOSFET Id_cont vs motor demand ────────────────────
+        if kt is not None and kt > 0 and rated_tq is not None:
+            i_rated = rated_tq / kt
+            id_cont = self._get(self.mosfet, "MOSFET", "id_cont", None)
+            if id_cont is not None:
+                results["mosfet_current_margin_a"] = round(id_cont - i_rated, 1)
+                results["mosfet_for_motor_ok"] = id_cont >= i_rated * 1.25
+                if id_cont < i_rated:
+                    warnings.append(
+                        f"DANGER: MOSFET Id_cont ({id_cont:.0f}A) < motor rated current "
+                        f"({i_rated:.1f}A from Kt). MOSFET will overheat at rated load."
+                    )
+                elif id_cont < i_rated * 1.25:
+                    warnings.append(
+                        f"WARNING: MOSFET Id_cont ({id_cont:.0f}A) has <25% margin over "
+                        f"motor rated current ({i_rated:.1f}A). Marginal at elevated temperatures."
+                    )
+
+        # ── 9. Modulation index / voltage utilization ─────────────
+        if ke is not None and rpm is not None and ke > 0 and rpm > 0:
+            v_bemf_calc = ke * (rpm / 1000.0)
+            v_phase_max = self.v_bus / math.sqrt(3)
+            m_required = v_bemf_calc / v_phase_max if v_phase_max > 0 else float('inf')
+            results["modulation_index_required"] = round(m_required, 3)
+            results["field_weakening_needed"] = m_required > 0.95
+            if m_required > 0 and m_required <= 1.0:
+                results["voltage_headroom_pct"] = round((1.0 - m_required) * 100, 1)
+            if m_required > 1.15:
+                warnings.append(
+                    f"DANGER: Motor requires M={m_required:.2f} at max speed — "
+                    f"exceeds SVPWM limit (M≤1.15). Motor CANNOT reach {rpm:.0f}RPM "
+                    f"on {self.v_bus}V bus. Increase V_bus or reduce max speed."
+                )
+            elif m_required > 0.95:
+                warnings.append(
+                    f"NOTE: Modulation index M={m_required:.2f} at max speed — "
+                    f"field weakening region. Requires flux-weakening firmware."
+                )
+
+        # ── Compatibility verdict ─────────────────────────────────
+        has_danger  = any("DANGER" in w or "CRITICAL" in w for w in warnings)
+        has_warning = any("WARNING" in w for w in warnings)
+        if not any(v is not None for v in [rpm, pole_pairs, ke, kt, rph_mohm]):
+            verdict = "no_data"
+            verdict_text = "No motor data entered — compatibility checks skipped"
+        elif has_danger:
+            verdict = "fail"
+            verdict_text = "Motor is NOT compatible with this PCB"
+        elif has_warning:
+            verdict = "marginal"
+            verdict_text = "Motor is marginal — review warnings before proceeding"
+        else:
+            verdict = "pass"
+            verdict_text = "Motor is compatible with this PCB"
+
+        results["compatibility_verdict"] = verdict
+        results["compatibility_text"] = verdict_text
+        results["check_count"] = {
+            "danger":  sum(1 for w in warnings if "DANGER" in w or "CRITICAL" in w),
+            "warning": sum(1 for w in warnings if "WARNING" in w),
+            "note":    sum(1 for w in warnings if w.startswith("NOTE") or w.startswith("⚠")),
+            "total":   len(warnings),
+        }
 
         results["warnings"] = warnings
         results["has_motor_data"] = any(v is not None for v in [rpm, pole_pairs, ke, kt, rph_mohm])
