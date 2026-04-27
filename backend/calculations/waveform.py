@@ -228,7 +228,7 @@ class WaveformMixin:
 
         if l_stray > 0 and coss > 0:
             f_ring     = 1.0 / (2 * math.pi * math.sqrt(l_stray * coss))
-            Q_ring     = 8.0   # typical PCB power stage (no external snubber)
+            Q_ring     = self._dc("snub.ring_q_factor")
             tau_ring   = Q_ring / (math.pi * f_ring)
             omega_ring = 2 * math.pi * f_ring
             # V_overshoot = I × sqrt(L/C) — peak spike above Vbus at turn-off

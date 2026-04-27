@@ -56,7 +56,7 @@ class MosfetMixin:
         # 3-phase SPWM per-switch RMS (Mohan textbook):
         # I_sw_rms = I_peak × sqrt(1/8 + M/(3π)), M = modulation index ≈ 0.9
         # This formula ALREADY accounts for duty-cycle weighting — do NOT divide by 2 again
-        M_spwm = 0.9  # typical SPWM modulation index
+        M_spwm = self._dc("input.spwm_mod_index")
         k_rms = math.sqrt(1/8 + M_spwm / (3 * math.pi))
 
         # Always compute fundamental-only RMS
@@ -120,8 +120,8 @@ class MosfetMixin:
             tj_for_rds = 25 + (rds_derating - 1) * 50  # rough estimate of what Tj this corresponds to
             self.audit_log.append(f"[MOSFET] User-overridden Rds(on) derating: {rds_derating}x.")
         else:
-            # Iterative Tj-dependent derating (α=2.1 typical for Si MOSFETs)
-            alpha_rds = 2.1
+            # Iterative Tj-dependent derating (user-overridable: Si≈2.1, SiC≈0.4)
+            alpha_rds = self._dc("thermal.rds_alpha")
             t_ref = 300.0  # 27°C in Kelvin (datasheet Rds(on) reference)
             tj_est = 100.0  # initial guess in °C
             tj_iters = 0
@@ -138,6 +138,11 @@ class MosfetMixin:
                     tj_est = tj_new
                     break
                 tj_est = tj_new
+            else:
+                self.audit_log.append(
+                    f"[MOSFET] WARNING: Tj iteration did not converge in 20 iterations "
+                    f"(Tj={tj_est:.1f}°C). Possible thermal runaway — verify heatsinking."
+                )
             rds_derating = round(rds_derating, 3)
             tj_for_rds = round(tj_est, 1)
             self.audit_log.append(

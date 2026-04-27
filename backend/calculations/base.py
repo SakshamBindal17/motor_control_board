@@ -27,11 +27,11 @@ DESIGN_CONSTANTS = {
     # Gate Drive
     "gate.rise_time_target":   (40,   "ns",   "Gate Drive",  "Rise time target",             "Default target for Rg_on sizing"),
     "gate.rg_bootstrap":       (10.0, "Ω",    "Gate Drive",  "Bootstrap series R",           "Limits bootstrap diode charging current"),
-    "gate.bootstrap_vf":       (0.6,  "V",    "Gate Drive",  "Bootstrap diode Vf",           "Schottky diode default (0.6V). Set to 1.0V for integrated slow diodes."),
+    "gate.bootstrap_vf":       (1.0,  "V",    "Gate Drive",  "Bootstrap diode Vf",           "Worst-case default for integrated bootstrap diodes (0.7–1.0V). Set to 0.6V for external Schottky."),
     "gate.driver_derating_per_c": (0.003, "1/°C", "Gate Drive", "Driver IO derating",        "Driver source/sink current derating per °C above 25°C. Typical: 0.3%/°C."),
     # Bootstrap
     "boot.min_cap":            (100,  "nF",   "Bootstrap",   "Min practical boot cap",       "Floor for bootstrap capacitor value"),
-    "boot.safety_margin":      (1.5,  "x",    "Bootstrap",   "Safety margin multiplier",     "Applied before E12 snap"),
+    "boot.safety_margin":      (2.0,  "x",    "Bootstrap",   "Safety margin multiplier",     "Applied before E12 snap. Higher = more conservative. 2.0× for worst-case design."),
     # Input Capacitors
     "input.spwm_mod_index":    (0.9,  "",     "Input Caps",  "SPWM modulation index",        "3-phase SPWM approx when Lph unavailable"),
     "input.min_bulk_count":    (4,    "pcs",  "Input Caps",  "Min bulk cap count",           "Minimum parallel caps for ESR distribution"),
@@ -54,6 +54,8 @@ DESIGN_CONSTANTS = {
     "waveform.qgd_temp_coeff":              (0.0015,"1/C",  "Waveform",    "Qgd temperature coefficient",   "Per-degree increase of effective Qgd above 25C"),
     "waveform.qrr_temp_coeff":              (0.005, "1/C",  "Waveform",    "Qrr temperature coefficient",   "Per-degree increase of effective Qrr above 25C"),
     "waveform.driver_temp_derate_per_c":    (0.003, "1/C",  "Waveform",    "Driver current temp derate",    "Per-degree reduction of effective gate-driver source/sink current above 25C"),
+    # ADC Timing
+    "adc.max_duty_cycle":      (0.90, "",     "ADC Timing",  "Max SPWM duty cycle",          "Limits the zero-vector low-side sampling window"),
     # Snubber
     "snub.coss_mult":          (3,    "x",    "Snubber",     "Coss multiplier",              "Snubber cap = N × Coss for overdamped response"),
     "snub.ring_q_factor":      (8.0,  "",     "Snubber",     "Ring Q factor",                "LC ringing Q for waveform model. Typical: 8 (48V Si), 12 (SiC), 15 (high-L PCB)"),
@@ -209,6 +211,7 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         "snub.ring_q_factor":    (1.0,  50.0),
         "thermal.rds_alpha":     (0.1,  5.0),
         "gate.driver_derating_per_c": (0.0, 0.02),
+        "adc.max_duty_cycle":    (0.5,  0.99),
 
         "emi.cm_choke_uh":       (1,    10000),
         "prot.adc_ref":          (1.0,  5.0),

@@ -33,6 +33,7 @@ const UI_META = {
   'snub.coss_mult':       { cat: 'Snubber', label: 'Coss multiplier', step: 1, min: 1, max: 20 },
   'snub.ring_q_factor':   { cat: 'Snubber', label: 'Ring Q factor', step: 1, min: 1.0, max: 50.0 },
   'emi.cm_choke_uh':      { cat: 'EMI Filter', label: 'CM choke inductance', step: 10, min: 1, max: 10000 },
+  'adc.max_duty_cycle':   { cat: 'ADC Timing', label: 'Max SPWM duty cycle', step: 0.01, min: 0.5, max: 0.99 },
 }
 
 export default function DesignConstantsModal() {
@@ -45,7 +46,7 @@ export default function DesignConstantsModal() {
   useEffect(() => {
     fetchDesignConstants().then(data => {
       const grouped = {}
-      const catOrder = ['Thermal', 'Gate Drive', 'Bootstrap', 'Input Caps', 'Protection', 'Dead Time', 'Snubber', 'EMI Filter']
+      const catOrder = ['Thermal', 'Gate Drive', 'Bootstrap', 'Input Caps', 'Protection', 'Dead Time', 'Snubber', 'EMI Filter', 'ADC Timing']
       catOrder.forEach(c => grouped[c] = [])
       
       for (const [key, bData] of Object.entries(data)) {
