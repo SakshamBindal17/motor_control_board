@@ -45,7 +45,8 @@ CALC_DEPS = {
         "rth_ja", "tj_max",
         "vbs_uvlo", "vcc_range", "vil", "vih",
         "current_sense_gain", "idd_quiescent",
-        "thermal_shutdown",  # used in protection/thermal threshold checks
+        "thermal_shutdown",       # used in protection/thermal threshold checks
+        "deadtime_min", "deadtime_default",  # driver built-in dead-time for shoot-through guard
     },
     # Verified against calculations/waveform.py, calculations/pcb_trace_thermal.py (2026-04-24)
     "mcu": {

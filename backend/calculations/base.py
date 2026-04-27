@@ -60,6 +60,9 @@ DESIGN_CONSTANTS = {
     "snub.coss_mult":          (3,    "x",    "Snubber",     "Coss multiplier",              "Snubber cap = N × Coss for overdamped response"),
     "snub.ring_q_factor":      (8.0,  "",     "Snubber",     "Ring Q factor",                "LC ringing Q for waveform model. Typical: 8 (48V Si), 12 (SiC), 15 (high-L PCB)"),
 
+    # Thermal
+    "thermal.rds_alpha":       (2.1,  "",     "Thermal",     "Rds temp exponent α",          "Power-law α for Rds(Tj): Rds_hot = Rds25 × (Tj/298K)^α. Si≈2.1, SiC≈0.4"),
+
     # EMI Filter
     "emi.cm_choke_uh":         (330,  "µH",   "EMI Filter",  "CM choke inductance",          "Common-mode choke baseline value"),
 }

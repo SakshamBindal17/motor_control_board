@@ -267,7 +267,23 @@ class GateDriveMixin:
         if use_miller_basis:
             result["qgd_used_nc"] = round(qgd * 1e9, 2)
             result["vgs_plateau_used_v"] = round(vgs_pl, 2) if vgs_pl else None
-            
+
+        # Crss-based dV/dt (more accurate than Vbus/t_rise when Crss extracted)
+        # dV/dt = i_gate / Crss — directly measures how fast gate current charges Crss
+        crss_val = self._get(self.mosfet, "MOSFET", "crss", None)
+        if crss_val is not None and crss_val > 0:
+            hs_tr_s = hs["gate_rise_time_ns"] * 1e-9
+            rg_on_total_hs = hs["rg_on_total_ohm"]
+            vgs_pl_for_dv = vgs_pl_eff if vgs_pl_eff else (vgs_th + 1.0)
+            i_gate_miller = (vdrv - vgs_pl_for_dv) / rg_on_total_hs if rg_on_total_hs > 0 else io_src
+            dv_dt_crss = i_gate_miller / crss_val / 1e6  # V/µs
+            result["dv_dt_crss_v_per_us"] = round(dv_dt_crss, 1)
+            result["crss_pf"] = round(crss_val * 1e12, 1)
+            self.audit_log.append(
+                f"[Gate Drive] Crss-based dV/dt: Ig_miller={i_gate_miller:.2f}A / "
+                f"Crss={crss_val*1e12:.0f}pF = {dv_dt_crss:.0f} V/µs."
+            )
+
         # Add driver output timing info if available
         if drv_tr is not None:
             result["driver_rise_time_ns"] = round(drv_tr * 1e9, 1)
@@ -277,6 +293,58 @@ class GateDriveMixin:
             result["vgs_max_v"] = round(vgs_max, 1)
         if vgs_max_warning:
             result["vgs_max_warning"] = vgs_max_warning
+
+        # ── Gate drive IC thermal (Item 13) ──────────────────────────────────
+        # Split total gate charge power between driver IC and external resistors.
+        # rg_ext_fraction = Rg_ext / (Rg_ext + Rg_int) — fraction dissipated in PCB resistor.
+        # Driver IC dissipates the remainder.
+        rth_ja_drv = self._get(self.driver, "DRIVER", "rth_ja", None)   # °C/W
+        tj_max_drv = self._get(self.driver, "DRIVER", "tj_max", 150.0)  # °C
+        p_gate_total = qg * vdrv * self.fsw   # total gate charge power both edges
+
+        rg_on_hs  = result["hs_rg_on_ohm"]
+        rg_off_hs = result["hs_rg_off_ohm"]
+
+        # Power split: external Rg dissipates rg_ext/(rg_ext+rg_int) of gate charge power
+        # Turn-on path
+        rg_on_ext_frac  = rg_on_hs  / (rg_on_hs  + rg_int) if (rg_on_hs  + rg_int) > 0 else 0.5
+        rg_off_ext_frac = rg_off_hs / (rg_off_hs + rg_int) if (rg_off_hs + rg_int) > 0 else 0.5
+        # Gate charge splits 50/50 between turn-on and turn-off paths (Qg total).
+        # Each half: external Rg dissipates rg_ext_frac of that half-cycle energy.
+        p_rg_on_ext  = 0.5 * p_gate_total * rg_on_ext_frac
+        p_rg_off_ext = 0.5 * p_gate_total * rg_off_ext_frac
+        p_driver_gate = p_gate_total - p_rg_on_ext - p_rg_off_ext  # IC dissipation
+
+        # Scale for all 6 FETs driven (3 HS + 3 LS, each with its own charge path)
+        p_driver_total = p_driver_gate * self.num_fets
+
+        result["driver_gate_power_w"]   = round(p_driver_gate, 4)
+        result["driver_gate_power_total_w"] = round(p_driver_total, 3)
+        result["p_rg_on_ext_w"]         = round(p_rg_on_ext,  4)
+        result["p_rg_off_ext_w"]        = round(p_rg_off_ext, 4)
+
+        if rth_ja_drv is not None:
+            tj_driver = self.t_amb + p_driver_total * rth_ja_drv
+            tj_driver_margin = tj_max_drv - tj_driver
+            result["driver_tj_est_c"]     = round(tj_driver, 1)
+            result["driver_tj_margin_c"]  = round(tj_driver_margin, 1)
+            result["driver_tj_max_c"]     = round(tj_max_drv, 1)
+            result["driver_tj_ok"]        = tj_driver_margin >= 20.0
+            if tj_driver_margin < 20:
+                result.setdefault("warnings", []).append(
+                    f"WARNING: Driver Tj estimate {tj_driver:.0f}°C — only {tj_driver_margin:.0f}°C "
+                    f"below Tj_max ({tj_max_drv:.0f}°C). Consider improving driver heatsinking or reducing fsw."
+                )
+            self.audit_log.append(
+                f"[Gate Drive Thermal] P_driver={p_driver_total:.3f}W total "
+                f"(P_gate={p_gate_total:.3f}W, Rth_JA={rth_ja_drv}°C/W) → "
+                f"Tj_driver={tj_driver:.1f}°C (margin={tj_driver_margin:.1f}°C)."
+            )
+        else:
+            self.audit_log.append(
+                "[Gate Drive Thermal] Rth_JA not extracted — driver Tj cannot be estimated. "
+                "Upload gate driver datasheet to enable driver thermal check."
+            )
 
         return result
 

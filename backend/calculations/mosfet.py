@@ -1,4 +1,4 @@
-"""Motor Controller Hardware Design — Mosfet Calculations"""
+﻿"""Motor Controller Hardware Design — Mosfet Calculations"""
 import math
 import re
 
@@ -129,11 +129,12 @@ class MosfetMixin:
                 tj_iters += 1
                 rds_derating = (((tj_est + 273.15) / t_ref) ** alpha_rds)
                 rds_hot = rds * rds_derating
-                p_cond_est = i_rms_sw ** 2 * rds_hot
-                p_other_est = self.v_bus * self.i_max * (tr + tf) * self.fsw / math.pi + qg * self.v_drv * self.fsw + qrr * self.v_bus * self.fsw
-                p_total_est = p_cond_est + p_other_est
-                p_total_est_dev = p_total_est / n_parallel
+                # Power ∝ I² — if current splits N ways, per-device power drops by N².
+                p_cond_est_dev = i_rms_sw_dev ** 2 * rds_hot
+                p_other_est_dev = (self.v_bus * self.i_max * (tr + tf) * self.fsw / math.pi + qg * self.v_drv * self.fsw + qrr * self.v_bus * self.fsw) / n_parallel
+                p_total_est_dev = p_cond_est_dev + p_other_est_dev
                 tj_new = self.t_amb + p_total_est_dev * rth_total
+                if tj_new > 500: tj_new = 500  # cap prevents divergence for impossible designs
                 if abs(tj_new - tj_est) < 0.1:
                     tj_est = tj_new
                     break
@@ -151,8 +152,8 @@ class MosfetMixin:
                 f"Override via design constant 'thermal.rds_derating'."
             )
 
-        self._log_hc("mosfet_losses", "Rds(on) thermal derating", f"{rds_derating}x",
-                      f"{'User override' if user_overrode_derating else f'Iterative model at Tj≈{tj_for_rds}°C (α=2.1)'}", "thermal.rds_derating")
+        _alpha_label = "User override" if user_overrode_derating else f"Iterative model at Tj≈{tj_for_rds}°C (α={alpha_rds})"
+        self._log_hc("mosfet_losses", "Rds(on) thermal derating", f"{rds_derating}x", _alpha_label, "thermal.rds_derating")
         # P_cond(per-device) = I_device_rms² × Rds(on)
         p_cond  = i_rms_sw_dev**2 * rds_hot
 
