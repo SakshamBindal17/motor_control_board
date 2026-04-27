@@ -446,11 +446,22 @@ export default function CalculationsPanel() {
     const fb = meta.fallbacks?.length || 0
     if (hc === 0 && fb === 0) return null
 
+    const fbTip = fb > 0
+      ? (meta.fallbacks || []).map(f => f.message || `${f.param} fallback ${f.value}`).join('\n')
+      : ''
+
     return (
-      <span className="section-meta-badge" title={`${hc} hardcoded constants, ${fb} fallback values used`}>
+      <span className="section-meta-badge" title={`${hc} hardcoded constants, ${fb} fallback values used${fbTip ? '\n' + fbTip : ''}`}>
         {hc > 0 && <span className="smb-hc">{hc} HC</span>}
         {hc > 0 && fb > 0 && <span className="smb-sep">·</span>}
-        {fb > 0 && <span className="smb-fb">{fb} FB</span>}
+        {fb > 0 && (
+          <span style={{
+            fontSize: 9, fontWeight: 700, color: 'var(--amber)',
+            background: 'rgba(255,171,0,.18)', padding: '1px 6px', borderRadius: 3,
+          }}>
+            ⚠ {fb} FB
+          </span>
+        )}
       </span>
     )
   }

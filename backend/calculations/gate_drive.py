@@ -267,7 +267,23 @@ class GateDriveMixin:
         if use_miller_basis:
             result["qgd_used_nc"] = round(qgd * 1e9, 2)
             result["vgs_plateau_used_v"] = round(vgs_pl, 2) if vgs_pl else None
-            
+
+        # Crss-based dV/dt (more accurate than Vbus/t_rise when Crss extracted)
+        # dV/dt = i_gate / Crss — directly measures how fast gate current charges Crss
+        crss_val = self._get(self.mosfet, "MOSFET", "crss", None)
+        if crss_val is not None and crss_val > 0:
+            hs_tr_s = hs["gate_rise_time_ns"] * 1e-9
+            rg_on_total_hs = hs["rg_on_total_ohm"]
+            vgs_pl_for_dv = vgs_pl_eff if vgs_pl_eff else (vgs_th + 1.0)
+            i_gate_miller = (vdrv - vgs_pl_for_dv) / rg_on_total_hs if rg_on_total_hs > 0 else io_src
+            dv_dt_crss = i_gate_miller / crss_val / 1e6  # V/µs
+            result["dv_dt_crss_v_per_us"] = round(dv_dt_crss, 1)
+            result["crss_pf"] = round(crss_val * 1e12, 1)
+            self.audit_log.append(
+                f"[Gate Drive] Crss-based dV/dt: Ig_miller={i_gate_miller:.2f}A / "
+                f"Crss={crss_val*1e12:.0f}pF = {dv_dt_crss:.0f} V/µs."
+            )
+
         # Add driver output timing info if available
         if drv_tr is not None:
             result["driver_rise_time_ns"] = round(drv_tr * 1e9, 1)
@@ -277,6 +293,58 @@ class GateDriveMixin:
             result["vgs_max_v"] = round(vgs_max, 1)
         if vgs_max_warning:
             result["vgs_max_warning"] = vgs_max_warning
+
+        # ── Gate drive IC thermal (Item 13) ──────────────────────────────────
+        # Split total gate charge power between driver IC and external resistors.
+        # rg_ext_fraction = Rg_ext / (Rg_ext + Rg_int) — fraction dissipated in PCB resistor.
+        # Driver IC dissipates the remainder.
+        rth_ja_drv = self._get(self.driver, "DRIVER", "rth_ja", None)   # °C/W
+        tj_max_drv = self._get(self.driver, "DRIVER", "tj_max", 150.0)  # °C
+        p_gate_total = qg * vdrv * self.fsw   # total gate charge power both edges
+
+        rg_on_hs  = result["hs_rg_on_ohm"]
+        rg_off_hs = result["hs_rg_off_ohm"]
+
+        # Power split: external Rg dissipates rg_ext/(rg_ext+rg_int) of gate charge power
+        # Turn-on path
+        rg_on_ext_frac  = rg_on_hs  / (rg_on_hs  + rg_int) if (rg_on_hs  + rg_int) > 0 else 0.5
+        rg_off_ext_frac = rg_off_hs / (rg_off_hs + rg_int) if (rg_off_hs + rg_int) > 0 else 0.5
+        # Gate charge splits 50/50 between turn-on and turn-off paths (Qg total).
+        # Each half: external Rg dissipates rg_ext_frac of that half-cycle energy.
+        p_rg_on_ext  = 0.5 * p_gate_total * rg_on_ext_frac
+        p_rg_off_ext = 0.5 * p_gate_total * rg_off_ext_frac
+        p_driver_gate = p_gate_total - p_rg_on_ext - p_rg_off_ext  # IC dissipation
+
+        # Scale for all 6 FETs driven (3 HS + 3 LS, each with its own charge path)
+        p_driver_total = p_driver_gate * self.num_fets
+
+        result["driver_gate_power_w"]   = round(p_driver_gate, 4)
+        result["driver_gate_power_total_w"] = round(p_driver_total, 3)
+        result["p_rg_on_ext_w"]         = round(p_rg_on_ext,  4)
+        result["p_rg_off_ext_w"]        = round(p_rg_off_ext, 4)
+
+        if rth_ja_drv is not None:
+            tj_driver = self.t_amb + p_driver_total * rth_ja_drv
+            tj_driver_margin = tj_max_drv - tj_driver
+            result["driver_tj_est_c"]     = round(tj_driver, 1)
+            result["driver_tj_margin_c"]  = round(tj_driver_margin, 1)
+            result["driver_tj_max_c"]     = round(tj_max_drv, 1)
+            result["driver_tj_ok"]        = tj_driver_margin >= 20.0
+            if tj_driver_margin < 20:
+                result.setdefault("warnings", []).append(
+                    f"WARNING: Driver Tj estimate {tj_driver:.0f}°C — only {tj_driver_margin:.0f}°C "
+                    f"below Tj_max ({tj_max_drv:.0f}°C). Consider improving driver heatsinking or reducing fsw."
+                )
+            self.audit_log.append(
+                f"[Gate Drive Thermal] P_driver={p_driver_total:.3f}W total "
+                f"(P_gate={p_gate_total:.3f}W, Rth_JA={rth_ja_drv}°C/W) → "
+                f"Tj_driver={tj_driver:.1f}°C (margin={tj_driver_margin:.1f}°C)."
+            )
+        else:
+            self.audit_log.append(
+                "[Gate Drive Thermal] Rth_JA not extracted — driver Tj cannot be estimated. "
+                "Upload gate driver datasheet to enable driver thermal check."
+            )
 
         return result
 
@@ -422,10 +490,14 @@ class GateDriveMixin:
     def calc_dead_time(self) -> dict:
         self._current_module = "dead_time"
         # _get returns SI (seconds) — use SI fallbacks, then convert to ns for arithmetic
+        # Turn-off path components
         td_off_s  = self._get(self.mosfet, "MOSFET", "td_off",       50e-9) or 50e-9   # seconds
         tf_s      = self._get(self.mosfet, "MOSFET", "tf",            20e-9) or 20e-9   # seconds
-        t_prop_s  = self._get(self.driver, "DRIVER", "prop_delay_off", 60e-9) or 60e-9  # seconds
-        t_drv_s   = self._get(self.driver, "DRIVER", "prop_delay_on",  60e-9) or 60e-9  # seconds
+        t_prop_off_s = self._get(self.driver, "DRIVER", "prop_delay_off", 60e-9) or 60e-9  # seconds
+        # Turn-on path components
+        td_on_s   = self._get(self.mosfet, "MOSFET", "td_on",         15e-9) or 15e-9   # seconds
+        tr_s      = self._get(self.mosfet, "MOSFET", "tr",            30e-9) or 30e-9   # seconds
+        t_prop_on_s = self._get(self.driver, "DRIVER", "prop_delay_on", 60e-9) or 60e-9  # seconds
 
         # Body diode parameters (from MOSFET datasheet)
         body_diode_vf = self._get(self.mosfet, "MOSFET", "body_diode_vf", 0.7)  # V
@@ -436,25 +508,46 @@ class GateDriveMixin:
         drv_fall_s = self._get(self.driver, "DRIVER", "fall_time_out", None)  # s or None
 
         # Convert to nanoseconds for readable arithmetic
-        td_off_ns = td_off_s * 1e9
-        tf_ns     = tf_s     * 1e9
-        t_prop_ns = t_prop_s * 1e9
+        td_off_ns    = td_off_s    * 1e9
+        tf_ns        = tf_s        * 1e9
+        t_prop_off_ns= t_prop_off_s* 1e9
+        td_on_ns     = td_on_s     * 1e9
+        tr_ns_val    = tr_s        * 1e9
+        t_prop_on_ns = t_prop_on_s * 1e9
 
-        # Include driver output fall time in dead-time budget if available
-        # (driver fall time adds to turn-off propagation)
-        drv_fall_ns = drv_fall_s * 1e9 if drv_fall_s is not None else 0
+        drv_fall_ns = drv_fall_s * 1e9 if drv_fall_s is not None else 0.0
+        drv_rise_ns = drv_rise_s * 1e9 if drv_rise_s is not None else 0.0
 
-        # Minimum: td_off + tf + propagation + driver_fall + margin
-        dt_abs_margin = self._dc("dt.abs_margin")
+        dt_abs_margin  = self._dc("dt.abs_margin")
         dt_safety_mult = self._dc("dt.safety_mult")
-        dt_min    = td_off_ns + tf_ns + t_prop_ns + drv_fall_ns + dt_abs_margin   # ns
-        dt_rec    = round(dt_min * dt_safety_mult)                  # ns
 
-        self.audit_log.append(f"[Dead Time] Added {dt_abs_margin}ns absolute margin and {dt_safety_mult}x safety margin to switching times.")
+        # ── Turn-off path: td_off + tf + prop_delay_off + drv_fall + margin ──
+        dt_off_min = td_off_ns + tf_ns + t_prop_off_ns + drv_fall_ns + dt_abs_margin
+
+        # ── Turn-on path: td_on + tr + prop_delay_on + drv_rise + margin ────
+        # The complementary FET must fully turn off (td_on + tr of the new FET)
+        # before the outgoing FET can be triggered on.
+        dt_on_min  = td_on_ns + tr_ns_val + t_prop_on_ns + drv_rise_ns + dt_abs_margin
+
+        # Take the worst-case path
+        dt_min_path = "turn_off" if dt_off_min >= dt_on_min else "turn_on"
+        dt_min = max(dt_off_min, dt_on_min)
+        dt_rec = round(dt_min * dt_safety_mult)   # ns
+
+        self.audit_log.append(
+            f"[Dead Time] Turn-off path: {dt_off_min:.1f}ns "
+            f"(td_off={td_off_ns:.0f} + tf={tf_ns:.0f} + prop_off={t_prop_off_ns:.0f} + drv_fall={drv_fall_ns:.0f} + margin={dt_abs_margin:.0f})."
+        )
+        self.audit_log.append(
+            f"[Dead Time] Turn-on path: {dt_on_min:.1f}ns "
+            f"(td_on={td_on_ns:.0f} + tr={tr_ns_val:.0f} + prop_on={t_prop_on_ns:.0f} + drv_rise={drv_rise_ns:.0f} + margin={dt_abs_margin:.0f})."
+        )
+        self.audit_log.append(
+            f"[Dead Time] Limiting path: {dt_min_path} ({dt_min:.1f}ns). "
+            f"Recommended: {dt_rec:.0f}ns ({dt_safety_mult}× safety margin)."
+        )
         self._log_hc("dead_time", "Absolute margin", f"{dt_abs_margin} ns", "Baseline safety margin added to minimum", "dt.abs_margin")
         self._log_hc("dead_time", "Safety multiplier", f"{dt_safety_mult}x", "Recommended margin over minimum dead time", "dt.safety_mult")
-        if drv_fall_ns > 0:
-            self.audit_log.append(f"[Dead Time] Included driver output fall time ({drv_fall_ns:.1f}ns) in dead-time budget.")
 
         # MCU dead-time register resolution — key "pwm_deadtime_res" (matches extraction)
         dt_res_s  = self._get(self.mcu, "MCU", "pwm_deadtime_res", 8e-9) or 8e-9   # seconds
@@ -493,22 +586,31 @@ class GateDriveMixin:
                 self.audit_log.append(f"[Dead Time] WARNING: dt_actual ({dt_actual:.0f}ns) < trr ({trr_ns:.0f}ns).")
 
         result = {
-            "dt_minimum_ns":          round(dt_min,       1),
-            "dt_recommended_ns":      round(dt_rec,       1),
+            "dt_minimum_ns":          round(dt_min,        1),
+            "dt_recommended_ns":      round(dt_rec,        1),
             "dt_register_count":      dt_reg,
-            "dt_actual_ns":           round(dt_actual,    1),
-            "dt_pct_of_period":       round(dt_pct,       3),
-            "switching_period_ns":    round(period_ns,    1),
-            "effective_duty_loss_pct":round(duty_loss_pct,3),
+            "dt_actual_ns":           round(dt_actual,     1),
+            "dt_pct_of_period":       round(dt_pct,        3),
+            "switching_period_ns":    round(period_ns,     1),
+            "effective_duty_loss_pct":round(duty_loss_pct, 3),
             "dt_feasible":            dt_feasible,
-            "dt_max_ns":              round(dt_max_ns,    1),
-            "td_off_ns":              round(td_off_ns,    1),
-            "tf_ns":                  round(tf_ns,        1),
-            "prop_delay_off_ns":      round(t_prop_ns,    1),
+            "dt_max_ns":              round(dt_max_ns,     1),
+            # Turn-off path breakdown
+            "dt_turnoff_path_ns":     round(dt_off_min,    1),
+            "td_off_ns":              round(td_off_ns,     1),
+            "tf_ns":                  round(tf_ns,         1),
+            "prop_delay_off_ns":      round(t_prop_off_ns, 1),
+            # Turn-on path breakdown
+            "dt_turnon_path_ns":      round(dt_on_min,     1),
+            "td_on_ns":               round(td_on_ns,      1),
+            "tr_ns":                  round(tr_ns_val,     1),
+            "prop_delay_on_ns":       round(t_prop_on_ns,  1),
+            # Limiting path
+            "dt_limiting_path":       dt_min_path,
             "dt_resolution_ns":       round(dt_res_ns,    2),
             "body_diode_vf_v":        round(body_diode_vf, 2),
             "body_diode_loss_per_leg_w": round(p_body_diode_per_leg, 3),
-            "body_diode_loss_total_w":   round(p_body_diode_total, 3),
+            "body_diode_loss_total_w":   round(p_body_diode_total,   3),
             "notes": {
                 "foc":       "Dead-time compensation required in firmware for accurate FOC below ~10% mod index",
                 "6step":     "6-step commutation: enforce same dead-time at each commutation event",
@@ -519,6 +621,8 @@ class GateDriveMixin:
 
         if drv_fall_ns > 0:
             result["driver_fall_time_ns"] = round(drv_fall_ns, 1)
+        if drv_rise_ns > 0:
+            result["driver_rise_time_ns"] = round(drv_rise_ns, 1)
         if trr_s is not None:
             result["trr_ns"] = round(trr_s * 1e9, 1)
         if trr_warning:

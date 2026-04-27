@@ -21,7 +21,7 @@ export default function MotorForm({ config }) {
     dispatch({ type: 'SET_MOTOR_SPECS', payload: { [key]: value } })
   }
 
-  // Derived live calculations
+  // Derived live calculations (frontend-only, no calc run needed)
   const ke = parseFloat(specs.back_emf_v_per_krpm) || 0
   const kt = parseFloat(specs.kt_nm_per_a) || 0
   const rph = parseFloat(specs.rph_mohm) / 1000 || 0
@@ -36,6 +36,16 @@ export default function MotorForm({ config }) {
   const vbemf_max = ke * (rpm / 1000)
   const copper_loss_w = imax * imax * rph * 1.5
   const time_const_ms = rph > 0 ? (lph / rph) * 1000 : null
+
+  // Backend motor_validation results (available after "Run Calculations")
+  const motorVal = state.project.calculations?.motor_validation || {}
+  const verdict = motorVal.compatibility_verdict
+  const verdictText = motorVal.compatibility_text
+  const iStall = motorVal.i_stall_a
+  const modIndex = motorVal.modulation_index_required
+  const vRegen = motorVal.v_regen_estimate_v
+  const samplesPerCycle = motorVal.samples_per_elec_cycle
+  const backendWarnings = motorVal.warnings || []
 
   const sectionTitle = {
     fontSize: 11, fontWeight: 700, color: 'var(--txt-2)',
@@ -126,7 +136,31 @@ export default function MotorForm({ config }) {
           </div>
 
           {/* Derived + checks */}
-          <div style={{ width: 240, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ width: 240, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+
+            {/* Compatibility verdict banner — shown after calc run */}
+            {verdict && verdict !== 'no_data' && (
+              <div style={{
+                padding: '8px 12px', borderRadius: 6,
+                background: verdict === 'pass' ? 'rgba(76,175,80,0.1)' :
+                            verdict === 'marginal' ? 'rgba(255,171,0,0.1)' :
+                            'rgba(244,67,54,0.1)',
+                border: `1px solid ${verdict === 'pass' ? 'var(--green)' :
+                                     verdict === 'marginal' ? 'var(--amber)' :
+                                     'var(--red)'}`,
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--txt-1)' }}>
+                  {verdict === 'pass' ? '✅' : verdict === 'marginal' ? '⚠' : '❌'}{' '}{verdictText}
+                </div>
+                {motorVal.check_count?.total > 0 && (
+                  <div style={{ fontSize: 10, color: 'var(--txt-3)', marginTop: 3 }}>
+                    {motorVal.check_count.danger > 0 && <span style={{ color: 'var(--red)', marginRight: 6 }}>{motorVal.check_count.danger} danger</span>}
+                    {motorVal.check_count.warning > 0 && <span style={{ color: 'var(--amber)', marginRight: 6 }}>{motorVal.check_count.warning} warning</span>}
+                    {motorVal.check_count.note > 0 && <span style={{ color: 'var(--txt-3)' }}>{motorVal.check_count.note} note</span>}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Derived values */}
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -136,10 +170,14 @@ export default function MotorForm({ config }) {
                 <DerivedRow label="Back-EMF @ Max RPM" value={vbemf_max > 0 ? vbemf_max.toFixed(1) : '—'} unit="V pk" />
                 <DerivedRow label="Copper Loss @ Imax" value={copper_loss_w > 0 ? copper_loss_w.toFixed(1) : '—'} unit="W" />
                 <DerivedRow label="Phase Time Const" value={time_const_ms ? time_const_ms.toFixed(2) : '—'} unit="ms" />
+                {iStall != null && <DerivedRow label="Stall Current" value={iStall.toFixed(0)} unit="A" warn={iStall > imax} />}
+                {modIndex != null && <DerivedRow label="Mod Index @ Max RPM" value={modIndex.toFixed(3)} unit="" warn={modIndex > 0.95} />}
+                {samplesPerCycle != null && <DerivedRow label="Samples/Elec Cycle" value={samplesPerCycle.toFixed(1)} unit="" warn={samplesPerCycle < 10} />}
+                {vRegen != null && <DerivedRow label="Regen Bus Estimate" value={vRegen.toFixed(0)} unit="V" warn={vRegen > state.project.system_specs.peak_voltage} />}
               </div>
             </div>
 
-            {/* Design checks */}
+            {/* Design checks — frontend-only (live, no calc run needed) */}
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
               <div style={{ ...sectionTitle, fontSize: 10 }}>⚠️ Design Checks</div>
               <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -153,23 +191,35 @@ export default function MotorForm({ config }) {
                   warn={copper_loss_w === 0}
                   text={`Copper loss ${copper_loss_w > 0 ? copper_loss_w.toFixed(1) + 'W' : '?'} < 5% power`}
                 />
-                <CheckRow
-                  ok={!!specs.rph_mohm && !!specs.lph_uh}
-                  warn={false}
-                  text="Rph and Lph entered"
-                />
-                <CheckRow
-                  ok={!!specs.pole_pairs}
-                  warn={false}
-                  text="Pole pairs specified"
-                />
-                <CheckRow
-                  ok={!!specs.kt_nm_per_a}
-                  warn={false}
-                  text="Torque constant Kt entered"
-                />
+                <CheckRow ok={!!specs.rph_mohm && !!specs.lph_uh} warn={false} text="Rph and Lph entered" />
+                <CheckRow ok={!!specs.pole_pairs} warn={false} text="Pole pairs specified" />
+                <CheckRow ok={!!specs.kt_nm_per_a} warn={false} text="Torque constant Kt entered" />
               </div>
             </div>
+
+            {/* Backend warnings — shown after calc run */}
+            {backendWarnings.length > 0 && (
+              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ ...sectionTitle, fontSize: 10 }}>🔍 Compatibility Analysis</div>
+                <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {backendWarnings.map((w, i) => {
+                    const isDanger  = w.includes('DANGER') || w.includes('CRITICAL')
+                    const isWarning = w.includes('WARNING')
+                    const color = isDanger ? 'var(--red)' : isWarning ? 'var(--amber)' : 'var(--txt-3)'
+                    const icon  = isDanger ? '❌' : isWarning ? '⚠' : 'ℹ'
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 5 }}>
+                        <span style={{ color, flexShrink: 0, fontSize: 11 }}>{icon}</span>
+                        <span style={{ fontSize: 10, color, lineHeight: 1.4 }}>{w}</span>
+                      </div>
+                    )
+                  })}
+                  <div style={{ fontSize: 9, color: 'var(--txt-4)', marginTop: 4, fontStyle: 'italic' }}>
+                    These checks validate motor fit — they do not affect component sizing.
+                  </div>
+                </div>
+              </div>
+            )}
 
           </div>
         </div>
@@ -183,11 +233,11 @@ export default function MotorForm({ config }) {
   )
 }
 
-function DerivedRow({ label, value, unit }) {
+function DerivedRow({ label, value, unit, warn }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
       <span style={{ fontSize: 11, color: 'var(--txt-3)' }}>{label}</span>
-      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, color: 'var(--accent)' }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11, color: warn ? 'var(--amber)' : 'var(--accent)' }}>
         {value}{unit ? ` ${unit}` : ''}
       </span>
     </div>

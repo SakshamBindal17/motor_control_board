@@ -111,6 +111,7 @@ class TestCalculationEngine:
             mcu_params={},
             motor_specs={},
             overrides={},
+            design_constants={"thermal.rds_derating": 1.0}
         ).calc_mosfet_losses()
 
         two_parallel = CalculationEngine(
@@ -120,6 +121,7 @@ class TestCalculationEngine:
             mcu_params={},
             motor_specs={},
             overrides={},
+            design_constants={"thermal.rds_derating": 1.0}
         ).calc_mosfet_losses()
 
         assert one_parallel["parallel_per_switch"] == pytest.approx(1.0)
