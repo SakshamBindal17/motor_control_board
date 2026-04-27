@@ -267,7 +267,23 @@ class GateDriveMixin:
         if use_miller_basis:
             result["qgd_used_nc"] = round(qgd * 1e9, 2)
             result["vgs_plateau_used_v"] = round(vgs_pl, 2) if vgs_pl else None
-            
+
+        # Crss-based dV/dt (more accurate than Vbus/t_rise when Crss extracted)
+        # dV/dt = i_gate / Crss — directly measures how fast gate current charges Crss
+        crss_val = self._get(self.mosfet, "MOSFET", "crss", None)
+        if crss_val is not None and crss_val > 0:
+            hs_tr_s = hs["gate_rise_time_ns"] * 1e-9
+            rg_on_total_hs = hs["rg_on_total_ohm"]
+            vgs_pl_for_dv = vgs_pl_eff if vgs_pl_eff else (vgs_th + 1.0)
+            i_gate_miller = (vdrv - vgs_pl_for_dv) / rg_on_total_hs if rg_on_total_hs > 0 else io_src
+            dv_dt_crss = i_gate_miller / crss_val / 1e6  # V/µs
+            result["dv_dt_crss_v_per_us"] = round(dv_dt_crss, 1)
+            result["crss_pf"] = round(crss_val * 1e12, 1)
+            self.audit_log.append(
+                f"[Gate Drive] Crss-based dV/dt: Ig_miller={i_gate_miller:.2f}A / "
+                f"Crss={crss_val*1e12:.0f}pF = {dv_dt_crss:.0f} V/µs."
+            )
+
         # Add driver output timing info if available
         if drv_tr is not None:
             result["driver_rise_time_ns"] = round(drv_tr * 1e9, 1)
