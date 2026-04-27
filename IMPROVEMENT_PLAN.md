@@ -1,6 +1,6 @@
 # MC Hardware Designer v2 — Full Improvement Plan
 
-> Generated: 2026-04-22 · Last updated: 2026-04-27
+> Generated: 2026-04-22 · Last updated: 2026-04-27 (post-audit corrections)
 > Scope: Extraction accuracy, calculation correctness, unused motor params, hardcoded fallbacks,
 > unit handling, frontend display gaps, report generator, E-series snapping, dead code,
 > API key management, error handling, SPICE export, Design Constants UI, waveform accuracy,
@@ -241,7 +241,7 @@ Every `_get(block, "BLOCK", "param", FALLBACK)` with a non-None fallback is a **
 
 | Issue | Current | Correct |
 |-------|---------|---------|
-| Motor copper loss derating | 1.5× hardcoded | Should use `rph_mohm` extracted param at rated `I_pk` |
+| Motor copper loss derating | 1.5× hardcoded | 🚫 **DO NOT REMOVE** — copper TCR ≈ 0.393%/°C → at 150°C winding: 1.49× ≈ 1.5×. This IS the correct worst-case model. Action: make it a design constant (default 1.5×, SiC/GaN users can reduce it). Do NOT replace with room-temp Rph — that is non-conservative. |
 
 ### 3f. Gate Resistors — `calc_gate_resistors()`
 
@@ -485,15 +485,17 @@ See §COMPAT — this is now a dedicated feature with its own section.
 
 ## 14. Wrong DESIGN_CONSTANTS Defaults 🔴
 
+> **⚠ Audit correction (2026-04-27):** Several changes originally listed below were reviewed against the worst-case design philosophy and found to be **INCORRECT**. Corrections noted inline.
+
 These defaults are **factually incorrect** for a 48V/3kW PMSM application.
 
-| Constant | Current Default | Correct Default | Impact |
-|----------|----------------|-----------------|--------|
-| `gate.bootstrap_vf` | **1.0 V** | **0.6 V** | Bootstrap cap oversized 20%; Vbs budget wrong |
-| `waveform.driver_temp_derate_per_c` | **0.001 1/°C** | **0.003 1/°C** | Gate drive current at Tj=125°C overestimated by 2× |
-| `input.esr_per_cap` | **50 mΩ** | **80 mΩ** | Ripple voltage and cap count underestimated |
-| `boot.safety_margin` | **2.0×** | **1.5×** | Bootstrap cap oversized 33% unnecessarily |
-| `thermal.rth_sa` | **20 °C/W** | **10 °C/W** (forced air) | At 50W FET loss: ΔT error = 500°C |
+| Constant | Original Default | Action | Verdict | Impact |
+|----------|-----------------|--------|---------|--------|
+| `gate.bootstrap_vf` | 1.0 V | 🚫 **KEEP 1.0 V** | 1.0V is the worst-case value for integrated bootstrap diodes (IR2110/UCC27211 have ~0.7–1.0V internal diodes). 0.6V is only for external Schottky. Changing to 0.6V makes design LESS conservative. Description updated to clarify. | |
+| `waveform.driver_temp_derate_per_c` | 0.001 1/°C | ✅ **FIX → 0.003** | 0.1%/°C is too low. Datasheets show ~0.3%/°C. Fixed in Phase 1. | Gate drive current at Tj=125°C overestimated by 2× |
+| `input.esr_per_cap` | 50 mΩ | ✅ **FIX → 80 mΩ** | 80mΩ is more conservative (worst-case for electrolytic ESR). Fixed in Phase 1. | Ripple voltage and cap count underestimated |
+| `boot.safety_margin` | 2.0× | 🚫 **KEEP 2.0×** | 2.0× is MORE conservative. Reducing to 1.5× makes design LESS safe for worst-case analysis. Reverted in Phase 1. | |
+| `thermal.rth_sa` | 20 °C/W | ✅ **FIX → 10 °C/W** | Default changed — the cooling tier system in thermal.py handles the `natural` case correctly. 10°C/W is the base constant default. Fixed in Phase 1. | |
 
 ### Missing constants — add to `base.py`
 
@@ -507,18 +509,18 @@ DESIGN_CONSTANTS = {
 }
 ```
 
-### Fix existing defaults in `base.py`
+### Fix existing defaults in `base.py` (✅ done in Phase 1)
 
 ```python
-"gate.bootstrap_vf":                    (0.6,  "V",   ...),   # was 1.0
-"boot.safety_margin":                   (1.5,  "x",   ...),   # was 2.0
-"input.esr_per_cap":                    (80,   "mΩ",  ...),   # was 50
-"waveform.driver_temp_derate_per_c":    (0.003, "1/°C", ...),  # was 0.001
+"input.esr_per_cap":                    (80,   "mΩ",  ...),   # was 50  ✅
+"waveform.driver_temp_derate_per_c":    (0.003, "1/°C", ...),  # was 0.001  ✅
+# gate.bootstrap_vf kept at 1.0V — worst-case for integrated diodes  🚫 do not change
+# boot.safety_margin kept at 2.0× — more conservative for worst-case  🚫 do not change
 ```
 
-### Delete from `base.py`
+### ~~Delete from `base.py`~~  🚫 CANCELLED
 
-- **`adc.max_duty_cycle`** — confirmed dead constant. No module in `calc_engine.py` reads it. Remove from `base.py` and from `DesignConstantsModal` UI_META.
+- ~~**`adc.max_duty_cycle`**~~ — **NOT dead code**. `validation.py:172` calls `self._dc("adc.max_duty_cycle")` in `calc_adc_timing()`. Deleting it causes a `KeyError` crash. **Keep it.** (Was incorrectly marked as dead code in this plan.)
 
 ### Also questionable
 
@@ -616,7 +618,7 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 |---|------|----------|--------|--------|
 | DC_UI-1 | DesignConstantsModal.jsx: Add `UI_META` entries for all new constants from §14 — `snub.ring_q_factor`, `thermal.rds_alpha`, `gate.driver_derating_per_c`. Without entries, they show as raw key strings. | 🟡 | S | ⏳ |
 | DC_UI-2 | DesignConstantsModal.jsx: Add min/max bounds validation on number inputs — currently user can enter negative values for constants like `thermal.rth_sa` with no error. | 🟡 | S | ⏳ |
-| DC_UI-3 | base.py + DesignConstantsModal UI_META: Delete `adc.max_duty_cycle` — confirmed dead, no module reads it. Remove from backend and frontend. | 🟢 | S | ⏳ |
+| DC_UI-3 | ~~base.py + DesignConstantsModal UI_META: Delete `adc.max_duty_cycle`~~ — 🚫 **CANCELLED**: it IS used in `calc_adc_timing()` at `validation.py:172`. Keep it. Add UI_META entry for it instead. | 🟢 | S | ✅ |
 | DC_UI-4 | DesignConstantsModal.jsx: Add "affects:" annotation per constant row — tells user which module uses the constant (e.g. "affects: Snubber, Waveform"). | 🟢 | M | ⏳ |
 
 ---
@@ -637,33 +639,33 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 
 ## Fix Order
 
-### Phase 0 — Crash Bugs (do these before anything else)
+### Phase 0 — Crash Bugs ✅ COMPLETE (merged to main 2026-04-27)
 
-These can crash the live app. All are S effort (15–30 min each). Do before touching any calculation logic.
-
-| # | Item | File | Severity | Effort |
+| # | Item | File | Severity | Status |
 |---|------|------|----------|--------|
-| 0a | `None` values in `_make_table()` crash ReportLab — add `str(v) if v is not None else "—"` | `report_generator.py` | 🔴 | S |
-| 0b | `uvloDataBadgeInfo()` returns `undefined` for unknown status — `.label` access crashes | `CalculationsPanel.jsx` | 🔴 | S |
-| 0c | `convertUnit()` returns raw value for unsupported target unit — silently wrong in comparison table | `ComparisonPanel.jsx` | 🟡 | S |
-| 0d | Lazy-loaded panel failure shows "Loading panel…" forever — add error boundary with "Failed to load, refresh" | `App.jsx` | 🟢 | S |
+| 0a | `None` values in `_make_table()` crash ReportLab — stringify all cells, None → "—" | `report_generator.py` | 🔴 | ✅ |
+| 0b | `uvloDataBadgeInfo()` returns `undefined` for unknown status | `CalculationsPanel.jsx` | 🔴 | ✅ |
+| 0c | `convertUnit()` returns raw value for unsupported target unit | `ComparisonPanel.jsx` | 🟡 | ✅ |
+| 0d | Lazy-loaded panel failure shows "Loading panel…" forever | `App.jsx` | 🟢 | ✅ |
 
 ---
 
-### Phase 1 — Critical Correctness
+### Phase 1 — Critical Correctness (⏳ in progress — items 1–7, 9–10 done in worktree, pending PR)
 
-| # | Item | Ref | Effort |
-|---|------|-----|--------|
-| 1 | Audit and fix all DESIGN_CONSTANTS in `base.py`: fix 5 wrong defaults + add 3 missing constants + delete `adc.max_duty_cycle` | §14 + §DC_UI-3 | M |
-| 2 | Vds overshoot explicit warning in `waveform.py` | §13-8 + §WAVE-4 | S |
-| 3 | Snubber response time check — add `3τ < T/2` validation in `calc_snubber()` | §13-7 | S |
-| 4 | Tj convergence criterion — replace fixed-5-iteration loop | §13-1 | S |
-| 5 | Dead time — compute both turn-on and turn-off paths, take max | §13-2 | S |
-| 6 | Fallback warnings — backend adds `_meta.fallbacks_used` to all module outputs | §2a | M |
-| 7 | Fallback warnings — frontend renders amber badges in CalculationsPanel | §2b | M |
-| 8 | Motor Compatibility feature — backend `motor_compat.py` + new sidebar tab | §COMPAT | L |
-| 9 | Update DC_UI_META for new constants (ring Q, Rds alpha, driver derating) | §DC_UI-1 | S |
-| 10 | DC_UI input bounds validation | §DC_UI-2 | S |
+> **Audit correction applied**: Items 1 and DC_UI-3 were revised after external review — `bootstrap_vf` and `boot.safety_margin` reverted to original (more conservative) values; `adc.max_duty_cycle` restored (NOT dead code). See §14 notes.
+
+| # | Item | Ref | Effort | Status |
+|---|------|-----|--------|--------|
+| 1 | Fix DESIGN_CONSTANTS in `base.py`: fix 2 wrong defaults + add 3 missing constants + restore `adc.max_duty_cycle` + revert 2 wrong "fixes". Wire `thermal.rds_alpha` → `mosfet.py`, `snub.ring_q_factor` → `waveform.py`, `input.spwm_mod_index` → `mosfet.py` | §14 | M | ✅ |
+| 2 | Vds overshoot explicit warning in `waveform.py` | §13-8 + §WAVE-4 | S | ✅ |
+| 3 | Snubber response time — `3τ < T/2` check + `τ < t_rise` spike absorption check | §13-7 | S | ✅ |
+| 4 | Tj convergence: range(5)→range(20) + 0.1°C break + for-else thermal runaway warning | §13-1 | S | ✅ |
+| 5 | Dead time — compute both turn-on and turn-off paths, take max | §13-2 | S | ✅ |
+| 6 | Fallback transparency — backend `_meta.fallbacks` with `message` field on every fallback | §2a | M | ✅ |
+| 7 | Fallback transparency — frontend amber `⚠ N FB` badge with tooltip in CalculationsPanel | §2b | M | ✅ |
+| 8 | Motor Compatibility feature — backend `motor_compat.py` + new sidebar tab | §COMPAT | L | ⏳ |
+| 9 | Update `UI_META` for new constants + add ADC Timing category + `adc.max_duty_cycle` | §DC_UI-1 | S | ✅ |
+| 10 | DC_UI input bounds — `min`/`max` HTML attrs + `onBlur` clamp on all inputs | §DC_UI-2 | S | ✅ |
 
 **Dependency notes**:
 - Item 6 → must complete before → Item 7
@@ -704,6 +706,9 @@ These can crash the live app. All are S effort (15–30 min each). Do before tou
 | 30 | Derating curves module | §15 | M |
 | 31 | Multi-cycle ringing superposition (frontend) | §13-6 | M |
 | 32 | API key UX improvements (status, estimate, health check) | §16c | M |
+| 33 | **Worst-case V_peak calculator** — combine nominal Vbus + inductive overshoot (from snubber) + regen braking back-EMF overshoot + 10% supply transient constant. Validate that system `v_peak` covers actual worst case. | §MISSING-1 | M |
+| 34 | **Worst-case stall current** — output `i_stall = v_bus / Rph` and `i_fault = v_bus / (2×Rds_hot)`. Warn if `max_phase_current` is set below stall current. | §MISSING-2 | S |
+| 35 | **Multi-operating-point thermal sweep** — calculate Tj at [stall, 25%, 50%, rated, max speed]. Worst thermal often at stall (zero back-EMF, max current, no motor cooling). | §MISSING-3 | L |
 
 ---
 
@@ -736,28 +741,30 @@ These can crash the live app. All are S effort (15–30 min each). Do before tou
 
 | Category | Issues | Critical | Medium | Low | Status |
 |----------|--------|----------|--------|-----|--------|
-| Crash bugs (Phase 0) | 4 | 2 | 1 | 1 | ⏳ Pending |
-| Formula correctness | 8 | 2 | 5 | 1 | ⏳ Pending |
-| Wrong DC defaults | 5 | 3 | 2 | 0 | ⏳ Pending |
-| Missing DC constants | 3 | 2 | 1 | 0 | ⏳ Pending |
-| Missing modules | 7 | 3 | 3 | 1 | ⏳ Pending |
-| Motor compat feature | 5 | 0 | 4 | 1 | ⏳ Pending |
-| Hardcoded fallbacks | 21 | 12 | 7 | 2 | ⏳ Pending |
+| Crash bugs (Phase 0) | 4 | 2 | 1 | 1 | ✅ All done (merged main 2026-04-27) |
+| Formula correctness | 8 | 2 | 5 | 1 | ✅ 7 done (Phase 1) · ⏳ 1 pending (13-6) |
+| Wrong DC defaults | 5 | 3 | 2 | 0 | ✅ 2 fixed · 🚫 2 reverted (audit) · ✅ 1 fixed |
+| Missing DC constants | 3 | 2 | 1 | 0 | ✅ All 3 added (Phase 1) |
+| Missing modules | 7 | 3 | 3 | 1 | ⏳ Pending (Phase 2–3) |
+| Motor compat feature | 5 | 0 | 4 | 1 | ⏳ Pending (Phase 1 item 8) |
+| Hardcoded fallbacks | 21 | 12 | 7 | 2 | ✅ Transparency system done (Phase 1) |
 | Display / report gaps | 10 | 0 | 5 | 5 | ⏳ Pending |
 | API key management | 19 | 2 | 6 | 8 | ✅ 16 done · ⏳ 3 pending · 🚫 3 skipped |
 | SPICE export | 4 | 0 | 2 | 2 | ⏳ Pending |
-| Design constants UI | 4 | 0 | 2 | 2 | ⏳ Pending |
-| Waveform specific | 4 | 1 | 2 | 1 | ⏳ Pending |
+| Design constants UI | 4 | 0 | 2 | 2 | ✅ 3 done (Phase 1) · ⏳ 1 pending (DC_UI-4) |
+| Waveform specific | 4 | 1 | 2 | 1 | ✅ 2 done (WAVE-3, WAVE-4) · ⏳ 2 pending |
+| Worst-case analysis (new) | 3 | 0 | 3 | 0 | ⏳ Pending (Phase 3, items 33–35) |
 | ESSENTIAL_IDS (§9) | 6 | — | — | — | ✅ Resolved at prompt level (v14-gemini) |
 | SPICE export UI | 1 | — | — | — | ✅ Done (button in ReportPanel) |
 | Design constants UI | 1 | — | — | — | ✅ Done (DesignConstantsModal) |
-| **Total remaining** | **75** | **27** | **40** | **24** | |
 
-### Completion as of 2026-04-27
-- ✅ **18 items completed** (16 API/error handling + SPICE UI + Design Constants UI)
-- ✅ **§9 resolved** at prompt level — 6 params now ESSENTIAL in v14-gemini
-- 🚫 **3 items decided not to implement** (429 distinction, comparison stop, Pass 2 toggle)
-- ⏳ **75 items remaining** across phases 0–3
+### Completion as of 2026-04-27 (post-audit)
+- ✅ **Phase 0 complete** — 4 crash bugs merged to main
+- ✅ **Phase 1 items 1–7, 9–10 done** — in `phase1-correctness` worktree, pending PR
+- ⏳ **Phase 1 item 8** — Motor Compatibility (§COMPAT), large feature, own session
+- 🚫 **4 items decided not to implement** (429 distinction, comparison stop, Pass 2 toggle, delete adc.max_duty_cycle)
+- ✅ **Audit corrections applied** — `bootstrap_vf` and `boot.safety_margin` reverted to conservative defaults; `adc.max_duty_cycle` restored
+- ⏳ **Phase 2–3 remaining** — ~60 items including 3 new worst-case analysis features (items 33–35)
 
 ---
 
