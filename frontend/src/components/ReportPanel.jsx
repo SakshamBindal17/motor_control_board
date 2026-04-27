@@ -61,7 +61,8 @@ export default function ReportPanel() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'mc_halfbridge.cir'
+      const safeName = (project.name || 'mc').replace(/[^a-z0-9_-]/gi, '_').toLowerCase()
+      a.download = `${safeName}_halfbridge.cir`
       a.click()
       URL.revokeObjectURL(url)
       toast.success('SPICE netlist downloaded!', { id: 'report' })
@@ -72,8 +73,10 @@ export default function ReportPanel() {
     }
   }
 
-  const hasCalc    = !!project.calculations
-  const doneBlocks = ['mcu','driver','mosfet'].filter(k => project.blocks[k]?.status === 'done')
+  const hasCalc     = !!project.calculations
+  const doneBlocks  = ['mcu','driver','mosfet'].filter(k => project.blocks[k]?.status === 'done')
+  const motorSpecs  = project.blocks.motor?.specs || {}
+  const hasMotor    = !!(motorSpecs.rph_mohm && motorSpecs.lph_uh)
 
   // Overlay + modal box — same pattern as SettingsModal
   const overlay = {
@@ -126,9 +129,8 @@ export default function ReportPanel() {
               value={`${doneBlocks.length}/3 (${doneBlocks.join(', ') || 'none'})`} />
             <StatusLine label="Calculations complete" ok={hasCalc}
               value={hasCalc ? 'Yes' : 'Not yet'} />
-            <StatusLine label="Motor specs entered"
-              ok={!!project.blocks.motor.specs?.max_speed_rpm}
-              value="Manual entry" />
+            <StatusLine label="Motor specs entered" ok={hasMotor}
+              value={hasMotor ? 'Entered' : 'Not entered — SPICE uses defaults'} />
           </div>
 
           {/* Warning if no calcs */}
@@ -142,6 +144,18 @@ export default function ReportPanel() {
             </div>
           )}
 
+          {/* SPICE-1: amber warning when motor form empty */}
+          {!hasMotor && (
+            <div style={{
+              padding: '8px 12px', borderRadius: 7, fontSize: 11, lineHeight: 1.5,
+              background: 'rgba(251,191,36,.08)', color: 'var(--amber)',
+              border: '1px solid rgba(251,191,36,.25)',
+            }}>
+              Motor specs not entered — SPICE load model uses defaults (50 mΩ / 100 µH).
+              Enter motor specs in the Motor tab for an accurate netlist.
+            </div>
+          )}
+
           {/* Export cards */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <ExportCard icon={<FileText size={20}/>} title="PDF Design Report"
@@ -151,7 +165,7 @@ export default function ReportPanel() {
               desc="Bill of Materials with component values, quantities, and all calculation results"
               color="#22c55e" loading={loading === 'excel'} onClick={() => download('excel')} />
             <ExportCard icon={<Cpu size={20}/>} title="SPICE Netlist (.cir)"
-              desc="Half-bridge ngspice netlist with gate drive, bootstrap, snubber, bus caps — ready for simulation"
+              desc="Half-bridge ngspice netlist — ready for ngspice. LTspice users: replace .model NMOS Level=1 with vendor SPICE model."
               color="#bb86fc" loading={loading === 'spice'} onClick={downloadSpiceNetlist} />
           </div>
         </div>
