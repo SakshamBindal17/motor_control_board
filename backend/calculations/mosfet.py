@@ -538,40 +538,6 @@ class MosfetMixin:
             else:
                 self.audit_log.append(f"[MOSFET Rating] Avalanche Ias={ias_val:.1f}A vs I_max={self.i_max}A — OK ({av_margin_pct:.0f}% margin).")
 
-        # ── SOA (Safe Operating Area) Check ──────────────────────────────────
-        # During switching, MOSFET must stay within its SOA boundary.
-        # SOA limit: at Vds_max, the safe pulse duration is typically ≤ 1 µs.
-        # Compare total switching time (tr + tf) against this boundary.
-        tr_s  = self._get(self.mosfet, "MOSFET", "tr",  None)   # s
-        tf_s  = self._get(self.mosfet, "MOSFET", "tf",  None)   # s
-        # Pull actual circuit switching times if gate_resistors already computed
-        gate_res = self._cached_results.get("gate_resistors", {})
-        if gate_res:
-            tr_s = gate_res.get("hs_gate_rise_time_ns", gate_res.get("gate_rise_time_ns",  (tr_s or 30e-9) * 1e9)) * 1e-9
-            tf_s = gate_res.get("hs_gate_fall_time_ns", gate_res.get("gate_fall_time_ns", (tf_s or 20e-9) * 1e9)) * 1e-9
-
-        if tr_s is not None and tf_s is not None:
-            t_switch_ns = (tr_s + tf_s) * 1e9
-            # SOA boundary: 1 µs at Vds_max is a common hard limit for Si MOSFETs.
-            # At lower voltages the limit is higher — this is conservative.
-            soa_limit_us = 1.0
-            soa_pass = t_switch_ns <= (soa_limit_us * 1000)
-            results["t_switch_total_ns"] = round(t_switch_ns, 1)
-            results["soa_limit_us"]      = soa_limit_us
-            results["soa_pass"]          = soa_pass
-            if not soa_pass:
-                warnings.append(
-                    f"WARNING: Total switching time ({t_switch_ns:.0f}ns) exceeds SOA limit "
-                    f"({soa_limit_us:.0f}µs). Verify MOSFET SOA curve at (Vds={self.v_peak}V, "
-                    f"Id={self.i_max}A). Increase gate drive current or reduce Rg_on."
-                )
-                self.audit_log.append(f"[MOSFET Rating] SOA WARNING: t_switch={t_switch_ns:.0f}ns > {soa_limit_us:.0f}µs limit.")
-            else:
-                self.audit_log.append(f"[MOSFET Rating] SOA OK: t_switch={t_switch_ns:.0f}ns < {soa_limit_us:.0f}µs.")
-        else:
-            results["soa_pass"] = None
-            self.audit_log.append("[MOSFET Rating] SOA check skipped — tr/tf not extracted.")
-
         results["warnings"] = warnings
         results["_meta"] = self._module_meta.get("mosfet_rating_check", {"hardcoded": [], "fallbacks": []})
         return results
