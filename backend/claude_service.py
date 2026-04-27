@@ -17,6 +17,7 @@ from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 from json_repair import repair_json
+from calc_engine import CALC_DEPS
 
 # ─── In-flight dedup ─────────────────────────────────────────────────────────
 # Prevents duplicate API calls when the same PDF is uploaded concurrently
@@ -28,7 +29,7 @@ _inflight: dict[str, asyncio.Event] = {}  # key → Event (set when done)
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 
 # Bump this string whenever prompts change — forces cache re-extraction automatically
-PROMPT_VERSION = "v12-gemini"
+PROMPT_VERSION = "v14-gemini"
 
 def _cache_path(block_type: str, pdf_hash: str) -> str:
     folder = os.path.join(CACHE_DIR, block_type)
@@ -50,9 +51,13 @@ def _save_cache(block_type: str, pdf_hash: str, data: dict):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(clean, f, indent=2)
 
-def _pdf_hash(pdf_bytes: bytes) -> str:
-    # Include PROMPT_VERSION in hash so any prompt change invalidates old cache entries
-    versioned = pdf_bytes + PROMPT_VERSION.encode()
+def _pdf_hash(pdf_bytes: bytes, block_type: str) -> str:
+    # Include PROMPT_VERSION so prompt changes invalidate cache.
+    # Include a stable hash of CALC_DEPS[block_type] so adding a new calc formula
+    # that depends on a new param automatically invalidates cache for that block.
+    deps_stable = json.dumps(sorted(CALC_DEPS.get(block_type, [])), sort_keys=True).encode()
+    deps_hash = hashlib.sha256(deps_stable).hexdigest()[:12]
+    versioned = pdf_bytes + PROMPT_VERSION.encode() + deps_hash.encode()
     return hashlib.sha256(versioned).hexdigest()
 
 
@@ -75,6 +80,13 @@ CRITICAL RULES:
 8. ESCAPE ALL QUOTES: If you include a quote inside a string value (like a note), you MUST escape it (e.g. \"See \\"Notes\\"\"). Never use unescaped double quotes.
 9. NO TRAILING COMMAS: Ensure the JSON is strictly valid, with no trailing commas before } or ].
 10. CONDITION OBJECTS ONLY: A condition object may only have these keys: condition_text, note, min, typ, max, unit. Never add "id", "name", or any other key inside a condition object. Infineon-specific rows like Qg_sync, Qg_th, or any sub-variant parameter that does NOT match an id in the list below must be OMITTED entirely.
+11. TABLE COLUMN FIDELITY: Map each numeric value to the EXACT column it appears in the datasheet table (Min / Typ / Max). If the "Typ" column cell is blank or a dash for a row, set "typ" to null — do NOT substitute a Min-column value into "typ". If only a single value exists in a row with no column header context, place it in "max" for absolute maximum ratings, or "typ" for typical operating specs where the column is explicitly labelled typical.
+12. ZERO INFERENCE: Every numeric value you output MUST appear literally in the datasheet (in a table cell, specification line, or explicitly stated value). Do NOT calculate, estimate, or infer missing values. Do NOT use one parameter as a substitute for another (e.g. do not use tj_max as a thermal_shutdown threshold, do not use VCC_max as an OVP threshold). If a protection parameter (thermal_shutdown, OCP, OVP, etc.) has no dedicated threshold row in the datasheet, omit that parameter entirely — do not create an entry using a related operating limit.
+13. EXHAUSTIVE CONDITIONS: When a parameter appears in multiple rows of a table (different test conditions, supply voltages, temperatures, load values, or operating modes), you MUST capture EVERY row as a separate condition entry. Scan the complete relevant table section before moving to the next parameter — do not stop after finding the first matching row.
+14. ABSENCE HANDLING: If a parameter is absent from the datasheet, omit it entirely — do NOT create an entry with null values, zero as a placeholder, or any inferred substitute. Only output 0 when the datasheet explicitly specifies zero as the measured or rated value. If you find yourself writing a note containing phrases like "not explicitly documented", "no threshold specified", "not tested in production", or "assumed to be" — that is a signal to omit the entire parameter, not include it with that note.
+15. QUALIFIER COUNT ACCURACY: For any parameter that counts peripherals or features with a capability qualifier (e.g. "motor-control capable timers", "timers with dead-time generation", "complementary output pairs", "channels with fault shutdown"), only count items that EXPLICITLY satisfy all stated criteria in the datasheet. Do not count items that partially match or are assumed to match based on general knowledge about the vendor or product family. When in doubt, report 0 and let the user override.
+16. DATA FIDELITY: Write condition_text in compact notation — Symbol=ValueUnit pairs separated by commas (e.g. VGS=10V, ID=75A, TC=25°C). No spaces around =. Use the datasheet's own symbols, not spelled-out names. Preserve exact numeric precision as printed in the datasheet — do not round, truncate, or reformat numeric values.
+17. PART / GRADE VARIANTS: When a parameter differs by part number suffix, temperature grade, speed grade, voltage grade, or package variant, extract each variant as a separate condition entry with the distinguishing factor stated in condition_text (e.g. "C suffix, TA=-40 to 85°C", "V suffix, TA=-40 to 105°C", "M suffix, TA=-40 to 125°C"). Do not merge multiple grade variants into a single combined min/max span.
 
 JSON FORMAT:
 {
@@ -235,6 +247,13 @@ CRITICAL RULES:
 8. ESCAPE ALL QUOTES: If you include a quote inside a string value (like a note), you MUST escape it (e.g. \"See \\"Notes\\"\"). Never use unescaped double quotes.
 9. NO TRAILING COMMAS: Ensure the JSON is strictly valid, with no trailing commas before } or ].
 10. HIGH-SIDE / LOW-SIDE SPLIT: For any parameter specified separately for high-side (HO/HI) and low-side (LO/LI) outputs — including io_source, io_sink, prop_delay_on, prop_delay_off, vil, vih, rise_time_out, fall_time_out — extract EACH as a SEPARATE condition entry. Do NOT merge them into one condition. Put the output channel in condition_text (e.g. "Low-side output, VLO=0V" and "High-side output, VHO=0V").
+11. TABLE COLUMN FIDELITY: Map each numeric value to the EXACT column it appears in the datasheet table (Min / Typ / Max). If the "Typ" column cell is blank or a dash for a row, set "typ" to null — do NOT substitute a Min-column value into "typ". If only a single value exists in a row with no column header context, place it in "max" for absolute maximum ratings, or "typ" for typical operating specs where the column is explicitly labelled typical.
+12. ZERO INFERENCE: Every numeric value you output MUST appear literally in the datasheet (in a table cell, specification line, or explicitly stated value). Do NOT calculate, estimate, or infer missing values. Do NOT use one parameter as a substitute for another (e.g. do not use tj_max as a thermal_shutdown threshold, do not use VCC_max as an OVP threshold). If a protection parameter (thermal_shutdown, OCP, OVP, etc.) has no dedicated threshold row in the datasheet, omit that parameter entirely — do not create an entry using a related operating limit.
+13. EXHAUSTIVE CONDITIONS: When a parameter appears in multiple rows of a table (different test conditions, supply voltages, temperatures, load values, or operating modes), you MUST capture EVERY row as a separate condition entry. Scan the complete relevant table section before moving to the next parameter — do not stop after finding the first matching row.
+14. ABSENCE HANDLING: If a parameter is absent from the datasheet, omit it entirely — do NOT create an entry with null values, zero as a placeholder, or any inferred substitute. Only output 0 when the datasheet explicitly specifies zero as the measured or rated value. If you find yourself writing a note containing phrases like "not explicitly documented", "no threshold specified", "not tested in production", or "assumed to be" — that is a signal to omit the entire parameter, not include it with that note.
+15. QUALIFIER COUNT ACCURACY: For any parameter that counts peripherals or features with a capability qualifier (e.g. "motor-control capable timers", "timers with dead-time generation", "complementary output pairs", "channels with fault shutdown"), only count items that EXPLICITLY satisfy all stated criteria in the datasheet. Do not count items that partially match or are assumed to match based on general knowledge about the vendor or product family. When in doubt, report 0 and let the user override.
+16. DATA FIDELITY: Write condition_text in compact notation — Symbol=ValueUnit pairs separated by commas (e.g. VCC=12V, CLOAD=1000pF, TA=25°C). No spaces around =. Use the datasheet's own symbols, not spelled-out names. Preserve exact numeric precision as printed in the datasheet — do not round, truncate, or reformat numeric values.
+17. PART / GRADE VARIANTS: When a parameter differs by part number suffix, temperature grade, speed grade, voltage grade, or package variant, extract each variant as a separate condition entry with the distinguishing factor stated in condition_text (e.g. "C suffix, TA=-40 to 85°C", "V suffix, TA=-40 to 105°C", "M suffix, TA=-40 to 125°C"). Do not merge multiple grade variants into a single combined min/max span.
 
 JSON FORMAT:
 {
@@ -375,6 +394,13 @@ CRITICAL RULES:
 7. GOOD-TO-HAVE parameters: extract only if present — omit entirely if not found, do NOT invent values
 8. ESCAPE ALL QUOTES: If you include a quote inside a string value (like a note), you MUST escape it (e.g. \"See \\"Notes\\"\"). Never use unescaped double quotes.
 9. NO TRAILING COMMAS: Ensure the JSON is strictly valid, with no trailing commas before } or ].
+10. TABLE COLUMN FIDELITY: Map each numeric value to the EXACT column it appears in the datasheet table (Min / Typ / Max). If the "Typ" column cell is blank or a dash for a row, set "typ" to null — do NOT substitute a Min-column value into "typ". If only a single value exists in a row with no column header context, place it in "max" for absolute maximum ratings, or "typ" for typical operating specs where the column is explicitly labelled typical.
+11. ZERO INFERENCE: Every numeric value you output MUST appear literally in the datasheet (in a table cell, specification line, or explicitly stated value). Do NOT calculate, estimate, or infer missing values. Do NOT use one parameter as a substitute for another. If a parameter has no dedicated row in the datasheet, omit it entirely — do not create an entry using a related operating limit or general knowledge.
+12. EXHAUSTIVE CONDITIONS: When a parameter appears in multiple rows of a table (different test conditions, supply voltages, temperatures, load values, or operating modes), you MUST capture EVERY row as a separate condition entry. Scan the complete relevant table section before moving to the next parameter — do not stop after finding the first matching row.
+13. ABSENCE HANDLING: If a parameter is absent from the datasheet, omit it entirely — do NOT create an entry with null values, zero as a placeholder, or any inferred substitute. Only output 0 when the datasheet explicitly specifies zero as the measured or rated value. If you find yourself writing a note containing phrases like "not explicitly documented", "no threshold specified", "not tested in production", or "assumed to be" — that is a signal to omit the entire parameter, not include it with that note.
+14. QUALIFIER COUNT ACCURACY: For any parameter that counts peripherals or features with a capability qualifier (e.g. "motor-control capable timers", "timers with dead-time generation", "complementary output pairs"), only count items that EXPLICITLY satisfy all stated criteria in the datasheet. Do not count items that partially match or are assumed to match based on general knowledge about the vendor or product family. When in doubt, report 0 and let the user override.
+15. DATA FIDELITY: Write condition_text in compact notation — Symbol=ValueUnit pairs separated by commas (e.g. fCPU=40MHz, VDD=5V, TA=25°C). No spaces around =. Use the datasheet's own symbols, not spelled-out names. Preserve exact numeric precision as printed in the datasheet — do not round, truncate, or reformat numeric values.
+16. PART / GRADE VARIANTS: When a parameter differs by part number suffix, temperature grade, speed grade, voltage grade, or package variant, extract each variant as a separate condition entry with the distinguishing factor stated in condition_text (e.g. "C suffix, TA=-40 to 85°C", "V suffix, TA=-40 to 105°C", "M suffix, TA=-40 to 125°C"). Do not merge multiple grade variants into a single combined min/max span.
 
 JSON FORMAT:
 {
@@ -426,6 +452,7 @@ id="adc_sample_rate"
 id="pwm_timers"
   Name: Number of Advanced-Control PWM Timers (motor control capable)
   Aliases: Advanced-control timers · Motor control timers · Advanced timers · TIM1 · TIM8 · Advanced PWM timer count · Number of advanced timers · Advanced-control timer count
+  Note: Count ONLY timers that the datasheet EXPLICITLY documents as having ALL THREE of: (1) a hardware dead-time generation register, (2) complementary output pairs (e.g. CHxN on STM32, FTM complementary mode on Kinetis, MCPWM on ESP32), AND (3) a fault/break shutdown input. Standard TPM modules, basic GPT timers, TIM2–TIM5 class general-purpose timers, and any timer described only as "PWM" or "capture/compare" do NOT qualify — report 0 for those. If none qualify, report 0.
 
 id="pwm_resolution"
   Name: PWM Timer Counter Resolution
@@ -499,14 +526,37 @@ id="dma_channels"
   Aliases: DMA · Direct memory access channels · DMA channels · DMA streams · DMA request count · DMA channel count"""
 
 
-# ─── Essential param IDs per block (mirrors ESSENTIAL_PARAMS in BlockPanel.jsx) ─
-ESSENTIAL_IDS = {
-    "mosfet": {"vds_max","id_cont","rds_on","vgs_th","qg","qgd","qgs",
-               "qrr","trr","coss","td_on","tr","td_off","tf","rth_jc","tj_max","body_diode_vf"},
-    "driver": {"vcc_range","vcc_uvlo","vbs_max","vbs_uvlo","io_source","io_sink",
-               "prop_delay_on","prop_delay_off","vil","vih","rth_ja","tj_max"},
-    "mcu":    {"cpu_freq_max","adc_resolution","adc_channels","adc_sample_rate",
-               "pwm_timers","pwm_resolution","complementary_outputs","vdd_range"},
+# ─── All param IDs per block — used to detect what Pass 1 missed for Pass 2 ──
+# Includes every id defined in the prompts (essential + good-to-have).
+# The UI decides how to classify each param; the backend just tries to get them all.
+ALL_PARAM_IDS = {
+    "mosfet": {
+        # essential
+        "vds_max","id_cont","rds_on","vgs_th","qg","qgd","qgs",
+        "qrr","trr","coss","td_on","tr","td_off","tf",
+        "rth_jc","rth_ja","tj_max","body_diode_vf",
+        "vgs_max","ciss","rg_int","qoss","avalanche_energy","avalanche_current",
+        # good-to-have
+        "id_pulsed","crss","vgs_plateau",
+    },
+    "driver": {
+        # essential
+        "vcc_range","vcc_uvlo","vbs_max","vbs_uvlo","io_source","io_sink",
+        "prop_delay_on","prop_delay_off","deadtime_min","deadtime_default",
+        "vil","vih","rth_ja","tj_max",
+        "current_sense_gain","rise_time_out","fall_time_out",
+        # good-to-have
+        "ocp_threshold","ocp_response","thermal_shutdown","idd_quiescent",
+    },
+    "mcu": {
+        # essential
+        "cpu_freq_max","adc_resolution","adc_channels","adc_sample_rate",
+        "pwm_timers","pwm_resolution","pwm_deadtime_res","pwm_deadtime_max",
+        "complementary_outputs","vdd_range","adc_ref",
+        # good-to-have
+        "flash_size","ram_size","spi_count","uart_count","idd_run",
+        "temp_range","gpio_count","encoder_interface","can_count","dma_channels",
+    },
 }
 
 # ─── Unit alias normalisation ─────────────────────────────────────────────────
@@ -632,27 +682,89 @@ def _parse_raw(raw: str) -> dict:
     return result
 
 
-def _build_targeted_prompt(block_type: str, missing_ids: set[str]) -> str:
+# ─── Confidence check ────────────────────────────────────────────────────────
+# Params where 0 is a legitimate extracted value (not a hallucination/placeholder)
+_ZERO_OK_PARAMS = {"pwm_timers", "complementary_outputs", "pwm_deadtime_res", "pwm_deadtime_max"}
+
+# Phrases in a note field that signal the model fabricated rather than found the value
+_SUSPICIOUS_NOTE_PHRASES = (
+    "not explicitly documented",
+    "no threshold specified",
+    "not tested in production",
+    "not tested",
+    "assumed to be",
+    "assumed",
+    "not explicitly",
+    "no explicit",
+)
+
+
+def _confidence_check(block_type: str, params: list) -> set[str]:
+    """Return set of calc-critical param IDs whose extracted data looks unreliable.
+
+    Criteria (any one triggers low confidence for that param):
+      1. Only a single non-null value across min/typ/max — likely a column-mapping error.
+      2. Note field contains language the model uses when fabricating rather than reading.
+      3. A numeric calc-critical param was extracted as exactly 0 when 0 is not valid.
+    """
+    calc_critical = CALC_DEPS.get(block_type, set())
+    param_map = {p["id"]: p for p in params if p.get("id") in calc_critical}
+    low_conf: set[str] = set()
+
+    for pid, param in param_map.items():
+        for cond in param.get("conditions", []):
+            # Criterion 1: exactly one of min/typ/max populated
+            populated = sum(1 for k in ("min", "typ", "max") if cond.get(k) is not None)
+            if populated == 1:
+                low_conf.add(pid)
+                break
+
+            # Criterion 2: suspicious note language
+            note = (cond.get("note") or "").lower()
+            if any(phrase in note for phrase in _SUSPICIOUS_NOTE_PHRASES):
+                low_conf.add(pid)
+                break
+
+            # Criterion 3: zero value for a param where zero is not valid
+            if pid not in _ZERO_OK_PARAMS:
+                val = cond.get("typ") if cond.get("typ") is not None else cond.get("max")
+                if val is None:
+                    val = cond.get("min")
+                if val == 0:
+                    low_conf.add(pid)
+                    break
+
+    return low_conf
+
+
+def _build_targeted_prompt(block_type: str, target_ids: set[str]) -> str:
     lines = [
-        "You are a power electronics engineer re-scanning a datasheet.",
-        "The PREVIOUS extraction missed the parameters listed below.",
-        "Extract ONLY these specific parameters — nothing else.",
-        "Return ONLY valid JSON in this exact format (no markdown, no preamble):",
+        "You are a power electronics engineer performing a VERIFICATION PASS on a datasheet.",
+        "Re-extract the parameters listed below INDEPENDENTLY.",
+        "Do NOT carry over or assume values from any prior extraction — read the datasheet fresh.",
+        "Some parameters may have been extracted before (re-verification); others may be new.",
+        "In all cases: locate the actual value in the datasheet and report exactly what is there.",
         "",
+        "Return ONLY valid JSON in this exact format (no markdown, no preamble):",
         '{"parameters": [{"id": "exact_id", "name": "name", "symbol": "sym", "category": "cat",',
         '  "conditions": [{"condition_text": "...", "note": null,',
         '    "min": null, "typ": null, "max": null, "unit": "unit"}]}]}',
         "",
-        "PARAMETERS TO FIND:",
+        "CRITICAL RULES:",
+        "- Use the exact id strings listed below.",
+        "- Capture ALL conditions (all table rows) for each parameter.",
+        "- TABLE COLUMN FIDELITY: Map each value to its exact Min/Typ/Max column.",
+        "  If the Typ cell is blank or a dash, set typ to null — never put a Min-column value into typ.",
+        "- ZERO INFERENCE: Every value must appear literally in the datasheet.",
+        "  Do not fabricate, estimate, or use one param as a proxy for another.",
+        "- ABSENCE HANDLING: If a parameter is genuinely absent, omit it entirely.",
+        "  Do NOT emit it with null values or a note saying 'not documented'.",
+        "",
+        "PARAMETERS TO FIND OR RE-VERIFY:",
     ]
-    for pid in sorted(missing_ids):
+    for pid in sorted(target_ids):
         aliases = _PARAM_ALIASES.get(pid, pid)
         lines.append(f'  id="{pid}"  Aliases: {aliases}')
-    lines += [
-        "",
-        "CRITICAL: Use the exact id strings above. Include ALL conditions from the datasheet.",
-        "If a parameter is genuinely not in the datasheet, omit it — do NOT invent values.",
-    ]
     return "\n".join(lines)
 
 
@@ -669,7 +781,7 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
         raise ValueError("No valid API key provided")
 
     # Check cache first
-    pdf_hash = _pdf_hash(pdf_bytes)
+    pdf_hash = _pdf_hash(pdf_bytes, block_type)
     cached = _load_cache(block_type, pdf_hash)
     if cached:
         return cached
@@ -792,18 +904,41 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
                 if data is None:
                     raise last_error or RuntimeError("All API keys exhausted on Pass 1")
 
-                # ── Pass 2: independent key rotation ─────────────────────
-                # Starts from the key that succeeded in Pass 1, rotates forward on 429.
+                # ── Pass 2: verification + recovery ──────────────────────
+                # Triggers when:
+                #   (a) any param from ALL_PARAM_IDS is missing, OR
+                #   (b) any calc-critical param shows low-confidence signals
+                # Targets: ALL missing params + entire CALC_DEPS set (always re-verified).
+                # Merge rule: Pass 2 answer overwrites Pass 1 for calc-critical params
+                #             (independent blind read); for newly found missing params, appends.
 
                 extracted_ids = {p["id"] for p in data.get("parameters", [])}
-                missing = ESSENTIAL_IDS.get(block_type, set()) - extracted_ids
+                missing = ALL_PARAM_IDS.get(block_type, set()) - extracted_ids
+                low_conf_ids = _confidence_check(block_type, data.get("parameters", []))
+                calc_deps = CALC_DEPS.get(block_type, set())
 
-                if missing:
-                    _log.warning(
-                        "[%s] Pass 1 missing %d param(s): %s — running Pass 2",
-                        block_type, len(missing), sorted(missing),
-                    )
-                    targeted_prompt = _build_targeted_prompt(block_type, missing)
+                should_run_pass2 = bool(missing) or bool(low_conf_ids)
+
+                if should_run_pass2:
+                    pass2_targets = missing | calc_deps
+
+                    if missing and low_conf_ids:
+                        _log.warning(
+                            "[%s] Pass 2: %d missing %s + low confidence on %s — rechecking",
+                            block_type, len(missing), sorted(missing), sorted(low_conf_ids),
+                        )
+                    elif missing:
+                        _log.warning(
+                            "[%s] Pass 2: %d missing %s + re-verifying %d calc-critical param(s)",
+                            block_type, len(missing), sorted(missing), len(calc_deps),
+                        )
+                    else:
+                        _log.warning(
+                            "[%s] Pass 2: low confidence on %s — re-verifying calc-critical params",
+                            block_type, sorted(low_conf_ids),
+                        )
+
+                    targeted_prompt = _build_targeted_prompt(block_type, pass2_targets)
                     pass2_done = False
 
                     for key_idx in range(pass1_key_idx, len(api_keys)):
@@ -813,17 +948,34 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
                             client2, uf2 = _upload(api_keys[key_idx])
                             raw2 = _generate(client2, uf2, targeted_prompt, label)
                             data2 = _parse_raw(raw2)
-                            existing_ids = {p["id"] for p in data["parameters"]}
-                            recovered = []
-                            for param in data2.get("parameters", []):
-                                if param["id"] not in existing_ids:
+
+                            pass2_param_map = {p["id"]: p for p in data2.get("parameters", [])}
+                            overwritten, recovered = [], []
+
+                            for pid, param in pass2_param_map.items():
+                                if pid in calc_deps:
+                                    # Overwrite Pass 1 answer with independent Pass 2 read
+                                    data["parameters"] = [
+                                        p for p in data["parameters"] if p["id"] != pid
+                                    ]
                                     data["parameters"].append(param)
-                                    recovered.append(param["id"])
+                                    overwritten.append(pid)
+                                elif pid not in extracted_ids:
+                                    # Newly recovered missing param — just append
+                                    data["parameters"].append(param)
+                                    recovered.append(pid)
+
+                            if overwritten:
+                                _log.info(
+                                    "[%s] Pass 2 overwrote calc-critical: %s (key %d/%d)",
+                                    block_type, sorted(overwritten), key_idx + 1, len(api_keys),
+                                )
                             if recovered:
                                 _log.info(
-                                    "[%s] Pass 2 recovered %s (key %d/%d)",
-                                    block_type, recovered, key_idx + 1, len(api_keys),
+                                    "[%s] Pass 2 recovered missing: %s (key %d/%d)",
+                                    block_type, sorted(recovered), key_idx + 1, len(api_keys),
                                 )
+
                             pass2_done = True
                             break
                         except genai_errors.ClientError:
@@ -842,12 +994,13 @@ async def extract_parameters_from_pdf(pdf_bytes: bytes, block_type: str, api_key
                     if not pass2_done:
                         _log.warning("[%s] Pass 2 exhausted all keys — returning Pass 1 data only", block_type)
 
-                    still_missing = ESSENTIAL_IDS.get(block_type, set()) - {
-                        p["id"] for p in data.get("parameters", [])
-                    }
-                    if still_missing:
-                        _log.warning("[%s] Final missing params: %s", block_type, sorted(still_missing))
-                        data["_warnings"] = [f"Missing essential param: {pid}" for pid in still_missing]
+                # Always report any params still absent after all passes
+                still_missing = ALL_PARAM_IDS.get(block_type, set()) - {
+                    p["id"] for p in data.get("parameters", [])
+                }
+                if still_missing:
+                    _log.warning("[%s] Final missing params: %s", block_type, sorted(still_missing))
+                    data["_warnings"] = [f"Missing essential param: {pid}" for pid in still_missing]
 
                 return data
 
