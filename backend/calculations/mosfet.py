@@ -151,8 +151,8 @@ class MosfetMixin:
                 f"Override via design constant 'thermal.rds_derating'."
             )
 
-        self._log_hc("mosfet_losses", "Rds(on) thermal derating", f"{rds_derating}x",
-                      f"{'User override' if user_overrode_derating else f'Iterative model at Tj≈{tj_for_rds}°C (α={self._dc(\"thermal.rds_alpha\")})'}", "thermal.rds_derating")
+        _alpha_label = "User override" if user_overrode_derating else f"Iterative model at Tj≈{tj_for_rds}°C (α={alpha_rds})"
+        self._log_hc("mosfet_losses", "Rds(on) thermal derating", f"{rds_derating}x", _alpha_label, "thermal.rds_derating")
         # P_cond(per-device) = I_device_rms² × Rds(on)
         p_cond  = i_rms_sw_dev**2 * rds_hot
 
