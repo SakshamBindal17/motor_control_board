@@ -680,7 +680,7 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 | 11 | Rds α as design constant — replace hardcoded 2.1 in `mosfet.py` | §13-4 | S |
 | 12 | Ring Q as design constant — replace hardcoded 8.0 in `waveform.py` | §13-5 + §WAVE-3 | S |
 | 13 | Gate drive IC thermal — split gate power, compute driver Tj | §15 | M |
-| 14 | MOSFET SOA check — switching time vs SOA boundary | §15 | M |
+| 14 | 🚫 ~~MOSFET SOA check — switching time vs SOA boundary~~ — **Decided not to implement.** Datasheet SOA curves are plotted for linear-mode operation (µs–ms pulse widths). Hard-switched PWM transitions (50–200ns) are below the shortest datasheet data point; extrapolating to sub-µs yields physically meaningless numbers. For hard-switching inverters, safety is correctly verified by Vds_max margin + Id_pulsed + Tj checks — which the engine already does. | §15 | — |
 | 15 | Shoot-through current — dead-time < trr warning | §15 | S |
 | 16 | CALC_DEPS audit — verify `ciss`, `rg_int`, `deadtime_min`, `deadtime_default`, `pwm_deadtime_res`, `pwm_deadtime_max` are all in CALC_DEPS sets | §9 (remaining) | S |
 | 17 | Feed `qoss` + `crss` into calculations | §4a, §4c | S |
