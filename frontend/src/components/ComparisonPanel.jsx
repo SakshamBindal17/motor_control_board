@@ -36,48 +36,49 @@ function convertUnit(value, fromUnit, targetUnit) {
   if (targetUnit === 'v') {
     if (u === 'v') return v
     if (u === 'mv') return v / 1000
-    return v
+    return null
   }
   if (targetUnit === 'a') {
     if (u === 'a') return v
     if (u === 'ma') return v / 1000
-    return v
+    return null
   }
   if (targetUnit === 'ohm') {
     if (u === 'ohm') return v
     if (u === 'mohm') return v / 1000
-    return v
+    return null
   }
   if (targetUnit === 'mohm') {
     if (u === 'mohm') return v
     if (u === 'ohm') return v * 1000
-    return v
+    return null
   }
   if (targetUnit === 'nc') {
     if (u === 'nc') return v
     if (u === 'uc') return v * 1000
     if (u === 'c') return v * 1e9
-    return v
+    return null
   }
   if (targetUnit === 'pf') {
     if (u === 'pf') return v
     if (u === 'nf') return v * 1000
     if (u === 'uf') return v * 1e6
     if (u === 'f') return v * 1e12
-    return v
+    return null
   }
   if (targetUnit === 'ns') {
     if (u === 'ns') return v
     if (u === 'us') return v * 1000
     if (u === 'ms') return v * 1e6
     if (u === 's') return v * 1e9
-    return v
+    return null
   }
   if (targetUnit === 'c/w') {
-    return v
+    if (u === 'c/w') return v
+    return null
   }
 
-  return v
+  return null
 }
 
 function pickCondition(param, conditionRegex) {
