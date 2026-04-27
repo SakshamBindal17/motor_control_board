@@ -20,21 +20,23 @@ DESIGN_CONSTANTS = {
     # Thermal
     "thermal.rds_derating":    (1.5,  "x",    "Thermal",     "Rds(on) thermal derating",     "Worst-case multiplier at ~100°C junction"),
     "thermal.rth_cs":          (0.5,  "°C/W", "Thermal",     "TIM resistance (case-to-PCB)", "Thermal interface material resistance"),
-    "thermal.rth_sa":          (20.0, "°C/W", "Thermal",     "PCB-to-ambient Rth",           "Natural convection, no heatsink"),
+    "thermal.rth_sa":          (10.0, "°C/W", "Thermal",     "PCB-to-ambient Rth",           "Forced-air convection default. Use 20+ for natural convection."),
     "thermal.safe_margin":     (30,   "°C",   "Thermal",     "Safe margin threshold",        "Minimum acceptable Tj headroom"),
     "thermal.vias_per_fet":    (16,   "pcs",  "Thermal",     "Thermal vias per FET",         "0.3mm vias under thermal pad"),
+    "thermal.rds_alpha":       (2.1,  "",     "Thermal",     "Rds temp exponent",            "Power-law α for Rds(Tj): Rds_hot = Rds25 × (Tj/298)^α. Si=2.1, SiC=0.4"),
     # Gate Drive
     "gate.rise_time_target":   (40,   "ns",   "Gate Drive",  "Rise time target",             "Default target for Rg_on sizing"),
     "gate.rg_bootstrap":       (10.0, "Ω",    "Gate Drive",  "Bootstrap series R",           "Limits bootstrap diode charging current"),
-    "gate.bootstrap_vf":       (1.0,  "V",    "Gate Drive",  "Bootstrap diode Vf",           "Default for integrated boot diode (~1V). Set to 0.5V if using external Schottky."),
+    "gate.bootstrap_vf":       (1.0,  "V",    "Gate Drive",  "Bootstrap diode Vf",           "Worst-case default for integrated bootstrap diodes (0.7–1.0V). Set to 0.6V for external Schottky."),
+    "gate.driver_derating_per_c": (0.003, "1/°C", "Gate Drive", "Driver IO derating",        "Driver source/sink current derating per °C above 25°C. Typical: 0.3%/°C."),
     # Bootstrap
     "boot.min_cap":            (100,  "nF",   "Bootstrap",   "Min practical boot cap",       "Floor for bootstrap capacitor value"),
-    "boot.safety_margin":      (2.0,  "x",    "Bootstrap",   "Safety margin multiplier",     "Applied before E12 snap"),
+    "boot.safety_margin":      (2.0,  "x",    "Bootstrap",   "Safety margin multiplier",     "Applied before E12 snap. Higher = more conservative. 2.0× for worst-case design."),
     # Input Capacitors
     "input.spwm_mod_index":    (0.9,  "",     "Input Caps",  "SPWM modulation index",        "3-phase SPWM approx when Lph unavailable"),
     "input.min_bulk_count":    (4,    "pcs",  "Input Caps",  "Min bulk cap count",           "Minimum parallel caps for ESR distribution"),
     "input.bulk_cap_uf":       (100,  "µF",   "Input Caps",  "Bulk cap size",                "Standard electrolytic per-cap value"),
-    "input.esr_per_cap":       (50,   "mΩ",   "Input Caps",  "Typical ESR per cap",          "Electrolytic ESR estimate for thermal calc"),
+    "input.esr_per_cap":       (80,   "mΩ",   "Input Caps",  "Typical ESR per cap",          "Electrolytic ESR estimate for thermal calc"),
     # Protection
     "prot.adc_ref":            (3.3,  "V",    "Protection",  "ADC reference voltage",        "MCU ADC full-scale reference"),
     "prot.ovp_margin":         (1.05, "x",    "Protection",  "OVP trip margin",              "Multiplier above peak bus voltage"),
@@ -46,16 +48,17 @@ DESIGN_CONSTANTS = {
     # Dead Time
     "dt.abs_margin":           (20,   "ns",   "Dead Time",   "Absolute margin",              "Fixed safety margin added to minimum DT"),
     "dt.safety_mult":          (1.5,  "x",    "Dead Time",   "Safety multiplier",            "Recommended margin over minimum DT"),
-    # ADC Timing
-    "adc.max_duty_cycle":      (0.90, "",     "ADC Timing",  "Max SPWM duty cycle",          "Limits the zero-vector low-side sampling window"),
     # Waveform
     "waveform.common_source_inductance_nh": (1.5,   "nH",   "Waveform",    "Common-source inductance",      "Source loop inductance feeding back into effective Vgs"),
     "waveform.qrr_miller_coupling":         (0.30,  "x",    "Waveform",    "Qrr-to-Miller coupling",        "Fraction of diode recovery charge reflected into turn-on Miller charge"),
     "waveform.qgd_temp_coeff":              (0.0015,"1/C",  "Waveform",    "Qgd temperature coefficient",   "Per-degree increase of effective Qgd above 25C"),
     "waveform.qrr_temp_coeff":              (0.005, "1/C",  "Waveform",    "Qrr temperature coefficient",   "Per-degree increase of effective Qrr above 25C"),
-    "waveform.driver_temp_derate_per_c":    (0.001, "1/C",  "Waveform",    "Driver current temp derate",    "Per-degree reduction of effective gate-driver source/sink current above 25C"),
+    "waveform.driver_temp_derate_per_c":    (0.003, "1/C",  "Waveform",    "Driver current temp derate",    "Per-degree reduction of effective gate-driver source/sink current above 25C"),
+    # ADC Timing
+    "adc.max_duty_cycle":      (0.90, "",     "ADC Timing",  "Max SPWM duty cycle",          "Limits the zero-vector low-side sampling window"),
     # Snubber
     "snub.coss_mult":          (3,    "x",    "Snubber",     "Coss multiplier",              "Snubber cap = N × Coss for overdamped response"),
+    "snub.ring_q_factor":      (8.0,  "",     "Snubber",     "Ring Q factor",                "LC ringing Q for waveform model. Typical: 8 (48V Si), 12 (SiC), 15 (high-L PCB)"),
 
     # EMI Filter
     "emi.cm_choke_uh":         (330,  "µH",   "EMI Filter",  "CM choke inductance",          "Common-mode choke baseline value"),
@@ -203,8 +206,12 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         "waveform.qrr_miller_coupling":         (0.0, 1.5),
         "waveform.qgd_temp_coeff":              (0.0, 0.01),
         "waveform.qrr_temp_coeff":              (0.0, 0.02),
-        "waveform.driver_temp_derate_per_c":    (0.0, 0.01),
+        "waveform.driver_temp_derate_per_c":    (0.0, 0.02),
         "snub.coss_mult":        (1,    20),
+        "snub.ring_q_factor":    (1.0,  50.0),
+        "thermal.rds_alpha":     (0.1,  5.0),
+        "gate.driver_derating_per_c": (0.0, 0.02),
+        "adc.max_duty_cycle":    (0.5,  0.99),
 
         "emi.cm_choke_uh":       (1,    10000),
         "prot.adc_ref":          (1.0,  5.0),
@@ -311,7 +318,10 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
                 if mod not in self._module_meta:
                     self._module_meta[mod] = {"hardcoded": [], "fallbacks": []}
                 if not any(f["param"] == key for f in self._module_meta[mod]["fallbacks"]):
-                    self._module_meta[mod]["fallbacks"].append({"param": key, "value": str(fallback), "block": block_name})
+                    self._module_meta[mod]["fallbacks"].append({
+                        "param": key, "value": str(fallback), "block": block_name,
+                        "message": f"{key} fallback {fallback} — upload {block_name} datasheet",
+                    })
             return fallback
         try:
             fval = float(val)
@@ -322,7 +332,10 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
                 if mod not in self._module_meta:
                     self._module_meta[mod] = {"hardcoded": [], "fallbacks": []}
                 if not any(f["param"] == key for f in self._module_meta[mod]["fallbacks"]):
-                    self._module_meta[mod]["fallbacks"].append({"param": key, "value": str(fallback), "block": block_name})
+                    self._module_meta[mod]["fallbacks"].append({
+                        "param": key, "value": str(fallback), "block": block_name,
+                        "message": f"{key} fallback {fallback} — upload {block_name} datasheet",
+                    })
             return fallback
 
         from unit_utils import to_si
