@@ -1754,6 +1754,9 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
             onChange={e => localUpdate('vds_override', e.target.value)} />
           <span style={unitStyle}>V</span>
         </div>
+        <div style={{ fontSize: 9, color: 'var(--txt-4)', lineHeight: 1.4, marginTop: 2 }}>
+          Vds defaults to V_peak ({specs.peak_voltage || 60}V), not V_bus ({specs.bus_voltage || 48}V) — models worst-case Vds at transient overshoot.
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ ...labelStyle, color: '#32CD32' }}>Id:</span>
           <input type="text" inputMode="decimal" style={inputStyle}
