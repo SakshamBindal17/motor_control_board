@@ -1,12 +1,14 @@
 import React, { useState } from 'react'
-import { X, Eye, EyeOff, Save, Plus, Trash2 } from 'lucide-react'
+import { X, Eye, EyeOff, Save, Plus, Trash2, FlaskConical } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useProject } from '../context/ProjectContext.jsx'
+import { checkKeyHealth } from '../api.js'
 
 export default function SettingsModal() {
   const { state, dispatch } = useProject()
   const { settings, project } = state
   const [showKeys, setShowKeys] = useState({})  // index → bool
+  const [keyHealth, setKeyHealth] = useState({})  // index → {status, loading}
   const [localKeys, setLocalKeys] = useState(
     Array.isArray(settings.gemini_api_keys) && settings.gemini_api_keys.length > 0
       ? settings.gemini_api_keys
@@ -37,6 +39,24 @@ export default function SettingsModal() {
 
   function updateKey(idx, val) {
     setLocalKeys(prev => prev.map((k, i) => i === idx ? val : k))
+  }
+
+  async function testKeys() {
+    const toTest = localKeys.filter(k => k.trim())
+    if (!toTest.length) { toast.error('No keys to test'); return }
+    // Mark all as loading
+    const loadingState = {}
+    localKeys.forEach((_, i) => { if (localKeys[i].trim()) loadingState[i] = { status: 'loading' } })
+    setKeyHealth(loadingState)
+    try {
+      const results = await checkKeyHealth(localKeys)
+      const newHealth = {}
+      results.forEach((r, i) => { newHealth[i] = r })
+      setKeyHealth(newHealth)
+    } catch (e) {
+      toast.error('Health check failed: ' + (e.message || 'network error'))
+      setKeyHealth({})
+    }
   }
 
   function addKey() {
@@ -167,49 +187,69 @@ export default function SettingsModal() {
           <section>
             <div style={sectionTitle}>🔑 Gemini API Keys</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {localKeys.map((key, idx) => (
-                <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <div style={{ position: 'relative', flex: 1 }}>
-                    <input
-                      type={showKeys[idx] ? 'text' : 'password'}
-                      className="inp inp-mono"
-                      placeholder={`Key ${idx + 1} — AIzaSy…`}
-                      value={key}
-                      onChange={e => updateKey(idx, e.target.value)}
-                      style={{ paddingRight: 40, width: '100%' }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowKeys(prev => ({ ...prev, [idx]: !prev[idx] }))}
-                      style={{
-                        position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                        background: 'none', border: 'none', cursor: 'pointer', color: 'var(--txt-3)',
-                      }}
-                    >
-                      {showKeys[idx] ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
+              {localKeys.map((key, idx) => {
+                const h = keyHealth[idx]
+                const statusIcon = !h ? null
+                  : h.status === 'loading' ? <span style={{ fontSize: 10, color: 'var(--txt-3)' }}>…</span>
+                  : h.status === 'ok' ? <span style={{ fontSize: 11, color: 'var(--green)' }}>✓ OK</span>
+                  : h.status === 'quota_exhausted' ? <span style={{ fontSize: 10, color: 'var(--amber)' }}>⚠ Quota</span>
+                  : h.status === 'invalid' ? <span style={{ fontSize: 10, color: 'var(--red)' }}>✗ Invalid</span>
+                  : <span style={{ fontSize: 10, color: 'var(--red)' }}>✗ Error</span>
+                return (
+                  <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <input
+                        type={showKeys[idx] ? 'text' : 'password'}
+                        className="inp inp-mono"
+                        placeholder={`Key ${idx + 1} — AIzaSy…`}
+                        value={key}
+                        onChange={e => { updateKey(idx, e.target.value); setKeyHealth(p => { const n={...p}; delete n[idx]; return n }) }}
+                        style={{ paddingRight: 40, width: '100%' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowKeys(prev => ({ ...prev, [idx]: !prev[idx] }))}
+                        style={{
+                          position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
+                          background: 'none', border: 'none', cursor: 'pointer', color: 'var(--txt-3)',
+                        }}
+                      >
+                        {showKeys[idx] ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+                    {statusIcon && <div style={{ minWidth: 48, textAlign: 'center' }}>{statusIcon}</div>}
+                    {localKeys.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeKey(idx)}
+                        className="btn btn-ghost btn-icon"
+                        title="Remove this key"
+                      >
+                        <Trash2 size={13} style={{ color: 'var(--red)' }} />
+                      </button>
+                    )}
                   </div>
-                  {localKeys.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeKey(idx)}
-                      className="btn btn-ghost btn-icon"
-                      title="Remove this key"
-                    >
-                      <Trash2 size={13} style={{ color: 'var(--red)' }} />
-                    </button>
-                  )}
-                </div>
-              ))}
+                )
+              })}
             </div>
-            <button
-              type="button"
-              onClick={addKey}
-              className="btn btn-ghost"
-              style={{ marginTop: 8, fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}
-            >
-              <Plus size={12} /> Add another key
-            </button>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button
+                type="button"
+                onClick={addKey}
+                className="btn btn-ghost"
+                style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 5 }}
+              >
+                <Plus size={12} /> Add another key
+              </button>
+              <button
+                type="button"
+                onClick={testKeys}
+                className="btn btn-ghost"
+                style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, color: 'var(--cyan)' }}
+              >
+                <FlaskConical size={12} /> Test Keys
+              </button>
+            </div>
             <p style={{ fontSize: 11, color: 'var(--txt-3)', marginTop: 8, lineHeight: 1.5 }}>
               Get keys at{' '}
               <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer"

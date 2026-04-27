@@ -208,3 +208,40 @@ def get_design_constants():
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "2.0.0"}
+
+
+class KeyHealthRequest(BaseModel):
+    keys: list[str]
+
+@app.post("/api/key-health")
+async def check_key_health(req: KeyHealthRequest):
+    """Test each Gemini API key with a minimal request and return status per key."""
+    from google import genai
+    from google.genai import errors as genai_errors
+
+    results = []
+    for key in req.keys:
+        key = key.strip()
+        if not key:
+            results.append({"key_suffix": "", "status": "empty"})
+            continue
+        suffix = f"…{key[-6:]}" if len(key) > 6 else key
+        try:
+            client = genai.Client(api_key=key)
+            # Minimal token-count call — no file upload, minimal quota usage
+            client.models.count_tokens(
+                model="gemini-2.5-flash-preview-04-17",
+                contents="ping"
+            )
+            results.append({"key_suffix": suffix, "status": "ok"})
+        except genai_errors.ClientError as e:
+            code = getattr(e, "status_code", None) or getattr(e, "code", None)
+            if code == 429:
+                results.append({"key_suffix": suffix, "status": "quota_exhausted"})
+            elif code in (400, 401, 403):
+                results.append({"key_suffix": suffix, "status": "invalid"})
+            else:
+                results.append({"key_suffix": suffix, "status": "error", "detail": str(e)[:80]})
+        except Exception as e:
+            results.append({"key_suffix": suffix, "status": "error", "detail": str(e)[:80]})
+    return {"success": True, "results": results}
