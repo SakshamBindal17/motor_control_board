@@ -315,7 +315,10 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
                 if mod not in self._module_meta:
                     self._module_meta[mod] = {"hardcoded": [], "fallbacks": []}
                 if not any(f["param"] == key for f in self._module_meta[mod]["fallbacks"]):
-                    self._module_meta[mod]["fallbacks"].append({"param": key, "value": str(fallback), "block": block_name})
+                    self._module_meta[mod]["fallbacks"].append({
+                        "param": key, "value": str(fallback), "block": block_name,
+                        "message": f"{key} fallback {fallback} — upload {block_name} datasheet",
+                    })
             return fallback
         try:
             fval = float(val)
@@ -326,7 +329,10 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
                 if mod not in self._module_meta:
                     self._module_meta[mod] = {"hardcoded": [], "fallbacks": []}
                 if not any(f["param"] == key for f in self._module_meta[mod]["fallbacks"]):
-                    self._module_meta[mod]["fallbacks"].append({"param": key, "value": str(fallback), "block": block_name})
+                    self._module_meta[mod]["fallbacks"].append({
+                        "param": key, "value": str(fallback), "block": block_name,
+                        "message": f"{key} fallback {fallback} — upload {block_name} datasheet",
+                    })
             return fallback
 
         from unit_utils import to_si

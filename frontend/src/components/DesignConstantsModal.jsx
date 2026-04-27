@@ -3,32 +3,36 @@ import { X, SlidersHorizontal, RotateCcw, ChevronDown, LoaderCircle } from 'luci
 import { useProject } from '../context/ProjectContext.jsx'
 import { fetchDesignConstants } from '../api.js'
 
-// UI-only metadata (grouping, labels, step sizes) to merge with backend numeric defaults
+// UI-only metadata (grouping, labels, step sizes, engineering bounds) to merge with backend numeric defaults
 const UI_META = {
-  'thermal.rth_cs':       { cat: 'Thermal', label: 'TIM resistance (case-to-PCB)', step: 0.1 },
-  'thermal.rth_sa':       { cat: 'Thermal', label: 'PCB-to-ambient Rth', step: 1 },
-  'thermal.safe_margin':  { cat: 'Thermal', label: 'Safe margin threshold', step: 5 },
-  'thermal.vias_per_fet': { cat: 'Thermal', label: 'Thermal vias per FET', step: 1 },
-  'gate.rise_time_target':{ cat: 'Gate Drive', label: 'Rise time target', step: 5 },
-  'gate.rg_bootstrap':    { cat: 'Gate Drive', label: 'Bootstrap series R', step: 1 },
-  'gate.bootstrap_vf':    { cat: 'Gate Drive', label: 'Bootstrap diode Vf', step: 0.1 },
-  'boot.min_cap':         { cat: 'Bootstrap', label: 'Min practical boot cap', step: 10 },
-  'boot.safety_margin':   { cat: 'Bootstrap', label: 'Safety margin multiplier', step: 0.5 },
-  'input.spwm_mod_index': { cat: 'Input Caps', label: 'SPWM modulation index', step: 0.05 },
-  'input.min_bulk_count': { cat: 'Input Caps', label: 'Min bulk cap count', step: 1 },
-  'input.bulk_cap_uf':    { cat: 'Input Caps', label: 'Bulk cap size', step: 10 },
-  'input.esr_per_cap':    { cat: 'Input Caps', label: 'Typical ESR per cap', step: 5 },
-  'prot.adc_ref':         { cat: 'Protection', label: 'ADC reference voltage', step: 0.1 },
-  'prot.ovp_margin':      { cat: 'Protection', label: 'OVP trip margin', step: 0.01 },
-  'prot.uvp_trip':        { cat: 'Protection', label: 'UVP trip threshold', step: 0.05 },
-  'prot.ocp_hw':          { cat: 'Protection', label: 'OCP hardware threshold', step: 0.05 },
-  'prot.ocp_sw':          { cat: 'Protection', label: 'OCP software threshold', step: 0.05 },
-  'prot.otp_warn':        { cat: 'Protection', label: 'OTP warning temp', step: 5 },
-  'prot.otp_shutdown':    { cat: 'Protection', label: 'OTP shutdown temp', step: 5 },
-  'dt.abs_margin':        { cat: 'Dead Time', label: 'Absolute margin', step: 5 },
-  'dt.safety_mult':       { cat: 'Dead Time', label: 'Safety multiplier', step: 0.1 },
-  'snub.coss_mult':       { cat: 'Snubber', label: 'Coss multiplier', step: 1 },
-  'emi.cm_choke_uh':      { cat: 'EMI Filter', label: 'CM choke inductance', step: 10 },
+  'thermal.rds_derating': { cat: 'Thermal', label: 'Rds(on) thermal derating', step: 0.1, min: 1.0, max: 5.0 },
+  'thermal.rth_cs':       { cat: 'Thermal', label: 'TIM resistance (case-to-PCB)', step: 0.1, min: 0.01, max: 10.0 },
+  'thermal.rth_sa':       { cat: 'Thermal', label: 'PCB-to-ambient Rth', step: 1, min: 0.5, max: 100.0 },
+  'thermal.safe_margin':  { cat: 'Thermal', label: 'Safe margin threshold', step: 5, min: 1, max: 100 },
+  'thermal.vias_per_fet': { cat: 'Thermal', label: 'Thermal vias per FET', step: 1, min: 0, max: 100 },
+  'thermal.rds_alpha':    { cat: 'Thermal', label: 'Rds temp exponent', step: 0.1, min: 0.1, max: 5.0 },
+  'gate.rise_time_target':{ cat: 'Gate Drive', label: 'Rise time target', step: 5, min: 5, max: 500 },
+  'gate.rg_bootstrap':    { cat: 'Gate Drive', label: 'Bootstrap series R', step: 1, min: 0.1, max: 100 },
+  'gate.bootstrap_vf':    { cat: 'Gate Drive', label: 'Bootstrap diode Vf', step: 0.1, min: 0.1, max: 2.0 },
+  'gate.driver_derating_per_c': { cat: 'Gate Drive', label: 'Driver IO derating', step: 0.001, min: 0.0, max: 0.02 },
+  'boot.min_cap':         { cat: 'Bootstrap', label: 'Min practical boot cap', step: 10, min: 10, max: 10000 },
+  'boot.safety_margin':   { cat: 'Bootstrap', label: 'Safety margin multiplier', step: 0.5, min: 1.0, max: 10.0 },
+  'input.spwm_mod_index': { cat: 'Input Caps', label: 'SPWM modulation index', step: 0.05, min: 0.1, max: 1.0 },
+  'input.min_bulk_count': { cat: 'Input Caps', label: 'Min bulk cap count', step: 1, min: 1, max: 64 },
+  'input.bulk_cap_uf':    { cat: 'Input Caps', label: 'Bulk cap size', step: 10, min: 1, max: 10000 },
+  'input.esr_per_cap':    { cat: 'Input Caps', label: 'Typical ESR per cap', step: 5, min: 0.1, max: 1000 },
+  'prot.adc_ref':         { cat: 'Protection', label: 'ADC reference voltage', step: 0.1, min: 1.0, max: 5.0 },
+  'prot.ovp_margin':      { cat: 'Protection', label: 'OVP trip margin', step: 0.01, min: 1.0, max: 2.0 },
+  'prot.uvp_trip':        { cat: 'Protection', label: 'UVP trip threshold', step: 0.05, min: 0.3, max: 0.95 },
+  'prot.ocp_hw':          { cat: 'Protection', label: 'OCP hardware threshold', step: 0.05, min: 1.0, max: 5.0 },
+  'prot.ocp_sw':          { cat: 'Protection', label: 'OCP software threshold', step: 0.05, min: 1.0, max: 3.0 },
+  'prot.otp_warn':        { cat: 'Protection', label: 'OTP warning temp', step: 5, min: 40, max: 200 },
+  'prot.otp_shutdown':    { cat: 'Protection', label: 'OTP shutdown temp', step: 5, min: 50, max: 250 },
+  'dt.abs_margin':        { cat: 'Dead Time', label: 'Absolute margin', step: 5, min: 0, max: 500 },
+  'dt.safety_mult':       { cat: 'Dead Time', label: 'Safety multiplier', step: 0.1, min: 1.0, max: 5.0 },
+  'snub.coss_mult':       { cat: 'Snubber', label: 'Coss multiplier', step: 1, min: 1, max: 20 },
+  'snub.ring_q_factor':   { cat: 'Snubber', label: 'Ring Q factor', step: 1, min: 1.0, max: 50.0 },
+  'emi.cm_choke_uh':      { cat: 'EMI Filter', label: 'CM choke inductance', step: 10, min: 1, max: 10000 },
 }
 
 export default function DesignConstantsModal() {
@@ -55,6 +59,8 @@ export default function DesignConstantsModal() {
           default: bData.default,
           desc: bData.description,
           step: uMeta.step,
+          min: uMeta.min,
+          max: uMeta.max,
         })
       }
       const finalSchema = Object.keys(grouped).filter(k => grouped[k].length > 0).map(cat => ({
@@ -207,6 +213,8 @@ export default function DesignConstantsModal() {
                             }}
                             value={currentVal}
                             step={item.step}
+                            min={item.min}
+                            max={item.max}
                             onChange={e => {
                               const v = e.target.value
                               if (v === '' || v === item.default.toString()) {
@@ -216,10 +224,11 @@ export default function DesignConstantsModal() {
                               }
                             }}
                             onBlur={e => {
-                              const v = parseFloat(e.target.value)
-                              if (isNaN(v) || v === item.default) {
-                                resetOne(item.key)
-                              }
+                              let v = parseFloat(e.target.value)
+                              if (isNaN(v) || v === item.default) { resetOne(item.key); return }
+                              if (item.min !== undefined && v < item.min) v = item.min
+                              if (item.max !== undefined && v > item.max) v = item.max
+                              setValue(item.key, v)
                             }}
                           />
 
