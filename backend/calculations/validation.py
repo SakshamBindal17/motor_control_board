@@ -365,6 +365,29 @@ class ValidationMixin:
         else:
             results["channels_ok"] = None
 
+        # Dead-time window check (§12a): ADC conversion must fit within dead time
+        if "adc_conversion_us" in results:
+            try:
+                dt_result = self.calc_dead_time()
+                dt_actual_ns = dt_result.get("dt_actual_ns")
+                if dt_actual_ns is not None:
+                    adc_settling_ns = results["adc_conversion_us"] * 1000
+                    results["adc_settling_ns"] = round(adc_settling_ns, 1)
+                    results["dead_time_ns"] = round(dt_actual_ns, 1)
+                    results["adc_fits_in_dead_time"] = bool(adc_settling_ns < dt_actual_ns)
+                    if not results["adc_fits_in_dead_time"]:
+                        warnings.append(
+                            f"WARNING: ADC conversion ({adc_settling_ns:.0f}ns) exceeds dead time "
+                            f"({dt_actual_ns:.0f}ns). ADC cannot sample during dead-time window — "
+                            f"use center-aligned sampling or increase dead time."
+                        )
+                    else:
+                        self.audit_log.append(
+                            f"[ADC Timing] ADC settling ({adc_settling_ns:.0f}ns) < dead time ({dt_actual_ns:.0f}ns) — OK."
+                        )
+            except Exception:
+                pass
+
         results["warnings"] = warnings
         results["_meta"] = self._module_meta.get("adc_timing", {"hardcoded": [], "fallbacks": []})
         return results

@@ -1128,6 +1128,9 @@ const SECTIONS = [
       { key: 't_3_channel_us', label: '3-ch total time', full: '3-Channel Sequential Conversion Time', unit: 'µs', dec: 3, explain: 'Definition: Time to sequentially sample all 3 phase shunts on a single ADC. Formula: 3 × Conversion_Time. Best Practice: If this exceeds the sampling window, you MUST use simultaneous sampling (multiple ADCs) or hardware DMA triggers.' },
       { key: 'adc_channels', label: 'ADC channels', full: 'Available MCU ADC Channels', unit: 'ch', dec: 0, explain: 'Definition: Total analog-to-digital converter input pins available on the chosen microcontroller.' },
       { key: 'channels_needed', label: 'Channels needed', full: 'Required ADC Channels', unit: 'ch', dec: 0, explain: 'Definition: Minimum recommended ADC channels for a fully protected FOC drive. Assumption: 3x Phase Shunts + 1x Bus Voltage + 2x Thermistors (FETs/Motor) + 1x Throttle/BEMF = 7 channels.' },
+      { key: 'adc_settling_ns', label: 'ADC settling', full: 'ADC Single Conversion Time in ns', unit: 'ns', dec: 1, explain: 'Definition: ADC conversion time expressed in nanoseconds for dead-time comparison. Formula: 1/ADC_rate × 1e9.' },
+      { key: 'dead_time_ns', label: 'Dead time (DT)', full: 'Actual Gate Dead Time', unit: 'ns', dec: 1, explain: 'Definition: Actual programmed dead time from the dead_time module. Included here for comparison with ADC settling time.' },
+      { key: 'adc_fits_in_dead_time', label: 'ADC fits in DT?', full: 'ADC Settles Within Dead Time', unit: '', dec: 0, explain: 'Definition: True if ADC conversion time < dead time. If false, the ADC cannot sample during the dead-time window — use center-aligned sampling instead.' },
     ],
   },
   {
