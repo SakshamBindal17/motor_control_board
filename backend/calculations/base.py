@@ -1152,6 +1152,7 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             "adc_bandwidth":        self.calc_adc_bandwidth(),
             "derating":             self.calc_derating(),
             "vpeak_check":          self.calc_vpeak_check(),
+            "emi_dm":               self.calc_emi_dm(),
         }
         # Attach logs after calculations have fully populated them
         results["audit_log"] = list(dict.fromkeys(self.audit_log))

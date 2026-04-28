@@ -520,6 +520,109 @@ class ThermalMixin:
         }
 
     # ═══════════════════════════════════════════════════════════════════
+    def calc_emi_dm(self) -> dict:
+        """Estimate differential-mode conducted EMI at the first CISPR 25 harmonic.
+
+        Model: switching node injects DM current proportional to C_bus × V_bus × fsw.
+        CISPR 25 Class 3 limits: 79 dBµV (0.15–0.53 MHz), 56 dBµV (0.53–1.7 MHz).
+        """
+        self._current_module = "emi_dm"
+        warnings = []
+
+        v_bus = self.v_bus
+        fsw   = self.fsw
+
+        # Bus MLCC capacitance — from overrides or fallback
+        try:
+            c_mlcc_nf = float(self.ovr.get("emi_x_cap_nf", 100.0))
+        except (TypeError, ValueError):
+            c_mlcc_nf = 100.0
+        c_mlcc_f = c_mlcc_nf * 1e-9
+
+        # CM choke leakage inductance ≈ 1% of CM inductance (typical for motor controllers)
+        lcm_uh = self._dc("emi.cm_choke_uh")
+        l_dm_uh = lcm_uh * 0.01   # leakage ≈ 1% of CM inductance
+        l_dm_h  = l_dm_uh * 1e-6
+
+        # DM injection current at fundamental switching frequency
+        # I_dm = V_bus × C_mlcc × 2π × fsw (capacitive coupling of switching edge)
+        i_dm = v_bus * c_mlcc_f * 2 * math.pi * fsw
+        self._log_hc("emi_dm", "LISN impedance", "50 Ω", "CISPR 25 / CISPR 16 standard LISN")
+
+        # DM noise voltage across 50 Ω LISN (single-ended)
+        z_lisn = 50.0
+        v_dm_fund_v = i_dm * z_lisn
+        v_dm_fund_uv = v_dm_fund_v * 1e6
+        dm_noise_dbmuv = 20 * math.log10(max(v_dm_fund_uv, 1e-6))
+
+        # First harmonic that falls inside CISPR 25 band (> 150 kHz)
+        cispr_start_hz = 150e3
+        harmonic_n = max(1, math.ceil(cispr_start_hz / fsw))
+        f_harmonic = harmonic_n * fsw
+        # Harmonic amplitude falls as 1/n (square-wave Fourier series approximation)
+        v_dm_harmonic_uv = (v_dm_fund_uv / harmonic_n) if harmonic_n > 0 else v_dm_fund_uv
+        dm_harmonic_dbmuv = 20 * math.log10(max(v_dm_harmonic_uv, 1e-6))
+
+        # CISPR 25 Class 3 limit at this harmonic frequency
+        if f_harmonic < 530e3:
+            cispr_limit_dbmuv = 79.0   # 150–530 kHz band
+            cispr_band = "Band 3 (0.15–0.53 MHz)"
+        else:
+            cispr_limit_dbmuv = 56.0   # 530 kHz – 1.7 MHz band
+            cispr_band = "Band 4 (0.53–1.7 MHz)"
+
+        required_attenuation_db = max(0.0, dm_harmonic_dbmuv - cispr_limit_dbmuv)
+
+        # Existing DM filter attenuation at f_harmonic: LC with L_dm and C_x
+        if l_dm_h > 0 and c_mlcc_f > 0:
+            f_corner = 1.0 / (2 * math.pi * math.sqrt(l_dm_h * c_mlcc_f))
+            if f_harmonic > f_corner:
+                # -40 dB/decade above corner
+                attenuation_actual_db = 40 * math.log10(f_harmonic / f_corner)
+            else:
+                attenuation_actual_db = 0.0
+        else:
+            f_corner = None
+            attenuation_actual_db = 0.0
+
+        emi_filter_adequate = attenuation_actual_db >= required_attenuation_db
+
+        additional_attenuation_needed_db = max(0.0, required_attenuation_db - attenuation_actual_db)
+
+        if not emi_filter_adequate and required_attenuation_db > 0:
+            warnings.append(
+                f"⚠ DM EMI: Estimated harmonic at {f_harmonic/1e3:.0f}kHz = {dm_harmonic_dbmuv:.0f}dBµV "
+                f"exceeds CISPR 25 Class 3 {cispr_band} limit ({cispr_limit_dbmuv:.0f}dBµV) "
+                f"by {required_attenuation_db:.0f}dB. Current DM filter provides only "
+                f"{attenuation_actual_db:.0f}dB. Add {additional_attenuation_needed_db:.0f}dB DM filter attenuation."
+            )
+            self.audit_log.append(
+                f"[EMI DM] Need {additional_attenuation_needed_db:.0f}dB more attenuation at {f_harmonic/1e3:.0f}kHz."
+            )
+        else:
+            self.audit_log.append(
+                f"[EMI DM] DM filter OK: {attenuation_actual_db:.0f}dB ≥ {required_attenuation_db:.0f}dB required."
+            )
+
+        return {
+            "dm_noise_fund_dbmuv":          round(dm_noise_dbmuv, 1),
+            "dm_noise_harmonic_dbmuv":      round(dm_harmonic_dbmuv, 1),
+            "harmonic_n":                   harmonic_n,
+            "harmonic_freq_khz":            round(f_harmonic / 1e3, 1),
+            "cispr_limit_dbmuv":            cispr_limit_dbmuv,
+            "cispr_band":                   cispr_band,
+            "required_attenuation_db":      round(required_attenuation_db, 1),
+            "filter_attenuation_db":        round(attenuation_actual_db, 1),
+            "additional_attenuation_db":    round(additional_attenuation_needed_db, 1),
+            "emi_filter_adequate":          emi_filter_adequate,
+            "dm_filter_corner_khz":         round(f_corner / 1e3, 1) if f_corner else None,
+            "l_dm_uh":                      round(l_dm_uh, 2),
+            "c_x_nf":                       c_mlcc_nf,
+            "warnings":                     warnings,
+            "_meta":                        self._module_meta.get("emi_dm", {"hardcoded": [], "fallbacks": []}),
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
     # 10. Thermal Analysis
     # ═══════════════════════════════════════════════════════════════════
 

@@ -1262,6 +1262,19 @@ const SECTIONS = [
     ],
   },
   {
+    key: 'emi_dm', label: 'EMI DM Noise', icon: '📻',
+    rows: [
+      { key: 'harmonic_freq_khz', label: 'Eval harmonic', full: 'Evaluated CISPR Harmonic Frequency', unit: 'kHz', dec: 1, explain: 'First harmonic of fsw that falls within the CISPR 25 conducted emissions band (> 150 kHz).' },
+      { key: 'dm_noise_harmonic_dbmuv', label: 'DM noise', full: 'Estimated DM Noise at CISPR Harmonic', unit: 'dBµV', dec: 1, warn: 56, danger: 79, explain: 'Estimated differential-mode conducted emission at evaluated harmonic. Model: V_bus × C_mlcc × 2π × fsw × Z_LISN / n (Fourier harmonic decay).' },
+      { key: 'cispr_limit_dbmuv', label: 'CISPR 25 limit', full: 'CISPR 25 Class 3 Limit at Harmonic', unit: 'dBµV', dec: 0, explain: 'CISPR 25 Class 3 quasi-peak limit: 79 dBµV (0.15–0.53 MHz), 56 dBµV (0.53–1.7 MHz).' },
+      { key: 'required_attenuation_db', label: 'Attenuation needed', full: 'Required DM Filter Attenuation', unit: 'dB', dec: 1, warn: 20, danger: 40, explain: 'How much the DM noise exceeds the CISPR limit. This is how much the DM filter must attenuate.' },
+      { key: 'filter_attenuation_db', label: 'Filter provides', full: 'Estimated DM Filter Attenuation (L_dm || C_x LC)', unit: 'dB', dec: 1, explain: 'Estimated -40dB/decade LC filter attenuation above corner frequency. L_dm = 1% of CM choke inductance.' },
+      { key: 'additional_attenuation_db', label: 'Gap (needed−actual)', full: 'Attenuation Gap to Close', unit: 'dB', dec: 1, warn: 10, danger: 20, explain: 'Zero means filter is adequate. Positive = add more DM filtering (larger X cap or additional DM choke).' },
+      { key: 'emi_filter_adequate', label: 'Filter OK?', full: 'DM Filter Adequate for CISPR 25 Class 3?', unit: '', dec: 0, explain: 'true = estimated DM filter provides enough attenuation for CISPR 25 Class 3.' },
+      { key: 'dm_filter_corner_khz', label: 'Filter corner', full: 'DM LC Filter Corner Frequency', unit: 'kHz', dec: 1, explain: '1/(2π√(L_dm × C_x)). EMI attenuation is -40 dB/decade above this frequency.' },
+    ],
+  },
+  {
     key: 'vpeak_check', label: 'V_peak Worst-Case', icon: '⚡',
     rows: [
       { key: 'v_bus_nominal_v', label: 'V_bus nominal', full: 'Nominal Bus Voltage', unit: 'V', dec: 1, explain: 'Configured nominal DC bus voltage from Settings.' },
