@@ -1621,7 +1621,19 @@ export default function WaveformPanel() {
                 { label: 'Dead time', value: ann.dead_time_ns, unit: 'ns', bold: true },
                 { label: 'Vgs plateau', value: ann.vgs_plateau_v, unit: 'V' },
                 { label: 'Vgs threshold', value: ann.vgs_threshold_v, unit: 'V' },
+                ...(ann.ring_freq_mhz != null ? [
+                  { sep: true },
+                  { label: 'Ring freq', value: ann.ring_freq_mhz, unit: 'MHz' },
+                  { label: 'V overshoot', value: ann.v_overshoot_v, unit: 'V', hl: ann.vds_overshoot_warning || ann.vds_overshoot_danger },
+                ] : []),
               ]} />
+              {waveform.v_ring_residual_pct != null && (
+                <TimingCard title="Multi-Cycle Ring" color={waveform.ring_undamped ? '#FF4444' : '#66BB6A'} icon="〰" rows={[
+                  { label: 'Residual after 1T', value: waveform.v_ring_residual_pct, unit: '%', bold: true, hl: waveform.ring_undamped },
+                  { label: 'Residual voltage', value: waveform.v_ring_residual_v, unit: 'V' },
+                  { label: waveform.ring_undamped ? '⚠ Rings reinforce!' : '✓ Damped OK', value: null, unit: '' },
+                ]} />
+              )}
             </div>
           )}
 

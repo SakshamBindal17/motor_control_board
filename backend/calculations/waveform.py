@@ -459,6 +459,25 @@ class WaveformMixin:
             f"ring = {f_ring/1e6:.0f} MHz, V_ov(sampled) = {sampled_v_overshoot:.1f} V."
         )
 
+        # ── Multi-cycle ringing residual ──────────────────────────────
+        # Ring starts at turn-off; next turn-off arrives ~one period later.
+        # Residual fraction = exp(-T_sw / tau_ring) — if > 10%, Q is too high
+        # and rings from successive switching events superpose and reinforce.
+        v_ring_residual_pct = None
+        v_ring_residual_v   = None
+        ring_undamped       = False
+        if f_ring > 0 and tau_ring > 0 and v_overshoot_off > 0:
+            t_period = 1.0 / fsw
+            residual_factor = math.exp(-t_period / tau_ring)
+            v_ring_residual_v   = round(v_overshoot_off * residual_factor, 2)
+            v_ring_residual_pct = round(residual_factor * 100, 1)
+            ring_undamped = residual_factor > 0.10
+            if ring_undamped:
+                self.audit_log.append(
+                    f"[Waveform] Multi-cycle ringing: {v_ring_residual_pct:.1f}% residual "
+                    f"({v_ring_residual_v:.2f}V) after one period — Q too high, rings reinforce."
+                )
+
         return {
             "time_ns":     times,
             "vgs":         vgs_arr,
@@ -466,6 +485,9 @@ class WaveformMixin:
             "id":          id_arr,
             "ig":          ig_arr,
             "pd":          pd_arr,
+            "v_ring_residual_pct": v_ring_residual_pct,
+            "v_ring_residual_v":   v_ring_residual_v,
+            "ring_undamped":       ring_undamped,
             "annotations": annotations,
             "params_used": params_used,
             "model_note": (
