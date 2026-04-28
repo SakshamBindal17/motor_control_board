@@ -125,3 +125,10 @@ recent_changes.diff
 ui_changes.diff
 .claude/
 .cursor/
+
+# Graphify
+.graphify_ast.json
+.graphify_detect.json
+.graphify_python
+.graphify_uncached.txt
+graphify-out/
