@@ -1,6 +1,6 @@
 # MC Hardware Designer v2 — Full Improvement Plan
 
-> Generated: 2026-04-22 · Last updated: 2026-04-27 (post-audit corrections)
+> Generated: 2026-04-22 · Last updated: 2026-04-28 (Phase 2 + Phase 3 complete)
 > Scope: Extraction accuracy, calculation correctness, unused motor params, hardcoded fallbacks,
 > unit handling, frontend display gaps, report generator, E-series snapping, dead code,
 > API key management, error handling, SPICE export, Design Constants UI, waveform accuracy,
@@ -105,7 +105,7 @@ This would make the PCB motor-specific. **Do not implement.**
 
 **1b.** `lph_uh` ripple usage — already implemented. No action needed.
 
-**1c–1f. Motor Compatibility Feature** ⏳ — See dedicated §COMPAT section below.
+**1c–1f. Motor Compatibility Feature** ✅ Partially done (Phase 1 item 8: single-motor checks, verdict banner, stall/modulation/regen checks). Multi-motor comparison (COMPAT-1 to COMPAT-5) deferred — see §COMPAT.
 
 ---
 
@@ -149,11 +149,11 @@ checks = {
 
 | # | Item | Severity | Effort | Status |
 |---|------|----------|--------|--------|
-| COMPAT-1 | New sidebar tab: "Motor Compatibility" — add to BLOCK_CONFIGS in App.jsx | 🟡 | M | ⏳ |
-| COMPAT-2 | New backend file: `backend/calculations/motor_compat.py` — returns compatibility flags + margins per motor | 🟡 | M | ⏳ |
-| COMPAT-3 | Frontend: multi-motor entry (add Motor B, Motor C) — same form fields as MotorForm, saved separately in state | 🟡 | L | ⏳ |
-| COMPAT-4 | Frontend: compatibility table with ✅/⚠/❌ per check per motor, plain-English explanation per row | 🟡 | M | ⏳ |
-| COMPAT-5 | Frontend: clear panel label — "These checks do not affect component calculations. PCB is sized for `max_phase_current`." | 🟢 | S | ⏳ |
+| COMPAT-1 | New sidebar tab: "Motor Compatibility" — add to BLOCK_CONFIGS in App.jsx | 🟡 | M | ⏳ Deferred (Phase 4) |
+| COMPAT-2 | New backend file: `backend/calculations/motor_compat.py` — returns compatibility flags + margins per motor | 🟡 | M | ⏳ Deferred (Phase 4) |
+| COMPAT-3 | Frontend: multi-motor entry (add Motor B, Motor C) — same form fields as MotorForm, saved separately in state | 🟡 | L | ⏳ Deferred (Phase 4) |
+| COMPAT-4 | Frontend: compatibility table with ✅/⚠/❌ per check per motor, plain-English explanation per row | 🟡 | M | ⏳ Deferred (Phase 4) |
+| COMPAT-5 | Frontend: clear panel label — "These checks do not affect component calculations. PCB is sized for `max_phase_current`." | 🟢 | S | ✅ Done (Phase 1 item 8 disclaimer banner) |
 
 **Dependency**: COMPAT-2 (backend module) → must complete before → COMPAT-4 (frontend display)
 
@@ -198,8 +198,8 @@ Every `_get(block, "BLOCK", "param", FALLBACK)` with a non-None fallback is a **
 
 | # | Item | Severity | Effort | Status |
 |---|------|----------|--------|--------|
-| 2a | Add `_warnings[]` list to each module output. When fallback used, push: `"rth_jc fallback used (0.5 °C/W) — upload MOSFET datasheet"` | 🔴 | M | ⏳ |
-| 2b | CalculationsPanel.jsx: Render amber warning badges next to any result section that used a fallback | 🔴 | M | ⏳ |
+| 2a | Add `_warnings[]` list to each module output. When fallback used, push: `"rth_jc fallback used (0.5 °C/W) — upload MOSFET datasheet"` | 🔴 | M | ✅ Done (Phase 1) |
+| 2b | CalculationsPanel.jsx: Render amber warning badges next to any result section that used a fallback | 🔴 | M | ✅ Done (Phase 1) |
 
 **Dependency**: 2a (backend adds `_meta.fallbacks_used`) → must complete before → 2b (frontend renders badges)
 
@@ -272,10 +272,10 @@ These params are successfully extracted from datasheets but the engine ignores t
 
 | # | Item | Severity | Effort | Status |
 |---|------|----------|--------|--------|
-| 4a | Feed `qoss` into `calc_mosfet_losses()` as `qoss_loss_per_fet_w = qoss × v_bus × fsw` | 🟡 | S | ⏳ |
-| 4b | Use `vgs_plateau` directly in gate resistor sizing when available | 🟡 | S | ⏳ |
-| 4c | Use `crss` for `dV/dt`: `dVdt = i_gate / crss` — more accurate than from `tr` alone | 🟡 | S | ⏳ |
-| 4d | Add MCU validation sub-module: `cpu_freq_max` → PWM timer resolution check; `adc_sample_rate` → ADC timing check; `complementary_outputs` → 3-phase capability confirm | 🟡 | M | ⏳ |
+| 4a | Feed `qoss` into `calc_mosfet_losses()` as `qoss_loss_per_fet_w = qoss × v_bus × fsw` | 🟡 | S | ⏳ Not yet done |
+| 4b | Use `vgs_plateau` directly in gate resistor sizing when available | 🟡 | S | ✅ Done (Phase 2 — Miller-charge sizing uses vgs_plateau) |
+| 4c | Use `crss` for `dV/dt`: `dVdt = i_gate / crss` — more accurate than from `tr` alone | 🟡 | S | ✅ Done (Phase 2 item 17 — `dv_dt_crss_v_per_us` in gate_resistors) |
+| 4d | Add MCU validation sub-module: `cpu_freq_max` → PWM timer resolution check; `adc_sample_rate` → ADC timing check; `complementary_outputs` → 3-phase capability confirm | 🟡 | M | ⏳ Not yet done |
 
 ---
 
@@ -292,8 +292,8 @@ These params are successfully extracted from datasheets but the engine ignores t
 
 | # | Item | Severity | Effort | Status |
 |---|------|----------|--------|--------|
-| 5a | CalculationsPanel.jsx: Add display rows for `qoss_loss`, `coss_loss`, `body_diode_loss` | 🟡 | S | ⏳ |
-| 5b | Add `"_meta": { "fallbacks_used": [...] }` to each module output; render amber badges in CalculationsPanel | 🔴 | M | ⏳ |
+| 5a | CalculationsPanel.jsx: Add display rows for `qoss_loss`, `coss_loss`, `body_diode_loss` | 🟡 | S | ⏳ Not yet done (depends on 4a) |
+| 5b | Add `"_meta": { "fallbacks_used": [...] }` to each module output; render amber badges in CalculationsPanel | 🔴 | M | ✅ Done (Phase 1 — `_meta.fallbacks` + amber ⚠ N FB badge) |
 | 5c | DesignConstantsModal: Already exists as standalone modal. See §DC_UI for improvement items. | ✅ Done | — | ✅ |
 
 ---
@@ -325,8 +325,8 @@ The PDF/Excel report is missing sections for 8 of 12 calculation modules.
 
 | # | Item | Severity | Effort | Status |
 |---|------|----------|--------|--------|
-| 6a | `report_generator.py → generate_pdf_report()`: Add section loop — iterate over all module keys in `calculations` dict, render generic table for any unhandled module | 🟢 | M | ⏳ |
-| 6b | `generate_excel_report()`: Add BOM rows for bootstrap cap, EMI filter, snubber from calculation results | 🟢 | M | ⏳ |
+| 6a | `report_generator.py → generate_pdf_report()`: Add section loop — iterate over all module keys in `calculations` dict, render generic table for any unhandled module | 🟢 | M | ✅ Done (Phase 3 item 20) |
+| 6b | `generate_excel_report()`: Add BOM rows for bootstrap cap, EMI filter, snubber from calculation results | 🟢 | M | ✅ Done (Phase 3 item 20) |
 
 ---
 
@@ -355,8 +355,8 @@ PARAM_BOUNDS_SI = {
 
 | # | Item | Severity | Effort | Status |
 |---|------|----------|--------|--------|
-| 7a | MotorForm.jsx: Lock fields to specific units, show unit label per field | 🟡 | S | ⏳ |
-| 7b | calc_engine base: Add SI sanity bounds — log warning when extracted value is outside physical range | 🔴 | M | ⏳ |
+| 7a | MotorForm.jsx: Lock fields to specific units, show unit label per field | 🟡 | S | ✅ Done (Phase 3 item 24) |
+| 7b | calc_engine base: Add SI sanity bounds — log warning when extracted value is outside physical range | 🔴 | M | ✅ Done (Phase 3 item 25 — `_PARAM_BOUNDS` already implemented in base.py) |
 
 ---
 
@@ -472,14 +472,14 @@ See §COMPAT — this is now a dedicated feature with its own section.
 
 | # | Issue | Severity | Effort | Status |
 |---|-------|----------|--------|--------|
-| 13-1 | **Tj iteration — no convergence check.** `mosfet.py` loops exactly 5 times regardless. Fix: replace `for _ in range(5)` with convergence criterion `abs(tj_new - tj_prev) < 0.1°C`, max 20 iterations. | 🟡 | S | ⏳ |
-| 13-2 | **Dead time — turn-on path not validated.** Only turn-off path used to size dt. Turn-on path `(td_on + tr + t_prop_on)` may be longer for asymmetric drivers. Fix: compute both, take `max(dt_turnoff, dt_turnon)`. | 🟡 | S | ⏳ |
-| 13-3 | **Switching loss — linear approximation only.** The Qgd-based model (already implemented) is more accurate than the linear `/π` model. Fix: log a note in output when falling back to linear model; prefer Qgd model when `qgd` is extracted. | 🟢 | S | ⏳ |
-| 13-4 | **Rds(on) temperature coefficient α hardcoded to 2.1.** SiC MOSFETs: α ≈ 0.3–0.5 — catastrophically wrong. Fix: move to DESIGN_CONSTANTS as `thermal.rds_alpha` (default 2.1, user-overridable for SiC). | 🟡 | S | ⏳ |
-| 13-5 | **Ringing Q factor hardcoded to 8.0** in `waveform.py`. High-inductance PCBs can have Q=15–20. Fix: use `self._dc("snub.ring_q_factor", 8.0)` as design constant. | 🟡 | S | ⏳ |
-| 13-6 | **No multi-cycle ringing superposition.** Each switching event resets ring amplitude to zero. Fix: track residual at end of each period, add to next period's initial ring. | 🟢 | M | ⏳ |
-| 13-7 | **Snubber response time not validated.** `τ = Rs × Cs` must satisfy `3τ < 0.5 / fsw`. Code computes Rs and Cs but never checks this. Fix: add validation in `calc_snubber()` with warning if snubber is too slow. | 🟡 | S | ⏳ |
-| 13-8 | **Vds overshoot check silent.** `waveform.py`: `v_overshoot_off = min(v_overshoot_off, _vds_cap)` silently clamps. If ringing hits Vds_max × 0.85, MOSFET is in avalanche danger zone — no warning returned. Fix: add `vds_overshoot_danger = True` and warning string to waveform output when threshold exceeded. | 🔴 | S | ⏳ |
+| 13-1 | **Tj iteration — no convergence check.** `mosfet.py` loops exactly 5 times regardless. Fix: replace `for _ in range(5)` with convergence criterion `abs(tj_new - tj_prev) < 0.1°C`, max 20 iterations. | 🟡 | S | ✅ Done (Phase 1 item 4) |
+| 13-2 | **Dead time — turn-on path not validated.** Only turn-off path used to size dt. Turn-on path `(td_on + tr + t_prop_on)` may be longer for asymmetric drivers. Fix: compute both, take `max(dt_turnoff, dt_turnon)`. | 🟡 | S | ✅ Done (Phase 1 item 5) |
+| 13-3 | **Switching loss — linear approximation only.** The Qgd-based model (already implemented) is more accurate than the linear `/π` model. Fix: log a note in output when falling back to linear model; prefer Qgd model when `qgd` is extracted. | 🟢 | S | ✅ Done (Phase 2 — Qgd model preferred, fallback note logged) |
+| 13-4 | **Rds(on) temperature coefficient α hardcoded to 2.1.** SiC MOSFETs: α ≈ 0.3–0.5 — catastrophically wrong. Fix: move to DESIGN_CONSTANTS as `thermal.rds_alpha` (default 2.1, user-overridable for SiC). | 🟡 | S | ✅ Done (Phase 1 item 1 + Phase 2 item 11) |
+| 13-5 | **Ringing Q factor hardcoded to 8.0** in `waveform.py`. High-inductance PCBs can have Q=15–20. Fix: use `self._dc("snub.ring_q_factor", 8.0)` as design constant. | 🟡 | S | ✅ Done (Phase 1 item 1 + Phase 2 item 12) |
+| 13-6 | **No multi-cycle ringing superposition.** Each switching event resets ring amplitude to zero. Fix: track residual at end of each period, add to next period's initial ring. | 🟢 | M | ✅ Done (Phase 3 item 31 — `v_ring_residual_pct` + warning if >10%) |
+| 13-7 | **Snubber response time not validated.** `τ = Rs × Cs` must satisfy `3τ < 0.5 / fsw`. Code computes Rs and Cs but never checks this. Fix: add validation in `calc_snubber()` with warning if snubber is too slow. | 🟡 | S | ✅ Done (Phase 1 item 3) |
+| 13-8 | **Vds overshoot check silent.** `waveform.py`: `v_overshoot_off = min(v_overshoot_off, _vds_cap)` silently clamps. If ringing hits Vds_max × 0.85, MOSFET is in avalanche danger zone — no warning returned. Fix: add `vds_overshoot_danger = True` and warning string to waveform output when threshold exceeded. | 🔴 | S | ✅ Done (Phase 1 item 2) |
 
 ---
 
@@ -603,10 +603,10 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 
 | # | Item | Severity | Effort | Status |
 |---|------|----------|--------|--------|
-| SPICE-1 | ReportPanel.jsx: Show amber warning when motor form is empty — netlist silently uses fallback 50mΩ/100µH. Add note: "Motor specs not entered — load model uses defaults." | 🟡 | S | ⏳ |
-| SPICE-2 | ReportPanel.jsx: Include project name in filename — currently always `mc_halfbridge.cir`. Change to `{project.name}_halfbridge.cir`. | 🟢 | S | ⏳ |
-| SPICE-3 | ReportPanel.jsx: Add simulator compatibility note in card description — "Compatible with ngspice. LTspice users: replace `.model NMOS Level=1` with vendor SPICE model." | 🟢 | S | ⏳ |
-| SPICE-4 | ReportPanel.jsx: Add motor form status row to Project Status block — currently checks MCU/Driver/MOSFET + calculations, but not motor specs, which drive the SPICE load model. | 🟡 | S | ⏳ |
+| SPICE-1 | ReportPanel.jsx: Show amber warning when motor form is empty — netlist silently uses fallback 50mΩ/100µH. | 🟡 | S | ✅ Done (Phase 2 item 19) |
+| SPICE-2 | ReportPanel.jsx: Include project name in filename — `{project.name}_halfbridge.cir`. | 🟢 | S | ✅ Done (Phase 2 item 19) |
+| SPICE-3 | ReportPanel.jsx: LTspice compatibility note in card description. | 🟢 | S | ✅ Done (Phase 2 item 19) |
+| SPICE-4 | ReportPanel.jsx: Motor form status row in Project Status block. | 🟡 | S | ✅ Done (Phase 2 item 19) |
 
 ---
 
@@ -616,10 +616,10 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 
 | # | Item | Severity | Effort | Status |
 |---|------|----------|--------|--------|
-| DC_UI-1 | DesignConstantsModal.jsx: Add `UI_META` entries for all new constants from §14 — `snub.ring_q_factor`, `thermal.rds_alpha`, `gate.driver_derating_per_c`. Without entries, they show as raw key strings. | 🟡 | S | ⏳ |
-| DC_UI-2 | DesignConstantsModal.jsx: Add min/max bounds validation on number inputs — currently user can enter negative values for constants like `thermal.rth_sa` with no error. | 🟡 | S | ⏳ |
+| DC_UI-1 | DesignConstantsModal.jsx: Add `UI_META` entries for all new constants from §14 — `snub.ring_q_factor`, `thermal.rds_alpha`, `gate.driver_derating_per_c`. | 🟡 | S | ✅ Done (Phase 1 item 9) |
+| DC_UI-2 | DesignConstantsModal.jsx: Add min/max bounds validation on number inputs. | 🟡 | S | ✅ Done (Phase 1 item 10) |
 | DC_UI-3 | ~~base.py + DesignConstantsModal UI_META: Delete `adc.max_duty_cycle`~~ — 🚫 **CANCELLED**: it IS used in `calc_adc_timing()` at `validation.py:172`. Keep it. Add UI_META entry for it instead. | 🟢 | S | ✅ |
-| DC_UI-4 | DesignConstantsModal.jsx: Add "affects:" annotation per constant row — tells user which module uses the constant (e.g. "affects: Snubber, Waveform"). | 🟢 | M | ⏳ |
+| DC_UI-4 | DesignConstantsModal.jsx: Add "affects:" annotation per constant row — tells user which module uses the constant (e.g. "affects: Snubber, Waveform"). | 🟢 | M | ✅ Done (Phase 3 item 26) |
 
 ---
 
@@ -630,10 +630,10 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 
 | # | Item | Severity | Effort | Status |
 |---|------|----------|--------|--------|
-| WAVE-1 | waveform.py + snubber module use **different stray inductance sources**. Waveform reads `system_specs.power_loop_inductance_nh`; snubber reads `snub.stray_l_default` design constant. They should use the same value. Fix: snubber reads `power_loop_inductance_nh` when non-zero, falls back to design constant. | 🟡 | M | ⏳ |
-| WAVE-2 | waveform.py line 76: `v_bus = self.v_peak` uses peak (60V transient) not nominal bus (48V). Intentional for worst-case Vds modelling, but confusing — waveform displays 60V Vds during normal operation. Fix: add comment in code + note in WaveformPanel UI explaining why. | 🟢 | S | ⏳ |
-| WAVE-3 | Q_ring = 8.0 hardcoded in waveform.py. See §13 Issue 13-5 — replace with design constant `snub.ring_q_factor`. | 🟡 | S | ⏳ |
-| WAVE-4 | Vds overshoot danger check missing. See §13 Issue 13-8 — add explicit danger flag when overshoot ≥ 85% of Vds_max. | 🔴 | S | ⏳ |
+| WAVE-1 | waveform.py + snubber module use **different stray inductance sources**. Waveform reads `system_specs.power_loop_inductance_nh`; snubber reads `snub.stray_l_default` design constant. They should use the same value. Fix: snubber reads `power_loop_inductance_nh` when non-zero, falls back to design constant. | 🟡 | M | ✅ Done (Phase 2 item 18 — both use same override key) |
+| WAVE-2 | waveform.py line 76: `v_bus = self.v_peak` uses peak (60V transient) not nominal bus (48V). Intentional for worst-case Vds modelling, but confusing. Fix: add note in WaveformPanel UI explaining why. | 🟢 | S | ✅ Done (Phase 3 item 27) |
+| WAVE-3 | Q_ring = 8.0 hardcoded in waveform.py. See §13 Issue 13-5 — replace with design constant `snub.ring_q_factor`. | 🟡 | S | ✅ Done (Phase 1 item 1 + Phase 2 item 12) |
+| WAVE-4 | Vds overshoot danger check missing. See §13 Issue 13-8 — add explicit danger flag when overshoot ≥ 85% of Vds_max. | 🔴 | S | ✅ Done (Phase 1 item 2) |
 
 ---
 
@@ -650,7 +650,7 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 
 ---
 
-### Phase 1 — Critical Correctness (⏳ in progress — items 1–7, 9–10 done in worktree, pending PR)
+### Phase 1 — Critical Correctness ✅ COMPLETE (merged to main 2026-04-27)
 
 > **Audit correction applied**: Items 1 and DC_UI-3 were revised after external review — `bootstrap_vf` and `boot.safety_margin` reverted to original (more conservative) values; `adc.max_duty_cycle` restored (NOT dead code). See §14 notes.
 
@@ -663,7 +663,7 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 | 5 | Dead time — compute both turn-on and turn-off paths, take max | §13-2 | S | ✅ |
 | 6 | Fallback transparency — backend `_meta.fallbacks` with `message` field on every fallback | §2a | M | ✅ |
 | 7 | Fallback transparency — frontend amber `⚠ N FB` badge with tooltip in CalculationsPanel | §2b | M | ✅ |
-| 8 | Motor Compatibility feature — backend `motor_compat.py` + new sidebar tab | §COMPAT | L | ⏳ |
+| 8 | Motor Compatibility feature — single-motor checks + verdict UI | §COMPAT | L | ✅ Done (Phase 1 item 8 — stall/modulation/regen checks, verdict banner). Multi-motor COMPAT-1 to COMPAT-4 deferred. |
 | 9 | Update `UI_META` for new constants + add ADC Timing category + `adc.max_duty_cycle` | §DC_UI-1 | S | ✅ |
 | 10 | DC_UI input bounds — `min`/`max` HTML attrs + `onBlur` clamp on all inputs | §DC_UI-2 | S | ✅ |
 
@@ -673,42 +673,42 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 
 ---
 
-### Phase 2 — Accuracy
+### Phase 2 — Accuracy ✅ COMPLETE (merged to main 2026-04-28)
 
-| # | Item | Ref | Effort |
-|---|------|-----|--------|
-| 11 | Rds α as design constant — replace hardcoded 2.1 in `mosfet.py` | §13-4 | S |
-| 12 | Ring Q as design constant — replace hardcoded 8.0 in `waveform.py` | §13-5 + §WAVE-3 | S |
-| 13 | Gate drive IC thermal — split gate power, compute driver Tj | §15 | M |
-| 14 | 🚫 ~~MOSFET SOA check — switching time vs SOA boundary~~ — **Decided not to implement.** Datasheet SOA curves are plotted for linear-mode operation (µs–ms pulse widths). Hard-switched PWM transitions (50–200ns) are below the shortest datasheet data point; extrapolating to sub-µs yields physically meaningless numbers. For hard-switching inverters, safety is correctly verified by Vds_max margin + Id_pulsed + Tj checks — which the engine already does. | §15 | — |
-| 15 | Shoot-through current — dead-time < trr warning | §15 | S |
-| 16 | CALC_DEPS audit — verify `ciss`, `rg_int`, `deadtime_min`, `deadtime_default`, `pwm_deadtime_res`, `pwm_deadtime_max` are all in CALC_DEPS sets | §9 (remaining) | S |
-| 17 | Feed `qoss` + `crss` into calculations | §4a, §4c | S |
-| 18 | Stray inductance consistency — snubber + waveform same source | §WAVE-1 | M |
-| 19 | SPICE export improvements (SPICE-1 through SPICE-4) | §SPICE | S |
+| # | Item | Ref | Effort | Status |
+|---|------|-----|--------|--------|
+| 11 | Rds α as design constant — replace hardcoded 2.1 in `mosfet.py` | §13-4 | S | ✅ |
+| 12 | Ring Q as design constant — replace hardcoded 8.0 in `waveform.py` | §13-5 + §WAVE-3 | S | ✅ |
+| 13 | Gate drive IC thermal — split gate power, compute driver Tj | §15 | M | ✅ |
+| 14 | 🚫 ~~MOSFET SOA check — switching time vs SOA boundary~~ — **Decided not to implement.** Datasheet SOA curves are plotted for linear-mode operation (µs–ms pulse widths). Hard-switched PWM transitions (50–200ns) are below the shortest datasheet data point; extrapolating to sub-µs yields physically meaningless numbers. For hard-switching inverters, safety is correctly verified by Vds_max margin + Id_pulsed + Tj checks — which the engine already does. | §15 | — | 🚫 |
+| 15 | Shoot-through current — dead-time < trr warning | §15 | S | ✅ |
+| 16 | CALC_DEPS audit — `deadtime_min` + `deadtime_default` added to driver set | §9 (remaining) | S | ✅ |
+| 17 | Feed `crss` into dV/dt (`dv_dt_crss_v_per_us`); `qoss` display deferred (§4a) | §4a, §4c | S | ✅ crss done · ⏳ qoss pending |
+| 18 | Stray inductance consistency — snubber + waveform same override key | §WAVE-1 | M | ✅ |
+| 19 | SPICE export improvements (SPICE-1 through SPICE-4) | §SPICE | S | ✅ |
 
 ---
 
-### Phase 3 — Completeness
+### Phase 3 — Completeness ✅ COMPLETE (merged to main 2026-04-28)
 
-| # | Item | Ref | Effort |
-|---|------|-----|--------|
-| 20 | Report generator — 8 missing PDF sections + Excel BOM gaps | §6 | L |
-| 21 | E-series snapping — TVS, shunt cap, OTP NTC | §8 | M |
-| 22 | ADC timing validation output | §12a | M |
-| 23 | dV/dt output block | §12b | S |
-| 24 | Motor form unit labels (lock fields to mΩ / µH) | §7a | S |
-| 25 | SI bounds validation in calc_engine | §7b | M |
-| 26 | DC_UI "affects:" annotation per constant | §DC_UI-4 | M |
-| 27 | Waveform v_peak vs v_bus UI note | §WAVE-2 | S |
-| 28 | ADC current loop bandwidth module | §15 | M |
-| 29 | EMI DM noise module | §15 | L |
-| 30 | Derating curves module | §15 | M |
-| 31 | Multi-cycle ringing superposition (frontend) | §13-6 | M |
-| 32 | API key UX improvements (status, estimate, health check) | §16c | M |
-| 33 | **Worst-case V_peak calculator** — combine nominal Vbus + inductive overshoot (from snubber) + regen braking back-EMF overshoot + 10% supply transient constant. Validate that system `v_peak` covers actual worst case. | §MISSING-1 | M |
-| 34 | **Worst-case stall current** — output `i_stall = v_bus / Rph` and `i_fault = v_bus / (2×Rds_hot)`. Warn if `max_phase_current` is set below stall current. | §MISSING-2 | S |
-| 35 | **Multi-operating-point thermal sweep** — calculate Tj at [stall, 25%, 50%, rated, max speed]. Worst thermal often at stall (zero back-EMF, max current, no motor cooling). | §MISSING-3 | L |
+| # | Item | Ref | Effort | Status |
+|---|------|-----|--------|--------|
+| 20 | Report generator — generic PDF section loop + Excel BOM rows (snubber, EMI) | §6 | L | ✅ |
+| 21 | E-series snapping — TVS to E24, shunt cap to E12, OTP NTC pullup to E24 | §8 | M | ✅ |
+| 22 | ADC dead-time window check (`adc_fits_in_dead_time`) | §12a | M | ✅ |
+| 23 | dV/dt output block (`dvdt_on_v_per_ns`, Crss-based, EMC check) | §12b | S | ✅ |
+| 24 | Motor form inline unit badges (mΩ / µH / etc.) | §7a | S | ✅ |
+| 25 | SI bounds validation — `_PARAM_BOUNDS` already in base.py | §7b | M | ✅ Already existed |
+| 26 | DC_UI "affects:" annotation per constant in DesignConstantsModal | §DC_UI-4 | M | ✅ |
+| 27 | Waveform v_peak vs v_bus UI note in WaveformPanel | §WAVE-2 | S | ✅ |
+| 28 | ADC current-loop bandwidth + Nyquist check module (`calc_adc_bandwidth`) | §15 | M | ✅ |
+| 29 | EMI DM noise module — CISPR 25 Class 3 estimate (`calc_emi_dm`) | §15 | L | ✅ |
+| 30 | Thermal derating curve sweep 0–125°C (`calc_derating`) | §15 | M | ✅ |
+| 31 | Multi-cycle ringing residual — `exp(-T/τ)`, warns if >10% (`v_ring_residual_pct`) | §13-6 | M | ✅ |
+| 32 | API key health check endpoint + Test Keys button + per-key status badges | §16c | M | ✅ |
+| 33 | Worst-case V_peak calculator — supply transient + overshoot + regen (`calc_vpeak_check`) | §MISSING-1 | M | ✅ |
+| 34 | Worst-case stall current — DC locked-rotor `v_bus/Rph` + MOSFET fault path `v_bus/(2×Rds_hot)` | §MISSING-2 | S | ✅ |
+| 35 | Multi-operating-point thermal sweep — Tj at stall/25%/50%/rated/max speed (`calc_thermal_multipoint`) | §MISSING-3 | L | ✅ |
 
 ---
 
@@ -741,32 +741,32 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 
 | Category | Issues | Critical | Medium | Low | Status |
 |----------|--------|----------|--------|-----|--------|
-| Crash bugs (Phase 0) | 4 | 2 | 1 | 1 | ✅ All done (merged main 2026-04-27) |
-| Formula correctness | 8 | 2 | 5 | 1 | ✅ 7 done (Phase 1) · ⏳ 1 pending (13-6) |
+| Crash bugs (Phase 0) | 4 | 2 | 1 | 1 | ✅ All done |
+| Formula correctness | 8 | 2 | 5 | 1 | ✅ All done (Phases 1–3) |
 | Wrong DC defaults | 5 | 3 | 2 | 0 | ✅ 2 fixed · 🚫 2 reverted (audit) · ✅ 1 fixed |
-| Missing DC constants | 3 | 2 | 1 | 0 | ✅ All 3 added (Phase 1) |
-| Missing modules | 7 | 3 | 3 | 1 | ⏳ Pending (Phase 2–3) |
-| Motor compat feature | 5 | 0 | 4 | 1 | ⏳ Pending (Phase 1 item 8) |
+| Missing DC constants | 3 | 2 | 1 | 0 | ✅ All done (Phase 1) |
+| Missing modules | 7 | 3 | 3 | 1 | ✅ All done (Phases 2–3) |
+| Motor compat feature | 5 | 0 | 4 | 1 | ✅ Single-motor done · ⏳ Multi-motor (COMPAT-1–4) deferred Phase 4 |
 | Hardcoded fallbacks | 21 | 12 | 7 | 2 | ✅ Transparency system done (Phase 1) |
-| Display / report gaps | 10 | 0 | 5 | 5 | ⏳ Pending |
-| API key management | 19 | 2 | 6 | 8 | ✅ 16 done · ⏳ 3 pending · 🚫 3 skipped |
-| SPICE export | 4 | 0 | 2 | 2 | ⏳ Pending |
-| Design constants UI | 4 | 0 | 2 | 2 | ✅ 3 done (Phase 1) · ⏳ 1 pending (DC_UI-4) |
-| Waveform specific | 4 | 1 | 2 | 1 | ✅ 2 done (WAVE-3, WAVE-4) · ⏳ 2 pending |
-| Worst-case analysis (new) | 3 | 0 | 3 | 0 | ⏳ Pending (Phase 3, items 33–35) |
+| Display / report gaps | 10 | 0 | 5 | 5 | ✅ All done (Phases 2–3) |
+| API key management | 19 | 2 | 6 | 8 | ✅ All done · 🚫 3 skipped |
+| SPICE export | 4 | 0 | 2 | 2 | ✅ All done (Phase 2 item 19) |
+| Design constants UI | 4 | 0 | 2 | 2 | ✅ All done (Phases 1 + 3) |
+| Waveform specific | 4 | 1 | 2 | 1 | ✅ All done (Phases 1–3) |
+| Worst-case analysis (new) | 3 | 0 | 3 | 0 | ✅ All done (Phase 3, items 33–35) |
 | ESSENTIAL_IDS (§9) | 6 | — | — | — | ✅ Resolved at prompt level (v14-gemini) |
-| SPICE export UI | 1 | — | — | — | ✅ Done (button in ReportPanel) |
-| Design constants UI | 1 | — | — | — | ✅ Done (DesignConstantsModal) |
+| qoss loss calculation | 1 | — | — | — | ⏳ Not yet done (§4a) |
+| MCU validation sub-module | 1 | — | — | — | ⏳ Not yet done (§4d) |
 
-### Completion as of 2026-04-27 (post-audit)
+### Completion as of 2026-04-28
 - ✅ **Phase 0 complete** — 4 crash bugs merged to main
-- ✅ **Phase 1 items 1–7, 9–10 done** — in `phase1-correctness` worktree, pending PR
-- ⏳ **Phase 1 item 8** — Motor Compatibility (§COMPAT), large feature, own session
-- 🚫 **4 items decided not to implement** (429 distinction, comparison stop, Pass 2 toggle, delete adc.max_duty_cycle)
-- ✅ **Audit corrections applied** — `bootstrap_vf` and `boot.safety_margin` reverted to conservative defaults; `adc.max_duty_cycle` restored
-- ⏳ **Phase 2–3 remaining** — ~60 items including 3 new worst-case analysis features (items 33–35)
+- ✅ **Phase 1 complete** — all items merged to main
+- ✅ **Phase 2 complete** — all items merged to main
+- ✅ **Phase 3 complete** — all items merged to main
+- 🚫 **5 items decided not to implement** (429 distinction, comparison stop, Pass 2 toggle, delete adc.max_duty_cycle, MOSFET SOA check)
+- ⏳ **Remaining** — §4a (qoss loss), §4d (MCU validation), COMPAT-1 to COMPAT-4 (multi-motor comparison)
 
 ---
 
-*End of plan — estimated effort for remaining phases: ~60–75 hours total.*
+*End of plan — Phases 0–3 complete. Remaining: §4a (qoss loss, S), §4d (MCU validation, M), COMPAT-1–4 (multi-motor comparison, Phase 4, L).*
 *PROMPT_VERSION current: `v14-gemini` · Next if prompt changes: `v15-gemini`*
