@@ -888,6 +888,79 @@ class ValidationMixin:
         }
 
     # ═══════════════════════════════════════════════════════════════════
+    def calc_vpeak_check(self) -> dict:
+        """Compute true worst-case bus voltage and compare to system_specs.peak_voltage.
+
+        v_peak_worst = v_bus × 1.1 (supply transient)
+                     + v_overshoot_off (switching spike from snubber/waveform)
+                     + v_regen_estimate (from motor_validation back-EMF)
+        Warns if peak_voltage < v_peak_worst.
+        """
+        self._current_module = "vpeak_check"
+        warnings = []
+
+        v_bus_nominal = self.v_bus
+        v_peak_configured = self.v_peak
+
+        # 1. Supply transient: +10% above nominal (typical grid/charger spec)
+        v_supply_transient = v_bus_nominal * 1.1
+        self._log_hc("vpeak_check", "Supply transient margin", "1.10×", "IEC 61000 ±10% supply variation")
+
+        # 2. Switching overshoot — from snubber module if available
+        v_overshoot = 0.0
+        try:
+            snub = self.calc_snubber()
+            self._current_module = "vpeak_check"
+            v_overshoot = float(snub.get("voltage_overshoot_v") or 0)
+        except Exception:
+            pass
+
+        # 3. Regenerative braking overshoot estimate — from motor_validation
+        v_regen = 0.0
+        try:
+            mv = self.calc_motor_validation()
+            self._current_module = "vpeak_check"
+            v_regen_raw = mv.get("v_regen_estimate_v")
+            if v_regen_raw is not None:
+                # v_regen_estimate_v is already the absolute bus voltage during regen
+                # We want the DELTA above v_supply_transient
+                v_regen = max(0.0, float(v_regen_raw) - v_supply_transient)
+        except Exception:
+            pass
+
+        v_peak_worst = v_supply_transient + v_overshoot + v_regen
+        v_peak_margin = v_peak_configured - v_peak_worst
+        v_peak_sufficient = v_peak_configured >= v_peak_worst
+
+        if not v_peak_sufficient:
+            warnings.append(
+                f"⚠ V_PEAK UNDERSIZED: Configured peak_voltage ({v_peak_configured:.0f}V) < "
+                f"estimated worst-case ({v_peak_worst:.0f}V = "
+                f"{v_supply_transient:.0f}V supply + {v_overshoot:.1f}V overshoot + {v_regen:.1f}V regen). "
+                f"TVS, MOSFET Vds, and OVP threshold may be undersized."
+            )
+            self.audit_log.append(
+                f"[VPeak] WARNING: configured V_peak={v_peak_configured:.0f}V < worst-case {v_peak_worst:.0f}V."
+            )
+        else:
+            self.audit_log.append(
+                f"[VPeak] V_peak={v_peak_configured:.0f}V ≥ worst-case {v_peak_worst:.0f}V — OK ({v_peak_margin:.1f}V margin)."
+            )
+
+        return {
+            "v_bus_nominal_v":      round(v_bus_nominal, 1),
+            "v_peak_configured_v":  round(v_peak_configured, 1),
+            "v_supply_transient_v": round(v_supply_transient, 1),
+            "v_overshoot_v":        round(v_overshoot, 1),
+            "v_regen_delta_v":      round(v_regen, 1),
+            "v_peak_worst_v":       round(v_peak_worst, 1),
+            "v_peak_margin_v":      round(v_peak_margin, 1),
+            "v_peak_sufficient":    v_peak_sufficient,
+            "warnings":             warnings,
+            "_meta":                self._module_meta.get("vpeak_check", {"hardcoded": [], "fallbacks": []}),
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
     # REVERSE CALCULATIONS — work backwards from target outputs
     # ═══════════════════════════════════════════════════════════════════
 

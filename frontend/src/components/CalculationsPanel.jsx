@@ -1262,6 +1262,19 @@ const SECTIONS = [
     ],
   },
   {
+    key: 'vpeak_check', label: 'V_peak Worst-Case', icon: '⚡',
+    rows: [
+      { key: 'v_bus_nominal_v', label: 'V_bus nominal', full: 'Nominal Bus Voltage', unit: 'V', dec: 1, explain: 'Configured nominal DC bus voltage from Settings.' },
+      { key: 'v_supply_transient_v', label: 'Supply transient', full: 'Supply Transient Peak (V_bus × 1.1)', unit: 'V', dec: 1, explain: 'Worst-case supply voltage including ±10% grid variation (IEC 61000). Always add this on top of nominal.' },
+      { key: 'v_overshoot_v', label: 'Switching overshoot', full: 'Switching Spike (L_stray × dI/dt)', unit: 'V', dec: 1, explain: 'Voltage spike from MOSFET turn-off into stray bus inductance. From snubber module: I_max × √(L_stray/Coss).' },
+      { key: 'v_regen_delta_v', label: 'Regen overshoot', full: 'Regenerative Braking Delta Voltage', unit: 'V', dec: 1, explain: 'Additional bus voltage rise during regenerative braking, above supply transient. From motor back-EMF estimate.' },
+      { key: 'v_peak_worst_v', label: 'Worst-case V_peak', full: 'Total Worst-Case Bus Voltage', unit: 'V', dec: 1, warn: 55, danger: 65, explain: 'Sum of supply transient + switching overshoot + regen overshoot. MOSFETs, TVS, OVP threshold must all be rated above this.' },
+      { key: 'v_peak_configured_v', label: 'V_peak configured', full: 'System V_peak Setting', unit: 'V', dec: 1, explain: 'Peak voltage configured in Settings. Used for OVP threshold, TVS selection, MOSFET Vds rating.' },
+      { key: 'v_peak_margin_v', label: 'V_peak margin', full: 'Margin: configured − worst-case', unit: 'V', dec: 1, warn: 5, danger: 0, explain: 'V_peak_configured − V_peak_worst. Negative = configured peak voltage is too low for the expected worst case.' },
+      { key: 'v_peak_sufficient', label: 'V_peak OK?', full: 'Is Configured V_peak Sufficient?', unit: '', dec: 0, explain: 'true = configured peak voltage covers all worst-case scenarios.' },
+    ],
+  },
+  {
     key: 'adc_bandwidth', label: 'ADC BW Check', icon: '📡',
     rows: [
       { key: 'adc_rate_msps', label: 'ADC rate', full: 'ADC Sample Rate', unit: 'MSPS', dec: 3, explain: 'Extracted from MCU datasheet. Used to validate Nyquist and current-loop bandwidth.' },

@@ -1151,6 +1151,7 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
             "pcb_trace_thermal":    self.calc_pcb_trace_thermal(),
             "adc_bandwidth":        self.calc_adc_bandwidth(),
             "derating":             self.calc_derating(),
+            "vpeak_check":          self.calc_vpeak_check(),
         }
         # Attach logs after calculations have fully populated them
         results["audit_log"] = list(dict.fromkeys(self.audit_log))
