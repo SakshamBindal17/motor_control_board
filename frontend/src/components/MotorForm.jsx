@@ -99,11 +99,6 @@ export default function MotorForm({ config }) {
                     color: 'var(--txt-2)', marginBottom: 5,
                   }}>
                     {field.label}
-                    {field.unit && (
-                      <span style={{ marginLeft: 5, fontSize: 10, color: 'var(--txt-2)', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>
-                        [{field.unit}]
-                      </span>
-                    )}
                   </label>
 
                   {field.type === 'select' ? (
@@ -115,14 +110,26 @@ export default function MotorForm({ config }) {
                       {field.options.map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                   ) : (
-                    <input
-                      type="number"
-                      step="any"
-                      className="inp inp-mono"
-                      value={specs[field.key] || ''}
-                      onChange={e => update(field.key, e.target.value)}
-                      placeholder="Enter value…"
-                    />
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type="number"
+                        step="any"
+                        className="inp inp-mono"
+                        style={field.unit ? { paddingRight: `${field.unit.length * 8 + 12}px` } : undefined}
+                        value={specs[field.key] || ''}
+                        onChange={e => update(field.key, e.target.value)}
+                        placeholder="Enter value…"
+                      />
+                      {field.unit && (
+                        <span style={{
+                          position: 'absolute', right: 8,
+                          fontSize: 10, fontFamily: 'var(--font-mono)',
+                          color: 'var(--txt-3)', pointerEvents: 'none', userSelect: 'none',
+                        }}>
+                          {field.unit}
+                        </span>
+                      )}
+                    </div>
                   )}
 
                   {field.note && (

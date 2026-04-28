@@ -1128,6 +1128,9 @@ const SECTIONS = [
       { key: 't_3_channel_us', label: '3-ch total time', full: '3-Channel Sequential Conversion Time', unit: 'µs', dec: 3, explain: 'Definition: Time to sequentially sample all 3 phase shunts on a single ADC. Formula: 3 × Conversion_Time. Best Practice: If this exceeds the sampling window, you MUST use simultaneous sampling (multiple ADCs) or hardware DMA triggers.' },
       { key: 'adc_channels', label: 'ADC channels', full: 'Available MCU ADC Channels', unit: 'ch', dec: 0, explain: 'Definition: Total analog-to-digital converter input pins available on the chosen microcontroller.' },
       { key: 'channels_needed', label: 'Channels needed', full: 'Required ADC Channels', unit: 'ch', dec: 0, explain: 'Definition: Minimum recommended ADC channels for a fully protected FOC drive. Assumption: 3x Phase Shunts + 1x Bus Voltage + 2x Thermistors (FETs/Motor) + 1x Throttle/BEMF = 7 channels.' },
+      { key: 'adc_settling_ns', label: 'ADC settling', full: 'ADC Single Conversion Time in ns', unit: 'ns', dec: 1, explain: 'Definition: ADC conversion time expressed in nanoseconds for dead-time comparison. Formula: 1/ADC_rate × 1e9.' },
+      { key: 'dead_time_ns', label: 'Dead time (DT)', full: 'Actual Gate Dead Time', unit: 'ns', dec: 1, explain: 'Definition: Actual programmed dead time from the dead_time module. Included here for comparison with ADC settling time.' },
+      { key: 'adc_fits_in_dead_time', label: 'ADC fits in DT?', full: 'ADC Settles Within Dead Time', unit: '', dec: 0, explain: 'Definition: True if ADC conversion time < dead time. If false, the ADC cannot sample during the dead-time window — use center-aligned sampling instead.' },
     ],
   },
   {
@@ -1141,6 +1144,10 @@ const SECTIONS = [
       { key: 'copper_loss_3ph_w', label: 'Copper loss (3ph)', full: 'Total Stator Copper Loss', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — winding heat at rated current' },
       { key: 'copper_loss_pct', label: 'Copper loss %', full: 'Copper Loss Percentage', unit: '%', dec: 1, warn: 3, danger: 5, explain: 'Copper loss as percentage of rated power' },
       { key: 'phase_time_const_ms', label: 'L/R time const', full: 'Electrical Time Constant (L/R)', unit: 'ms', dec: 2, explain: 'Lph / Rph — electrical time constant of motor winding' },
+      { key: 'i_stall_a', label: 'I stall (SVPWM)', full: 'SVPWM Stall Current (V_bus/√3 / Rph)', unit: 'A', dec: 1, warn: 80, danger: 120, explain: 'Worst-case phase current at stall with SVPWM drive. Formula: (V_bus/√3) / Rph. Firmware OCP must trip before this current flows for more than a few ms.' },
+      { key: 'i_stall_dc_a', label: 'I stall (DC)', full: 'DC Locked-Rotor Stall Current (V_bus / Rph)', unit: 'A', dec: 1, warn: 100, danger: 150, explain: 'True DC locked-rotor current if drive voltage is applied directly (no modulation). Formula: V_bus / Rph. Represents the absolute worst-case for a firmware bug that drives DC continuously.' },
+      { key: 'i_fault_shoot_through_a', label: 'I fault (shoot-thru)', full: 'MOSFET Shoot-Through Fault Current', unit: 'A', dec: 0, warn: 200, danger: 400, explain: 'Shoot-through fault current if both high-side and low-side MOSFETs conduct simultaneously. Formula: V_bus / (2 × Rds_hot at Tj_max). Gate-driver DESAT/OCP must trip < 1µs.' },
+      { key: 'rds_hot_mohm_at_tjmax', label: 'Rds(on) @ Tj_max', full: 'Hot Rds(on) at Tj_max (fault model)', unit: 'mΩ', dec: 2, explain: 'Rds(on) at maximum rated junction temperature, used for shoot-through fault current estimate. Formula: Rds25 × (Tj_max/298K)^α.' },
     ],
   },
   {
@@ -1170,6 +1177,8 @@ const SECTIONS = [
       { key: 'hs_dv_dt_bus', label: 'Switch dV/dt', full: 'Phase Node Slew Rate', unit: 'V/µs', dec: 1, warn: 40, danger: 65, explain: 'Definition: Voltage slew rate on the inverter phase leg. Formula: V_bus / t_rise_actual. Physics: Excessive dV/dt (>50 V/µs) triggers severe EMI, capacitive motor bearing currents, and false MOSFET triggering.' },
       { key: 'hs_i_peak_on_a', label: 'I_peak Driver', full: 'Absolute Peak Gate Current', unit: 'A', dec: 2, warn: 2, danger: 3, explain: 'Definition: Maximum instantaneous current pulled from the driver. Formula: V_drv / Rg_on_total. Physics: Validates driver sizing (UCC27302 has a specific source/sink saturation limit).' },
       { key: 'hs_rg_power_w', label: 'Rg Power Loss', full: 'Gate Resistor Dissipation', unit: 'W', dec: 3, warn: 0.125, danger: 0.25, explain: 'Definition: Thermal power dissipated specifically in the physical gate resistors. Formula: Q_g × V_drv × fsw, proportionally split. Physics: Verifies 0603/0805 package power limits.' },
+      { key: 'dvdt_on_v_per_ns', label: 'dV/dt Turn-On', full: 'MOSFET Turn-On Slew Rate (datasheet tr)', unit: 'V/ns', dec: 2, warn: 30, danger: 50, explain: 'Definition: Voltage slew rate from MOSFET datasheet rise time. Formula: V_bus / tr. Physics: MOSFET-intrinsic bound — independent of gate resistor. EMC guideline: <50 V/ns.' },
+      { key: 'dvdt_off_v_per_ns', label: 'dV/dt Turn-Off', full: 'MOSFET Turn-Off Slew Rate (datasheet tf)', unit: 'V/ns', dec: 2, warn: 30, danger: 50, explain: 'Definition: Voltage slew rate from MOSFET datasheet fall time. Formula: V_bus / tf. Physics: MOSFET-intrinsic bound — independent of gate resistor. EMC guideline: <50 V/ns.' },
     ],
   },
   {
@@ -1250,6 +1259,63 @@ const SECTIONS = [
       { key: 'power_dissipated_w', label: 'P loss', full: 'Trace Ohmic Power Dissipation', unit: 'W', dec: 3, explain: 'I² × R_total — contributes to system total loss budget' },
       { key: 'current_density_a_mm2', label: 'J density', full: 'Current Density per Layer', unit: 'A/mm²', dec: 2, warn: 8, danger: 15, explain: 'I_per_layer / (W × T_copper) — IPC limit ~8 A/mm² external, ~15 A/mm² critical' },
       { key: 'thermal_status', label: 'Status', full: 'Thermal Status', string: true, explain: 'Overall assessment: safe/warn/danger based on ΔT, Tmax, J_density, and via thermal' },
+    ],
+  },
+  {
+    key: 'emi_dm', label: 'EMI DM Noise', icon: '📻',
+    rows: [
+      { key: 'harmonic_freq_khz', label: 'Eval harmonic', full: 'Evaluated CISPR Harmonic Frequency', unit: 'kHz', dec: 1, explain: 'First harmonic of fsw that falls within the CISPR 25 conducted emissions band (> 150 kHz).' },
+      { key: 'dm_noise_harmonic_dbmuv', label: 'DM noise', full: 'Estimated DM Noise at CISPR Harmonic', unit: 'dBµV', dec: 1, warn: 56, danger: 79, explain: 'Estimated differential-mode conducted emission at evaluated harmonic. Model: V_bus × C_mlcc × 2π × fsw × Z_LISN / n (Fourier harmonic decay).' },
+      { key: 'cispr_limit_dbmuv', label: 'CISPR 25 limit', full: 'CISPR 25 Class 3 Limit at Harmonic', unit: 'dBµV', dec: 0, explain: 'CISPR 25 Class 3 quasi-peak limit: 79 dBµV (0.15–0.53 MHz), 56 dBµV (0.53–1.7 MHz).' },
+      { key: 'required_attenuation_db', label: 'Attenuation needed', full: 'Required DM Filter Attenuation', unit: 'dB', dec: 1, warn: 20, danger: 40, explain: 'How much the DM noise exceeds the CISPR limit. This is how much the DM filter must attenuate.' },
+      { key: 'filter_attenuation_db', label: 'Filter provides', full: 'Estimated DM Filter Attenuation (L_dm || C_x LC)', unit: 'dB', dec: 1, explain: 'Estimated -40dB/decade LC filter attenuation above corner frequency. L_dm = 1% of CM choke inductance.' },
+      { key: 'additional_attenuation_db', label: 'Gap (needed−actual)', full: 'Attenuation Gap to Close', unit: 'dB', dec: 1, warn: 10, danger: 20, explain: 'Zero means filter is adequate. Positive = add more DM filtering (larger X cap or additional DM choke).' },
+      { key: 'emi_filter_adequate', label: 'Filter OK?', full: 'DM Filter Adequate for CISPR 25 Class 3?', unit: '', dec: 0, explain: 'true = estimated DM filter provides enough attenuation for CISPR 25 Class 3.' },
+      { key: 'dm_filter_corner_khz', label: 'Filter corner', full: 'DM LC Filter Corner Frequency', unit: 'kHz', dec: 1, explain: '1/(2π√(L_dm × C_x)). EMI attenuation is -40 dB/decade above this frequency.' },
+    ],
+  },
+  {
+    key: 'vpeak_check', label: 'V_peak Worst-Case', icon: '⚡',
+    rows: [
+      { key: 'v_bus_nominal_v', label: 'V_bus nominal', full: 'Nominal Bus Voltage', unit: 'V', dec: 1, explain: 'Configured nominal DC bus voltage from Settings.' },
+      { key: 'v_supply_transient_v', label: 'Supply transient', full: 'Supply Transient Peak (V_bus × 1.1)', unit: 'V', dec: 1, explain: 'Worst-case supply voltage including ±10% grid variation (IEC 61000). Always add this on top of nominal.' },
+      { key: 'v_overshoot_v', label: 'Switching overshoot', full: 'Switching Spike (L_stray × dI/dt)', unit: 'V', dec: 1, explain: 'Voltage spike from MOSFET turn-off into stray bus inductance. From snubber module: I_max × √(L_stray/Coss).' },
+      { key: 'v_regen_delta_v', label: 'Regen overshoot', full: 'Regenerative Braking Delta Voltage', unit: 'V', dec: 1, explain: 'Additional bus voltage rise during regenerative braking, above supply transient. From motor back-EMF estimate.' },
+      { key: 'v_peak_worst_v', label: 'Worst-case V_peak', full: 'Total Worst-Case Bus Voltage', unit: 'V', dec: 1, warn: 55, danger: 65, explain: 'Sum of supply transient + switching overshoot + regen overshoot. MOSFETs, TVS, OVP threshold must all be rated above this.' },
+      { key: 'v_peak_configured_v', label: 'V_peak configured', full: 'System V_peak Setting', unit: 'V', dec: 1, explain: 'Peak voltage configured in Settings. Used for OVP threshold, TVS selection, MOSFET Vds rating.' },
+      { key: 'v_peak_margin_v', label: 'V_peak margin', full: 'Margin: configured − worst-case', unit: 'V', dec: 1, warn: 5, danger: 0, explain: 'V_peak_configured − V_peak_worst. Negative = configured peak voltage is too low for the expected worst case.' },
+      { key: 'v_peak_sufficient', label: 'V_peak OK?', full: 'Is Configured V_peak Sufficient?', unit: '', dec: 0, explain: 'true = configured peak voltage covers all worst-case scenarios.' },
+    ],
+  },
+  {
+    key: 'adc_bandwidth', label: 'ADC BW Check', icon: '📡',
+    rows: [
+      { key: 'adc_rate_msps', label: 'ADC rate', full: 'ADC Sample Rate', unit: 'MSPS', dec: 3, explain: 'Extracted from MCU datasheet. Used to validate Nyquist and current-loop bandwidth.' },
+      { key: 'nyquist_limit_hz', label: 'Nyquist limit', full: 'Nyquist Frequency (2 × fsw)', unit: 'Hz', dec: 0, explain: 'ADC must sample faster than 2×fsw to avoid aliasing PWM current ripple into the feedback signal.' },
+      { key: 'nyquist_ok', label: 'Nyquist OK?', full: 'Nyquist Check (f_adc > 2×fsw)', unit: '', dec: 0, explain: 'true = ADC rate exceeds Nyquist limit. false = aliasing risk.' },
+      { key: 'samples_per_pwm_period', label: 'Samples/period', full: 'ADC Samples per PWM Period', unit: '', dec: 1, explain: 'f_adc / fsw. Must be ≥ 2 for Nyquist, ideally ≥ 10 for good current ripple rejection.' },
+      { key: 'current_loop_bw_target_hz', label: 'CL BW target', full: 'Current-Loop Bandwidth Target (fsw/10)', unit: 'Hz', dec: 0, explain: 'Standard FOC rule: current-loop bandwidth = fsw/10 for stable control.' },
+      { key: 'current_loop_bw_actual_hz', label: 'CL BW actual', full: 'Practical Current-Loop Bandwidth (f_adc/10)', unit: 'Hz', dec: 0, explain: 'f_adc/10 — achievable closed-loop BW limited by ADC update rate.' },
+      { key: 'current_loop_bw_ok', label: 'CL BW OK?', full: 'Current-Loop BW ≥ fsw/10?', unit: '', dec: 0, explain: 'true = ADC rate supports target current-loop bandwidth. false = ADC too slow for full-speed FOC.' },
+    ],
+  },
+  {
+    key: 'thermal_multipoint', label: 'Thermal Multi-Point', icon: '🌡️',
+    rows: [
+      { key: 'worst_point', label: 'Worst point', full: 'Worst Thermal Operating Point', unit: '', dec: 0, string: true, explain: 'The operating point (stall/25%/50%/rated/max) with the highest junction temperature.' },
+      { key: 'worst_tj_c', label: 'Worst Tj', full: 'Highest Junction Temperature Across All Points', unit: '°C', dec: 1, warn: 125, danger: 150, explain: 'Maximum junction temperature across all 5 operating points. Must be below Tj_max.' },
+      { key: 'worst_margin_c', label: 'Worst margin', full: 'Thermal Margin at Worst Point', unit: '°C', dec: 1, warn: 30, danger: 10, explain: 'Tj_max − Tj_worst. Positive = safe. Negative = thermal runaway at that operating point.' },
+      { key: 'tj_max_c', label: 'Tj max (rated)', full: 'MOSFET Maximum Rated Junction Temperature', unit: '°C', dec: 0, explain: 'From MOSFET datasheet.' },
+      { key: 'rth_total', label: 'Rth total', full: 'Total Thermal Resistance', unit: '°C/W', dec: 3, explain: 'Rjc + Rcs + Rsa thermal stack used for all operating points.' },
+    ],
+  },
+  {
+    key: 'derating', label: 'Thermal Derating', icon: '📉',
+    rows: [
+      { key: 'design_t_amb_c', label: 'Design T_amb', full: 'Design-Point Ambient Temperature', unit: '°C', dec: 0, explain: 'Ambient temperature used for the design point (from Settings → Ambient Temperature).' },
+      { key: 'design_i_max_a', label: 'Design I_max', full: 'Design-Point Max Phase Current', unit: 'A', dec: 0, explain: 'Configured max phase current from Settings.' },
+      { key: 'rth_total', label: 'Rth total', full: 'Total Thermal Resistance (Rjc + Rcs + Rsa)', unit: '°C/W', dec: 3, explain: 'Junction-to-ambient thermal resistance stack used for derating model.' },
+      { key: 'rds_alpha', label: 'Rds α', full: 'Rds(on) Temperature Exponent', unit: '', dec: 2, explain: 'Power-law exponent for Rds(on) vs Tj: Rds_hot = Rds25 × (Tj/298K)^α. Si≈2.1, SiC≈0.4.' },
     ],
   },
 ]

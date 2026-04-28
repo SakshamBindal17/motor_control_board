@@ -92,3 +92,14 @@ export async function healthCheck() {
   const res = await _req('/api/health')
   return res.json()
 }
+
+/** Test API key health — returns array of {key_suffix, status} */
+export async function checkKeyHealth(keys) {
+  const res = await _req('/api/key-health', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keys }),
+  })
+  const data = await res.json()
+  return data.results
+}

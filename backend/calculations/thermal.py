@@ -259,6 +259,179 @@ class ThermalMixin:
         return result
 
     # ═══════════════════════════════════════════════════════════════════
+    def calc_derating(self) -> dict:
+        """Sweep T_amb 0→125°C and output max safe I per temperature point.
+
+        Uses conduction-dominated loss model (dominant at low speed / stall).
+        Switching loss is frequency-dependent and constant vs T_amb, so it
+        reduces the available I_max headroom — included as a fixed offset.
+        """
+        self._current_module = "derating"
+        rth_jc  = self._get(self.mosfet, "MOSFET", "rth_jc", 0.5)
+        tj_max  = self._get(self.mosfet, "MOSFET", "tj_max", 175.0)
+        rds_25  = self._get(self.mosfet, "MOSFET", "rds_on", 1.5e-3)
+
+        rth_cs  = self._dc("thermal.rth_cs")
+        rth_sa  = self._effective_rth_sa()
+        alpha   = self._dc("thermal.rds_alpha")
+        n_par   = max(1.0, float(self.num_fets) / 6.0)
+        rth_tot = rth_jc + rth_cs + rth_sa
+
+        # Fixed switching + recovery loss per FET (at design I_max) — constant vs T_amb
+        try:
+            ml = self.calc_mosfet_losses()
+            self._current_module = "derating"
+            p_sw_fixed = ml.get("switching_loss_per_fet_w", 0) + ml.get("recovery_loss_per_fet_w", 0)
+        except Exception:
+            p_sw_fixed = 0.0
+
+        t_amb_points = [0, 25, 40, 50, 60, 75, 85, 100, 110, 125]
+        curve = []
+        for t_amb in t_amb_points:
+            p_headroom = (tj_max - t_amb) / rth_tot if rth_tot > 0 else 0
+            p_cond_max = max(0.0, p_headroom - p_sw_fixed)
+            # Rds_hot at worst Tj → iterate once for self-consistency
+            # Tj_guess = t_amb + p_headroom × rth_tot = tj_max (by definition)
+            rds_hot = rds_25 * ((tj_max / 298.15) ** alpha)
+            # P_cond = I² × Rds_hot / n_par (parallel MOSFET scaling)
+            i_safe = math.sqrt(p_cond_max * n_par / rds_hot) if (rds_hot > 0 and p_cond_max > 0) else 0.0
+            curve.append({
+                "t_amb_c":    t_amb,
+                "i_max_a":    round(min(i_safe, self.i_max * 2), 1),
+                "p_cond_w":   round(p_cond_max, 2),
+                "margin_a":   round(max(0, min(i_safe, self.i_max * 2) - self.i_max), 1),
+                "derated":    i_safe < self.i_max,
+            })
+
+        design_point_idx = next((i for i, p in enumerate(curve) if p["t_amb_c"] >= self.t_amb), len(curve)-1)
+        warnings = []
+        if curve[design_point_idx]["derated"]:
+            warnings.append(
+                f"WARNING: At design T_amb={self.t_amb}°C, max safe current is "
+                f"{curve[design_point_idx]['i_max_a']:.0f}A — below configured I_max "
+                f"({self.i_max:.0f}A). Reduce current or improve cooling."
+            )
+
+        return {
+            "curve":            curve,
+            "design_t_amb_c":   self.t_amb,
+            "design_i_max_a":   self.i_max,
+            "rth_total":        round(rth_tot, 3),
+            "rds_alpha":        alpha,
+            "warnings":         warnings,
+            "_meta":            self._module_meta.get("derating", {"hardcoded": [], "fallbacks": []}),
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
+    def calc_thermal_multipoint(self) -> dict:
+        """Thermal sweep at 5 motor operating points.
+
+        Points: stall (0 RPM), 25%, 50%, rated, max speed.
+        At each point: back-EMF reduces effective voltage → reduced switching loss.
+        Stall has no back-EMF → maximum current → worst-case thermal.
+        """
+        self._current_module = "thermal_multipoint"
+        warnings = []
+
+        rth_jc  = self._get(self.mosfet, "MOSFET", "rth_jc", 0.5)
+        tj_max  = self._get(self.mosfet, "MOSFET", "tj_max", 175.0)
+        rds_on  = self._get(self.mosfet, "MOSFET", "rds_on", 1.5e-3)
+        alpha   = self._dc("thermal.rds_alpha")
+        rth_cs  = self._dc("thermal.rth_cs")
+        rth_sa  = self._effective_rth_sa()
+        n_par   = max(1.0, float(self.num_fets) / 6.0)
+        rth_tot = rth_jc + rth_cs + rth_sa
+
+        # Motor specs
+        m = self.motor or {}
+        def _mf(key):
+            v = m.get(key, "")
+            if v in ("", None): return None
+            try: return float(v)
+            except (TypeError, ValueError): return None
+
+        rpm_max    = _mf("max_speed_rpm")
+        ke         = _mf("back_emf_v_per_krpm")   # V/kRPM
+        rph_mohm   = _mf("rph_mohm")
+        rph        = rph_mohm * 1e-3 if rph_mohm else None
+
+        # Base switching loss (at design point) from mosfet_losses if available
+        try:
+            ml = self.calc_mosfet_losses()
+            self._current_module = "thermal_multipoint"
+            p_sw_base = ml.get("switching_loss_per_fet_w", 0) + ml.get("recovery_loss_per_fet_w", 0)
+            p_cond_base = ml.get("conduction_loss_per_fet_w", 0)
+        except Exception:
+            p_sw_base = 0.0
+            p_cond_base = 0.0
+
+        POINTS = [
+            ("stall",   0,    1.00),   # 0 RPM, full I_max, no back-EMF
+            ("25pct",  25,    0.75),   # 25% speed, 75% rated current (typical load)
+            ("50pct",  50,    0.60),   # 50% speed
+            ("rated",  80,    0.50),   # near rated speed (80%), 50% I
+            ("max",   100,    0.35),   # max speed, minimum load (field-weakening)
+        ]
+
+        curve = []
+        for label, speed_pct, i_fraction in POINTS:
+            speed_rpm = (rpm_max * speed_pct / 100) if rpm_max else None
+
+            # Phase current at this operating point
+            i_phase = self.i_max * i_fraction
+
+            # Back-EMF at this speed
+            v_bemf = (ke * speed_rpm / 1000) if (ke and speed_rpm is not None) else 0.0
+            v_effective = max(0.0, self.v_bus - v_bemf)
+
+            # Scale switching loss linearly with V_effective (switching loss ∝ V_bus)
+            v_scale = (v_effective / self.v_bus) if self.v_bus > 0 else 1.0
+            p_sw = p_sw_base * v_scale
+
+            # Conduction loss scales as I²
+            i_scale = (i_phase / self.i_max) ** 2 if self.i_max > 0 else 1.0
+            p_cond = p_cond_base * i_scale
+
+            p_total_per_fet = p_cond + p_sw
+
+            # Tj estimate (single iteration — accurate for linear Rth)
+            tj_est = self.t_amb + p_total_per_fet * rth_tot
+            margin = tj_max - tj_est
+            safe   = tj_est <= tj_max
+
+            point = {
+                "point":       label,
+                "speed_pct":   speed_pct,
+                "speed_rpm":   round(speed_rpm, 0) if speed_rpm is not None else None,
+                "i_phase_a":   round(i_phase, 1),
+                "v_bemf_v":    round(v_bemf, 1),
+                "p_total_w":   round(p_total_per_fet, 3),
+                "tj_c":        round(tj_est, 1),
+                "margin_c":    round(margin, 1),
+                "safe":        safe,
+            }
+            curve.append(point)
+
+            if not safe:
+                warnings.append(
+                    f"⚠ {label.upper()}: Tj={tj_est:.0f}°C exceeds Tj_max={tj_max:.0f}°C "
+                    f"at {speed_pct}% speed / {i_phase:.0f}A. Improve cooling or reduce current."
+                )
+
+        worst = max(curve, key=lambda p: p["tj_c"])
+
+        return {
+            "curve":            curve,
+            "worst_point":      worst["point"],
+            "worst_tj_c":       worst["tj_c"],
+            "worst_margin_c":   worst["margin_c"],
+            "rth_total":        round(rth_tot, 3),
+            "tj_max_c":         tj_max,
+            "warnings":         warnings,
+            "_meta":            self._module_meta.get("thermal_multipoint", {"hardcoded": [], "fallbacks": []}),
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
     # 11. Dead Time
     # ═══════════════════════════════════════════════════════════════════
 
@@ -453,6 +626,109 @@ class ThermalMixin:
                 "pcb_ground":     "Star ground topology — separate PGND and AGND, single join point",
             },
             "_meta": self._module_meta.get("emi_filter", {"hardcoded": [], "fallbacks": []}),
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
+    def calc_emi_dm(self) -> dict:
+        """Estimate differential-mode conducted EMI at the first CISPR 25 harmonic.
+
+        Model: switching node injects DM current proportional to C_bus × V_bus × fsw.
+        CISPR 25 Class 3 limits: 79 dBµV (0.15–0.53 MHz), 56 dBµV (0.53–1.7 MHz).
+        """
+        self._current_module = "emi_dm"
+        warnings = []
+
+        v_bus = self.v_bus
+        fsw   = self.fsw
+
+        # Bus MLCC capacitance — from overrides or fallback
+        try:
+            c_mlcc_nf = float(self.ovr.get("emi_x_cap_nf", 100.0))
+        except (TypeError, ValueError):
+            c_mlcc_nf = 100.0
+        c_mlcc_f = c_mlcc_nf * 1e-9
+
+        # CM choke leakage inductance ≈ 1% of CM inductance (typical for motor controllers)
+        lcm_uh = self._dc("emi.cm_choke_uh")
+        l_dm_uh = lcm_uh * 0.01   # leakage ≈ 1% of CM inductance
+        l_dm_h  = l_dm_uh * 1e-6
+
+        # DM injection current at fundamental switching frequency
+        # I_dm = V_bus × C_mlcc × 2π × fsw (capacitive coupling of switching edge)
+        i_dm = v_bus * c_mlcc_f * 2 * math.pi * fsw
+        self._log_hc("emi_dm", "LISN impedance", "50 Ω", "CISPR 25 / CISPR 16 standard LISN")
+
+        # DM noise voltage across 50 Ω LISN (single-ended)
+        z_lisn = 50.0
+        v_dm_fund_v = i_dm * z_lisn
+        v_dm_fund_uv = v_dm_fund_v * 1e6
+        dm_noise_dbmuv = 20 * math.log10(max(v_dm_fund_uv, 1e-6))
+
+        # First harmonic that falls inside CISPR 25 band (> 150 kHz)
+        cispr_start_hz = 150e3
+        harmonic_n = max(1, math.ceil(cispr_start_hz / fsw))
+        f_harmonic = harmonic_n * fsw
+        # Harmonic amplitude falls as 1/n (square-wave Fourier series approximation)
+        v_dm_harmonic_uv = (v_dm_fund_uv / harmonic_n) if harmonic_n > 0 else v_dm_fund_uv
+        dm_harmonic_dbmuv = 20 * math.log10(max(v_dm_harmonic_uv, 1e-6))
+
+        # CISPR 25 Class 3 limit at this harmonic frequency
+        if f_harmonic < 530e3:
+            cispr_limit_dbmuv = 79.0   # 150–530 kHz band
+            cispr_band = "Band 3 (0.15–0.53 MHz)"
+        else:
+            cispr_limit_dbmuv = 56.0   # 530 kHz – 1.7 MHz band
+            cispr_band = "Band 4 (0.53–1.7 MHz)"
+
+        required_attenuation_db = max(0.0, dm_harmonic_dbmuv - cispr_limit_dbmuv)
+
+        # Existing DM filter attenuation at f_harmonic: LC with L_dm and C_x
+        if l_dm_h > 0 and c_mlcc_f > 0:
+            f_corner = 1.0 / (2 * math.pi * math.sqrt(l_dm_h * c_mlcc_f))
+            if f_harmonic > f_corner:
+                # -40 dB/decade above corner
+                attenuation_actual_db = 40 * math.log10(f_harmonic / f_corner)
+            else:
+                attenuation_actual_db = 0.0
+        else:
+            f_corner = None
+            attenuation_actual_db = 0.0
+
+        emi_filter_adequate = attenuation_actual_db >= required_attenuation_db
+
+        additional_attenuation_needed_db = max(0.0, required_attenuation_db - attenuation_actual_db)
+
+        if not emi_filter_adequate and required_attenuation_db > 0:
+            warnings.append(
+                f"⚠ DM EMI: Estimated harmonic at {f_harmonic/1e3:.0f}kHz = {dm_harmonic_dbmuv:.0f}dBµV "
+                f"exceeds CISPR 25 Class 3 {cispr_band} limit ({cispr_limit_dbmuv:.0f}dBµV) "
+                f"by {required_attenuation_db:.0f}dB. Current DM filter provides only "
+                f"{attenuation_actual_db:.0f}dB. Add {additional_attenuation_needed_db:.0f}dB DM filter attenuation."
+            )
+            self.audit_log.append(
+                f"[EMI DM] Need {additional_attenuation_needed_db:.0f}dB more attenuation at {f_harmonic/1e3:.0f}kHz."
+            )
+        else:
+            self.audit_log.append(
+                f"[EMI DM] DM filter OK: {attenuation_actual_db:.0f}dB ≥ {required_attenuation_db:.0f}dB required."
+            )
+
+        return {
+            "dm_noise_fund_dbmuv":          round(dm_noise_dbmuv, 1),
+            "dm_noise_harmonic_dbmuv":      round(dm_harmonic_dbmuv, 1),
+            "harmonic_n":                   harmonic_n,
+            "harmonic_freq_khz":            round(f_harmonic / 1e3, 1),
+            "cispr_limit_dbmuv":            cispr_limit_dbmuv,
+            "cispr_band":                   cispr_band,
+            "required_attenuation_db":      round(required_attenuation_db, 1),
+            "filter_attenuation_db":        round(attenuation_actual_db, 1),
+            "additional_attenuation_db":    round(additional_attenuation_needed_db, 1),
+            "emi_filter_adequate":          emi_filter_adequate,
+            "dm_filter_corner_khz":         round(f_corner / 1e3, 1) if f_corner else None,
+            "l_dm_uh":                      round(l_dm_uh, 2),
+            "c_x_nf":                       c_mlcc_nf,
+            "warnings":                     warnings,
+            "_meta":                        self._module_meta.get("emi_dm", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════

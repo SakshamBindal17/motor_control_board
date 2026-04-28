@@ -189,6 +189,36 @@ class ValidationMixin:
                     f"of max_phase_current ({self.i_max}A). Limited margin for startup under load."
                 )
 
+            # DC locked-rotor stall: full bus directly across one winding (no SVPWM)
+            i_stall_dc = self.v_bus / rph
+            results["i_stall_dc_a"] = round(i_stall_dc, 1)
+            if i_stall_dc > self.i_max * 2:
+                warnings.append(
+                    f"⚠ DC STALL: Locked-rotor DC stall current ({i_stall_dc:.0f}A = "
+                    f"V_bus/Rph) is {i_stall_dc/self.i_max:.1f}× system max. "
+                    f"Hardware OCP must trip within microseconds or MOSFETs will fail."
+                )
+
+        # ── Fault path: MOSFET shoot-through (both switches ON) ──────
+        rds_on = self._get(self.mosfet, "MOSFET", "rds_on", None)
+        if rds_on is not None and rds_on > 0:
+            alpha = self._dc("thermal.rds_alpha")
+            tj_worst = self._get(self.mosfet, "MOSFET", "tj_max", 175.0) or 175.0
+            rds_hot = rds_on * ((tj_worst / 298.15) ** alpha)
+            # Shoot-through: V_bus across 2 series MOSFETs (one high + one low)
+            i_fault = self.v_bus / (2.0 * rds_hot)
+            results["i_fault_shoot_through_a"] = round(i_fault, 1)
+            results["rds_hot_mohm_at_tjmax"] = round(rds_hot * 1e3, 2)
+            if i_fault > self.i_max * 3:
+                warnings.append(
+                    f"⚠ SHOOT-THROUGH: Fault current ({i_fault:.0f}A = V_bus / 2×Rds_hot) "
+                    f"is {i_fault/self.i_max:.1f}× system max at Tj_max={tj_worst:.0f}°C. "
+                    f"Ensure gate-driver DESAT/OCP trips < 1µs."
+                )
+            self.audit_log.append(
+                f"[Motor] Fault path: i_fault={i_fault:.0f}A @ Rds_hot={rds_hot*1e3:.2f}mΩ (Tj={tj_worst:.0f}°C)."
+            )
+
         # ── 8. MOSFET Id_cont vs motor demand ────────────────────
         if kt is not None and kt > 0 and rated_tq is not None:
             i_rated = rated_tq / kt
@@ -365,8 +395,126 @@ class ValidationMixin:
         else:
             results["channels_ok"] = None
 
+        # Dead-time window check (§12a): ADC conversion must fit within dead time
+        if "adc_conversion_us" in results:
+            try:
+                dt_result = self.calc_dead_time()
+                dt_actual_ns = dt_result.get("dt_actual_ns")
+                if dt_actual_ns is not None:
+                    adc_settling_ns = results["adc_conversion_us"] * 1000
+                    results["adc_settling_ns"] = round(adc_settling_ns, 1)
+                    results["dead_time_ns"] = round(dt_actual_ns, 1)
+                    results["adc_fits_in_dead_time"] = bool(adc_settling_ns < dt_actual_ns)
+                    if not results["adc_fits_in_dead_time"]:
+                        warnings.append(
+                            f"WARNING: ADC conversion ({adc_settling_ns:.0f}ns) exceeds dead time "
+                            f"({dt_actual_ns:.0f}ns). ADC cannot sample during dead-time window — "
+                            f"use center-aligned sampling or increase dead time."
+                        )
+                    else:
+                        self.audit_log.append(
+                            f"[ADC Timing] ADC settling ({adc_settling_ns:.0f}ns) < dead time ({dt_actual_ns:.0f}ns) — OK."
+                        )
+            except Exception:
+                pass
+
         results["warnings"] = warnings
         results["_meta"] = self._module_meta.get("adc_timing", {"hardcoded": [], "fallbacks": []})
+        return results
+
+    # ═══════════════════════════════════════════════════════════════════
+    def calc_adc_bandwidth(self) -> dict:
+        """ADC current-loop bandwidth check (§15 §28).
+
+        Validates that the ADC sample rate is sufficient to:
+        1. Avoid aliasing PWM current ripple (Nyquist: f_adc > 2 × fsw)
+        2. Support a current-control loop bandwidth of fsw/10 (standard FOC rule)
+        """
+        self._current_module = "adc_bandwidth"
+        warnings = []
+        results = {}
+
+        fsw_khz = self.fsw / 1e3
+        results["pwm_freq_khz"] = round(fsw_khz, 1)
+
+        # Target current-loop bandwidth: fsw/10 (control theory standard for FOC)
+        f_cl_target_hz = self.fsw / 10.0
+        results["current_loop_bw_target_hz"] = round(f_cl_target_hz, 1)
+
+        # Nyquist limit: ADC must sample at > 2 × fsw to avoid aliasing ripple
+        f_nyquist_hz = 2.0 * self.fsw
+        results["nyquist_limit_hz"] = round(f_nyquist_hz, 1)
+
+        # Get ADC sample rate from MCU
+        adc_rate_raw = self._get(self.mcu, "MCU", "adc_sample_rate", None)
+        adc_unit = (self.mcu or {}).get("adc_sample_rate__unit", "") or ""
+
+        if adc_rate_raw is not None:
+            try:
+                adc_val = float(adc_rate_raw)
+                unit_lower = adc_unit.lower().strip()
+                is_time = any(u in unit_lower for u in ['s', 'µs', 'us', 'ns', 'ms'])
+                if any(u in unit_lower for u in ['sps', 'msps', 'ksps', '/s', 'samples']):
+                    is_time = False
+                if is_time:
+                    t_s = adc_val  # already in SI seconds via to_si
+                    if t_s < 1e-9:
+                        t_s = adc_val * 1e-6  # assume µs if suspiciously small
+                    adc_sps = 1.0 / t_s
+                else:
+                    if adc_val > 1e6:
+                        adc_sps = adc_val
+                    elif adc_val > 1000:
+                        adc_sps = adc_val * 1e3
+                    else:
+                        adc_sps = adc_val * 1e6
+
+                results["adc_rate_sps"] = round(adc_sps, 0)
+                results["adc_rate_msps"] = round(adc_sps / 1e6, 3)
+
+                # Nyquist check: can ADC resolve the PWM ripple?
+                nyquist_ok = adc_sps > f_nyquist_hz
+                results["nyquist_ok"] = nyquist_ok
+                if not nyquist_ok:
+                    warnings.append(
+                        f"WARNING: ADC rate ({adc_sps/1e3:.1f}kSPS) < 2×fsw "
+                        f"({f_nyquist_hz/1e3:.1f}kHz). PWM current ripple WILL alias "
+                        f"into current feedback — current control will be unstable."
+                    )
+
+                # Current loop bandwidth check
+                f_cl_actual_hz = adc_sps / 10.0  # practical closed-loop BW ≈ f_adc/10
+                results["current_loop_bw_actual_hz"] = round(f_cl_actual_hz, 1)
+                cl_ok = f_cl_actual_hz >= f_cl_target_hz
+                results["current_loop_bw_ok"] = cl_ok
+                if not cl_ok:
+                    warnings.append(
+                        f"NOTE: Practical current-loop BW ({f_cl_actual_hz:.0f}Hz) is below "
+                        f"target ({f_cl_target_hz:.0f}Hz = fsw/10). "
+                        f"Consider a faster ADC or oversampling."
+                    )
+                else:
+                    self.audit_log.append(
+                        f"[ADC BW] f_cl_actual={f_cl_actual_hz:.0f}Hz ≥ target {f_cl_target_hz:.0f}Hz — OK."
+                    )
+
+                # Oversampling ratio (how many ADC samples per PWM period)
+                samples_per_period = adc_sps / self.fsw
+                results["samples_per_pwm_period"] = round(samples_per_period, 1)
+                if samples_per_period < 2:
+                    warnings.append(
+                        f"DANGER: Only {samples_per_period:.1f} ADC samples per PWM period — "
+                        f"insufficient for any current control scheme."
+                    )
+
+            except (ValueError, TypeError):
+                results["nyquist_ok"] = None
+        else:
+            results["nyquist_ok"] = None
+            self.audit_log.append("[ADC BW] ADC sample rate not extracted — cannot validate bandwidth.")
+
+        results["warnings"] = warnings
+        results["_meta"] = self._module_meta.get("adc_bandwidth", {"hardcoded": [], "fallbacks": []})
         return results
 
     # ═══════════════════════════════════════════════════════════════════
@@ -737,6 +885,79 @@ class ValidationMixin:
                 "health_score": health_score,
             },
             "_meta": self._module_meta.get("cross_validation", {"hardcoded": [], "fallbacks": []}),
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
+    def calc_vpeak_check(self) -> dict:
+        """Compute true worst-case bus voltage and compare to system_specs.peak_voltage.
+
+        v_peak_worst = v_bus × 1.1 (supply transient)
+                     + v_overshoot_off (switching spike from snubber/waveform)
+                     + v_regen_estimate (from motor_validation back-EMF)
+        Warns if peak_voltage < v_peak_worst.
+        """
+        self._current_module = "vpeak_check"
+        warnings = []
+
+        v_bus_nominal = self.v_bus
+        v_peak_configured = self.v_peak
+
+        # 1. Supply transient: +10% above nominal (typical grid/charger spec)
+        v_supply_transient = v_bus_nominal * 1.1
+        self._log_hc("vpeak_check", "Supply transient margin", "1.10×", "IEC 61000 ±10% supply variation")
+
+        # 2. Switching overshoot — from snubber module if available
+        v_overshoot = 0.0
+        try:
+            snub = self.calc_snubber()
+            self._current_module = "vpeak_check"
+            v_overshoot = float(snub.get("voltage_overshoot_v") or 0)
+        except Exception:
+            pass
+
+        # 3. Regenerative braking overshoot estimate — from motor_validation
+        v_regen = 0.0
+        try:
+            mv = self.calc_motor_validation()
+            self._current_module = "vpeak_check"
+            v_regen_raw = mv.get("v_regen_estimate_v")
+            if v_regen_raw is not None:
+                # v_regen_estimate_v is already the absolute bus voltage during regen
+                # We want the DELTA above v_supply_transient
+                v_regen = max(0.0, float(v_regen_raw) - v_supply_transient)
+        except Exception:
+            pass
+
+        v_peak_worst = v_supply_transient + v_overshoot + v_regen
+        v_peak_margin = v_peak_configured - v_peak_worst
+        v_peak_sufficient = v_peak_configured >= v_peak_worst
+
+        if not v_peak_sufficient:
+            warnings.append(
+                f"⚠ V_PEAK UNDERSIZED: Configured peak_voltage ({v_peak_configured:.0f}V) < "
+                f"estimated worst-case ({v_peak_worst:.0f}V = "
+                f"{v_supply_transient:.0f}V supply + {v_overshoot:.1f}V overshoot + {v_regen:.1f}V regen). "
+                f"TVS, MOSFET Vds, and OVP threshold may be undersized."
+            )
+            self.audit_log.append(
+                f"[VPeak] WARNING: configured V_peak={v_peak_configured:.0f}V < worst-case {v_peak_worst:.0f}V."
+            )
+        else:
+            self.audit_log.append(
+                f"[VPeak] V_peak={v_peak_configured:.0f}V ≥ worst-case {v_peak_worst:.0f}V — OK ({v_peak_margin:.1f}V margin)."
+            )
+
+        return {
+            "v_bus_nominal_v":      round(v_bus_nominal, 1),
+            "v_peak_configured_v":  round(v_peak_configured, 1),
+            "v_supply_transient_v": round(v_supply_transient, 1),
+            "v_overshoot_v":        round(v_overshoot, 1),
+            "v_regen_delta_v":      round(v_regen, 1),
+            "v_peak_worst_v":       round(v_peak_worst, 1),
+            "v_peak_margin_v":      round(v_peak_margin, 1),
+            "v_peak_sufficient":    v_peak_sufficient,
+            "warnings":             warnings,
+            "_meta":                self._module_meta.get("vpeak_check", {"hardcoded": [], "fallbacks": []}),
         }
 
     # ═══════════════════════════════════════════════════════════════════

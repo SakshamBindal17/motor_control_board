@@ -1621,7 +1621,19 @@ export default function WaveformPanel() {
                 { label: 'Dead time', value: ann.dead_time_ns, unit: 'ns', bold: true },
                 { label: 'Vgs plateau', value: ann.vgs_plateau_v, unit: 'V' },
                 { label: 'Vgs threshold', value: ann.vgs_threshold_v, unit: 'V' },
+                ...(ann.ring_freq_mhz != null ? [
+                  { sep: true },
+                  { label: 'Ring freq', value: ann.ring_freq_mhz, unit: 'MHz' },
+                  { label: 'V overshoot', value: ann.v_overshoot_v, unit: 'V', hl: ann.vds_overshoot_warning || ann.vds_overshoot_danger },
+                ] : []),
               ]} />
+              {waveform.v_ring_residual_pct != null && (
+                <TimingCard title="Multi-Cycle Ring" color={waveform.ring_undamped ? '#FF4444' : '#66BB6A'} icon="〰" rows={[
+                  { label: 'Residual after 1T', value: waveform.v_ring_residual_pct, unit: '%', bold: true, hl: waveform.ring_undamped },
+                  { label: 'Residual voltage', value: waveform.v_ring_residual_v, unit: 'V' },
+                  { label: waveform.ring_undamped ? '⚠ Rings reinforce!' : '✓ Damped OK', value: null, unit: '' },
+                ]} />
+              )}
             </div>
           )}
 
@@ -1753,6 +1765,9 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
             value={local.vds_override} onKeyDown={handleKeyDown}
             onChange={e => localUpdate('vds_override', e.target.value)} />
           <span style={unitStyle}>V</span>
+        </div>
+        <div style={{ fontSize: 9, color: 'var(--txt-4)', lineHeight: 1.4, marginTop: 2 }}>
+          Vds defaults to V_peak ({specs.peak_voltage || 60}V), not V_bus ({specs.bus_voltage || 48}V) — models worst-case Vds at transient overshoot.
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span style={{ ...labelStyle, color: '#32CD32' }}>Id:</span>
