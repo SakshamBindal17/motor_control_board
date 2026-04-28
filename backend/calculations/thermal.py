@@ -323,6 +323,115 @@ class ThermalMixin:
         }
 
     # ═══════════════════════════════════════════════════════════════════
+    def calc_thermal_multipoint(self) -> dict:
+        """Thermal sweep at 5 motor operating points.
+
+        Points: stall (0 RPM), 25%, 50%, rated, max speed.
+        At each point: back-EMF reduces effective voltage → reduced switching loss.
+        Stall has no back-EMF → maximum current → worst-case thermal.
+        """
+        self._current_module = "thermal_multipoint"
+        warnings = []
+
+        rth_jc  = self._get(self.mosfet, "MOSFET", "rth_jc", 0.5)
+        tj_max  = self._get(self.mosfet, "MOSFET", "tj_max", 175.0)
+        rds_on  = self._get(self.mosfet, "MOSFET", "rds_on", 1.5e-3)
+        alpha   = self._dc("thermal.rds_alpha")
+        rth_cs  = self._dc("thermal.rth_cs")
+        rth_sa  = self._effective_rth_sa()
+        n_par   = max(1.0, float(self.num_fets) / 6.0)
+        rth_tot = rth_jc + rth_cs + rth_sa
+
+        # Motor specs
+        m = self.motor or {}
+        def _mf(key):
+            v = m.get(key, "")
+            if v in ("", None): return None
+            try: return float(v)
+            except (TypeError, ValueError): return None
+
+        rpm_max    = _mf("max_speed_rpm")
+        ke         = _mf("back_emf_v_per_krpm")   # V/kRPM
+        rph_mohm   = _mf("rph_mohm")
+        rph        = rph_mohm * 1e-3 if rph_mohm else None
+
+        # Base switching loss (at design point) from mosfet_losses if available
+        try:
+            ml = self.calc_mosfet_losses()
+            self._current_module = "thermal_multipoint"
+            p_sw_base = ml.get("switching_loss_per_fet_w", 0) + ml.get("recovery_loss_per_fet_w", 0)
+            p_cond_base = ml.get("conduction_loss_per_fet_w", 0)
+        except Exception:
+            p_sw_base = 0.0
+            p_cond_base = 0.0
+
+        POINTS = [
+            ("stall",   0,    1.00),   # 0 RPM, full I_max, no back-EMF
+            ("25pct",  25,    0.75),   # 25% speed, 75% rated current (typical load)
+            ("50pct",  50,    0.60),   # 50% speed
+            ("rated",  80,    0.50),   # near rated speed (80%), 50% I
+            ("max",   100,    0.35),   # max speed, minimum load (field-weakening)
+        ]
+
+        curve = []
+        for label, speed_pct, i_fraction in POINTS:
+            speed_rpm = (rpm_max * speed_pct / 100) if rpm_max else None
+
+            # Phase current at this operating point
+            i_phase = self.i_max * i_fraction
+
+            # Back-EMF at this speed
+            v_bemf = (ke * speed_rpm / 1000) if (ke and speed_rpm is not None) else 0.0
+            v_effective = max(0.0, self.v_bus - v_bemf)
+
+            # Scale switching loss linearly with V_effective (switching loss ∝ V_bus)
+            v_scale = (v_effective / self.v_bus) if self.v_bus > 0 else 1.0
+            p_sw = p_sw_base * v_scale
+
+            # Conduction loss scales as I²
+            i_scale = (i_phase / self.i_max) ** 2 if self.i_max > 0 else 1.0
+            p_cond = p_cond_base * i_scale
+
+            p_total_per_fet = p_cond + p_sw
+
+            # Tj estimate (single iteration — accurate for linear Rth)
+            tj_est = self.t_amb + p_total_per_fet * rth_tot
+            margin = tj_max - tj_est
+            safe   = tj_est <= tj_max
+
+            point = {
+                "point":       label,
+                "speed_pct":   speed_pct,
+                "speed_rpm":   round(speed_rpm, 0) if speed_rpm is not None else None,
+                "i_phase_a":   round(i_phase, 1),
+                "v_bemf_v":    round(v_bemf, 1),
+                "p_total_w":   round(p_total_per_fet, 3),
+                "tj_c":        round(tj_est, 1),
+                "margin_c":    round(margin, 1),
+                "safe":        safe,
+            }
+            curve.append(point)
+
+            if not safe:
+                warnings.append(
+                    f"⚠ {label.upper()}: Tj={tj_est:.0f}°C exceeds Tj_max={tj_max:.0f}°C "
+                    f"at {speed_pct}% speed / {i_phase:.0f}A. Improve cooling or reduce current."
+                )
+
+        worst = max(curve, key=lambda p: p["tj_c"])
+
+        return {
+            "curve":            curve,
+            "worst_point":      worst["point"],
+            "worst_tj_c":       worst["tj_c"],
+            "worst_margin_c":   worst["margin_c"],
+            "rth_total":        round(rth_tot, 3),
+            "tj_max_c":         tj_max,
+            "warnings":         warnings,
+            "_meta":            self._module_meta.get("thermal_multipoint", {"hardcoded": [], "fallbacks": []}),
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
     # 11. Dead Time
     # ═══════════════════════════════════════════════════════════════════
 

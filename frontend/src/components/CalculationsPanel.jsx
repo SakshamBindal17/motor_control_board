@@ -1300,6 +1300,16 @@ const SECTIONS = [
     ],
   },
   {
+    key: 'thermal_multipoint', label: 'Thermal Multi-Point', icon: '🌡️',
+    rows: [
+      { key: 'worst_point', label: 'Worst point', full: 'Worst Thermal Operating Point', unit: '', dec: 0, string: true, explain: 'The operating point (stall/25%/50%/rated/max) with the highest junction temperature.' },
+      { key: 'worst_tj_c', label: 'Worst Tj', full: 'Highest Junction Temperature Across All Points', unit: '°C', dec: 1, warn: 125, danger: 150, explain: 'Maximum junction temperature across all 5 operating points. Must be below Tj_max.' },
+      { key: 'worst_margin_c', label: 'Worst margin', full: 'Thermal Margin at Worst Point', unit: '°C', dec: 1, warn: 30, danger: 10, explain: 'Tj_max − Tj_worst. Positive = safe. Negative = thermal runaway at that operating point.' },
+      { key: 'tj_max_c', label: 'Tj max (rated)', full: 'MOSFET Maximum Rated Junction Temperature', unit: '°C', dec: 0, explain: 'From MOSFET datasheet.' },
+      { key: 'rth_total', label: 'Rth total', full: 'Total Thermal Resistance', unit: '°C/W', dec: 3, explain: 'Rjc + Rcs + Rsa thermal stack used for all operating points.' },
+    ],
+  },
+  {
     key: 'derating', label: 'Thermal Derating', icon: '📉',
     rows: [
       { key: 'design_t_amb_c', label: 'Design T_amb', full: 'Design-Point Ambient Temperature', unit: '°C', dec: 0, explain: 'Ambient temperature used for the design point (from Settings → Ambient Temperature).' },
