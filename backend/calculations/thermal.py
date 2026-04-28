@@ -259,6 +259,70 @@ class ThermalMixin:
         return result
 
     # ═══════════════════════════════════════════════════════════════════
+    def calc_derating(self) -> dict:
+        """Sweep T_amb 0→125°C and output max safe I per temperature point.
+
+        Uses conduction-dominated loss model (dominant at low speed / stall).
+        Switching loss is frequency-dependent and constant vs T_amb, so it
+        reduces the available I_max headroom — included as a fixed offset.
+        """
+        self._current_module = "derating"
+        rth_jc  = self._get(self.mosfet, "MOSFET", "rth_jc", 0.5)
+        tj_max  = self._get(self.mosfet, "MOSFET", "tj_max", 175.0)
+        rds_25  = self._get(self.mosfet, "MOSFET", "rds_on", 1.5e-3)
+
+        rth_cs  = self._dc("thermal.rth_cs")
+        rth_sa  = self._effective_rth_sa()
+        alpha   = self._dc("thermal.rds_alpha")
+        n_par   = max(1.0, float(self.num_fets) / 6.0)
+        rth_tot = rth_jc + rth_cs + rth_sa
+
+        # Fixed switching + recovery loss per FET (at design I_max) — constant vs T_amb
+        try:
+            ml = self.calc_mosfet_losses()
+            self._current_module = "derating"
+            p_sw_fixed = ml.get("switching_loss_per_fet_w", 0) + ml.get("recovery_loss_per_fet_w", 0)
+        except Exception:
+            p_sw_fixed = 0.0
+
+        t_amb_points = [0, 25, 40, 50, 60, 75, 85, 100, 110, 125]
+        curve = []
+        for t_amb in t_amb_points:
+            p_headroom = (tj_max - t_amb) / rth_tot if rth_tot > 0 else 0
+            p_cond_max = max(0.0, p_headroom - p_sw_fixed)
+            # Rds_hot at worst Tj → iterate once for self-consistency
+            # Tj_guess = t_amb + p_headroom × rth_tot = tj_max (by definition)
+            rds_hot = rds_25 * ((tj_max / 298.15) ** alpha)
+            # P_cond = I² × Rds_hot / n_par (parallel MOSFET scaling)
+            i_safe = math.sqrt(p_cond_max * n_par / rds_hot) if (rds_hot > 0 and p_cond_max > 0) else 0.0
+            curve.append({
+                "t_amb_c":    t_amb,
+                "i_max_a":    round(min(i_safe, self.i_max * 2), 1),
+                "p_cond_w":   round(p_cond_max, 2),
+                "margin_a":   round(max(0, min(i_safe, self.i_max * 2) - self.i_max), 1),
+                "derated":    i_safe < self.i_max,
+            })
+
+        design_point_idx = next((i for i, p in enumerate(curve) if p["t_amb_c"] >= self.t_amb), len(curve)-1)
+        warnings = []
+        if curve[design_point_idx]["derated"]:
+            warnings.append(
+                f"WARNING: At design T_amb={self.t_amb}°C, max safe current is "
+                f"{curve[design_point_idx]['i_max_a']:.0f}A — below configured I_max "
+                f"({self.i_max:.0f}A). Reduce current or improve cooling."
+            )
+
+        return {
+            "curve":            curve,
+            "design_t_amb_c":   self.t_amb,
+            "design_i_max_a":   self.i_max,
+            "rth_total":        round(rth_tot, 3),
+            "rds_alpha":        alpha,
+            "warnings":         warnings,
+            "_meta":            self._module_meta.get("derating", {"hardcoded": [], "fallbacks": []}),
+        }
+
+    # ═══════════════════════════════════════════════════════════════════
     # 11. Dead Time
     # ═══════════════════════════════════════════════════════════════════
 
