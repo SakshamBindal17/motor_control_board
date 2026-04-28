@@ -393,6 +393,101 @@ class ValidationMixin:
         return results
 
     # ═══════════════════════════════════════════════════════════════════
+    def calc_adc_bandwidth(self) -> dict:
+        """ADC current-loop bandwidth check (§15 §28).
+
+        Validates that the ADC sample rate is sufficient to:
+        1. Avoid aliasing PWM current ripple (Nyquist: f_adc > 2 × fsw)
+        2. Support a current-control loop bandwidth of fsw/10 (standard FOC rule)
+        """
+        self._current_module = "adc_bandwidth"
+        warnings = []
+        results = {}
+
+        fsw_khz = self.fsw / 1e3
+        results["pwm_freq_khz"] = round(fsw_khz, 1)
+
+        # Target current-loop bandwidth: fsw/10 (control theory standard for FOC)
+        f_cl_target_hz = self.fsw / 10.0
+        results["current_loop_bw_target_hz"] = round(f_cl_target_hz, 1)
+
+        # Nyquist limit: ADC must sample at > 2 × fsw to avoid aliasing ripple
+        f_nyquist_hz = 2.0 * self.fsw
+        results["nyquist_limit_hz"] = round(f_nyquist_hz, 1)
+
+        # Get ADC sample rate from MCU
+        adc_rate_raw = self._get(self.mcu, "MCU", "adc_sample_rate", None)
+        adc_unit = (self.mcu or {}).get("adc_sample_rate__unit", "") or ""
+
+        if adc_rate_raw is not None:
+            try:
+                adc_val = float(adc_rate_raw)
+                unit_lower = adc_unit.lower().strip()
+                is_time = any(u in unit_lower for u in ['s', 'µs', 'us', 'ns', 'ms'])
+                if any(u in unit_lower for u in ['sps', 'msps', 'ksps', '/s', 'samples']):
+                    is_time = False
+                if is_time:
+                    t_s = adc_val  # already in SI seconds via to_si
+                    if t_s < 1e-9:
+                        t_s = adc_val * 1e-6  # assume µs if suspiciously small
+                    adc_sps = 1.0 / t_s
+                else:
+                    if adc_val > 1e6:
+                        adc_sps = adc_val
+                    elif adc_val > 1000:
+                        adc_sps = adc_val * 1e3
+                    else:
+                        adc_sps = adc_val * 1e6
+
+                results["adc_rate_sps"] = round(adc_sps, 0)
+                results["adc_rate_msps"] = round(adc_sps / 1e6, 3)
+
+                # Nyquist check: can ADC resolve the PWM ripple?
+                nyquist_ok = adc_sps > f_nyquist_hz
+                results["nyquist_ok"] = nyquist_ok
+                if not nyquist_ok:
+                    warnings.append(
+                        f"WARNING: ADC rate ({adc_sps/1e3:.1f}kSPS) < 2×fsw "
+                        f"({f_nyquist_hz/1e3:.1f}kHz). PWM current ripple WILL alias "
+                        f"into current feedback — current control will be unstable."
+                    )
+
+                # Current loop bandwidth check
+                f_cl_actual_hz = adc_sps / 10.0  # practical closed-loop BW ≈ f_adc/10
+                results["current_loop_bw_actual_hz"] = round(f_cl_actual_hz, 1)
+                cl_ok = f_cl_actual_hz >= f_cl_target_hz
+                results["current_loop_bw_ok"] = cl_ok
+                if not cl_ok:
+                    warnings.append(
+                        f"NOTE: Practical current-loop BW ({f_cl_actual_hz:.0f}Hz) is below "
+                        f"target ({f_cl_target_hz:.0f}Hz = fsw/10). "
+                        f"Consider a faster ADC or oversampling."
+                    )
+                else:
+                    self.audit_log.append(
+                        f"[ADC BW] f_cl_actual={f_cl_actual_hz:.0f}Hz ≥ target {f_cl_target_hz:.0f}Hz — OK."
+                    )
+
+                # Oversampling ratio (how many ADC samples per PWM period)
+                samples_per_period = adc_sps / self.fsw
+                results["samples_per_pwm_period"] = round(samples_per_period, 1)
+                if samples_per_period < 2:
+                    warnings.append(
+                        f"DANGER: Only {samples_per_period:.1f} ADC samples per PWM period — "
+                        f"insufficient for any current control scheme."
+                    )
+
+            except (ValueError, TypeError):
+                results["nyquist_ok"] = None
+        else:
+            results["nyquist_ok"] = None
+            self.audit_log.append("[ADC BW] ADC sample rate not extracted — cannot validate bandwidth.")
+
+        results["warnings"] = warnings
+        results["_meta"] = self._module_meta.get("adc_bandwidth", {"hardcoded": [], "fallbacks": []})
+        return results
+
+    # ═══════════════════════════════════════════════════════════════════
     # 17. Cross-Datasheet Validation
     # ═══════════════════════════════════════════════════════════════════
 

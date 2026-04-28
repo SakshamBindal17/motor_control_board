@@ -1257,6 +1257,27 @@ const SECTIONS = [
       { key: 'thermal_status', label: 'Status', full: 'Thermal Status', string: true, explain: 'Overall assessment: safe/warn/danger based on ΔT, Tmax, J_density, and via thermal' },
     ],
   },
+  {
+    key: 'adc_bandwidth', label: 'ADC BW Check', icon: '📡',
+    rows: [
+      { key: 'adc_rate_msps', label: 'ADC rate', full: 'ADC Sample Rate', unit: 'MSPS', dec: 3, explain: 'Extracted from MCU datasheet. Used to validate Nyquist and current-loop bandwidth.' },
+      { key: 'nyquist_limit_hz', label: 'Nyquist limit', full: 'Nyquist Frequency (2 × fsw)', unit: 'Hz', dec: 0, explain: 'ADC must sample faster than 2×fsw to avoid aliasing PWM current ripple into the feedback signal.' },
+      { key: 'nyquist_ok', label: 'Nyquist OK?', full: 'Nyquist Check (f_adc > 2×fsw)', unit: '', dec: 0, explain: 'true = ADC rate exceeds Nyquist limit. false = aliasing risk.' },
+      { key: 'samples_per_pwm_period', label: 'Samples/period', full: 'ADC Samples per PWM Period', unit: '', dec: 1, explain: 'f_adc / fsw. Must be ≥ 2 for Nyquist, ideally ≥ 10 for good current ripple rejection.' },
+      { key: 'current_loop_bw_target_hz', label: 'CL BW target', full: 'Current-Loop Bandwidth Target (fsw/10)', unit: 'Hz', dec: 0, explain: 'Standard FOC rule: current-loop bandwidth = fsw/10 for stable control.' },
+      { key: 'current_loop_bw_actual_hz', label: 'CL BW actual', full: 'Practical Current-Loop Bandwidth (f_adc/10)', unit: 'Hz', dec: 0, explain: 'f_adc/10 — achievable closed-loop BW limited by ADC update rate.' },
+      { key: 'current_loop_bw_ok', label: 'CL BW OK?', full: 'Current-Loop BW ≥ fsw/10?', unit: '', dec: 0, explain: 'true = ADC rate supports target current-loop bandwidth. false = ADC too slow for full-speed FOC.' },
+    ],
+  },
+  {
+    key: 'derating', label: 'Thermal Derating', icon: '📉',
+    rows: [
+      { key: 'design_t_amb_c', label: 'Design T_amb', full: 'Design-Point Ambient Temperature', unit: '°C', dec: 0, explain: 'Ambient temperature used for the design point (from Settings → Ambient Temperature).' },
+      { key: 'design_i_max_a', label: 'Design I_max', full: 'Design-Point Max Phase Current', unit: 'A', dec: 0, explain: 'Configured max phase current from Settings.' },
+      { key: 'rth_total', label: 'Rth total', full: 'Total Thermal Resistance (Rjc + Rcs + Rsa)', unit: '°C/W', dec: 3, explain: 'Junction-to-ambient thermal resistance stack used for derating model.' },
+      { key: 'rds_alpha', label: 'Rds α', full: 'Rds(on) Temperature Exponent', unit: '', dec: 2, explain: 'Power-law exponent for Rds(on) vs Tj: Rds_hot = Rds25 × (Tj/298K)^α. Si≈2.1, SiC≈0.4.' },
+    ],
+  },
 ]
 
 // Populate SECTION_LABELS from SECTIONS
