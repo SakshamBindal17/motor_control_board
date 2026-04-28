@@ -1144,6 +1144,10 @@ const SECTIONS = [
       { key: 'copper_loss_3ph_w', label: 'Copper loss (3ph)', full: 'Total Stator Copper Loss', unit: 'W', dec: 1, explain: '3 × I_rms² × Rph — winding heat at rated current' },
       { key: 'copper_loss_pct', label: 'Copper loss %', full: 'Copper Loss Percentage', unit: '%', dec: 1, warn: 3, danger: 5, explain: 'Copper loss as percentage of rated power' },
       { key: 'phase_time_const_ms', label: 'L/R time const', full: 'Electrical Time Constant (L/R)', unit: 'ms', dec: 2, explain: 'Lph / Rph — electrical time constant of motor winding' },
+      { key: 'i_stall_a', label: 'I stall (SVPWM)', full: 'SVPWM Stall Current (V_bus/√3 / Rph)', unit: 'A', dec: 1, warn: 80, danger: 120, explain: 'Worst-case phase current at stall with SVPWM drive. Formula: (V_bus/√3) / Rph. Firmware OCP must trip before this current flows for more than a few ms.' },
+      { key: 'i_stall_dc_a', label: 'I stall (DC)', full: 'DC Locked-Rotor Stall Current (V_bus / Rph)', unit: 'A', dec: 1, warn: 100, danger: 150, explain: 'True DC locked-rotor current if drive voltage is applied directly (no modulation). Formula: V_bus / Rph. Represents the absolute worst-case for a firmware bug that drives DC continuously.' },
+      { key: 'i_fault_shoot_through_a', label: 'I fault (shoot-thru)', full: 'MOSFET Shoot-Through Fault Current', unit: 'A', dec: 0, warn: 200, danger: 400, explain: 'Shoot-through fault current if both high-side and low-side MOSFETs conduct simultaneously. Formula: V_bus / (2 × Rds_hot at Tj_max). Gate-driver DESAT/OCP must trip < 1µs.' },
+      { key: 'rds_hot_mohm_at_tjmax', label: 'Rds(on) @ Tj_max', full: 'Hot Rds(on) at Tj_max (fault model)', unit: 'mΩ', dec: 2, explain: 'Rds(on) at maximum rated junction temperature, used for shoot-through fault current estimate. Formula: Rds25 × (Tj_max/298K)^α.' },
     ],
   },
   {

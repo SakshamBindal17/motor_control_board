@@ -189,6 +189,36 @@ class ValidationMixin:
                     f"of max_phase_current ({self.i_max}A). Limited margin for startup under load."
                 )
 
+            # DC locked-rotor stall: full bus directly across one winding (no SVPWM)
+            i_stall_dc = self.v_bus / rph
+            results["i_stall_dc_a"] = round(i_stall_dc, 1)
+            if i_stall_dc > self.i_max * 2:
+                warnings.append(
+                    f"⚠ DC STALL: Locked-rotor DC stall current ({i_stall_dc:.0f}A = "
+                    f"V_bus/Rph) is {i_stall_dc/self.i_max:.1f}× system max. "
+                    f"Hardware OCP must trip within microseconds or MOSFETs will fail."
+                )
+
+        # ── Fault path: MOSFET shoot-through (both switches ON) ──────
+        rds_on = self._get(self.mosfet, "MOSFET", "rds_on", None)
+        if rds_on is not None and rds_on > 0:
+            alpha = self._dc("thermal.rds_alpha")
+            tj_worst = self._get(self.mosfet, "MOSFET", "tj_max", 175.0) or 175.0
+            rds_hot = rds_on * ((tj_worst / 298.15) ** alpha)
+            # Shoot-through: V_bus across 2 series MOSFETs (one high + one low)
+            i_fault = self.v_bus / (2.0 * rds_hot)
+            results["i_fault_shoot_through_a"] = round(i_fault, 1)
+            results["rds_hot_mohm_at_tjmax"] = round(rds_hot * 1e3, 2)
+            if i_fault > self.i_max * 3:
+                warnings.append(
+                    f"⚠ SHOOT-THROUGH: Fault current ({i_fault:.0f}A = V_bus / 2×Rds_hot) "
+                    f"is {i_fault/self.i_max:.1f}× system max at Tj_max={tj_worst:.0f}°C. "
+                    f"Ensure gate-driver DESAT/OCP trips < 1µs."
+                )
+            self.audit_log.append(
+                f"[Motor] Fault path: i_fault={i_fault:.0f}A @ Rds_hot={rds_hot*1e3:.2f}mΩ (Tj={tj_worst:.0f}°C)."
+            )
+
         # ── 8. MOSFET Id_cont vs motor demand ────────────────────
         if kt is not None and kt > 0 and rated_tq is not None:
             i_rated = rated_tq / kt
