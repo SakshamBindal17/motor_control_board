@@ -184,23 +184,6 @@ export default function App() {
   const { state } = useProject()
   const cfg = BLOCK_CONFIGS[state.active_block]
 
-  function renderPanel() {
-    if (!cfg) return null
-    switch (cfg.type) {
-      case 'dashboard': return <DashboardPanel config={cfg} />
-      case 'diagram': return <DiagramPanel config={cfg} />
-      case 'charts': return <ChartsPanel config={cfg} />
-      case 'upload': return <BlockPanel key={state.active_block} blockKey={state.active_block} config={cfg} />
-      case 'motor': return <MotorForm config={cfg} />
-      case 'passives': return <PassivesPanel config={cfg} />
-      case 'feedback': return <FeedbackPanel config={cfg} />
-      case 'waveform': return <WaveformPanel config={cfg} />
-      case 'compare': return <ComparisonPanel config={cfg} />
-      case 'pcb_thermal': return <ThermalTracePanel config={cfg} />
-      default: return null
-    }
-  }
-
   return (
     <ErrorBoundary>
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -209,15 +192,39 @@ export default function App() {
           <Sidebar blocks={BLOCK_CONFIGS} />
           <main style={{
             flex: 1,
-            overflow: 'auto',
-            padding: '16px',
+            overflow: 'hidden',
+            padding: 0,
             display: 'flex',
             flexDirection: 'column',
             minWidth: 0,
           }}>
             <ErrorBoundary inline>
               <Suspense fallback={<div style={{ padding: 20, color: 'var(--txt-3)' }}>Loading panel...</div>}>
-                {renderPanel()}
+                {Object.keys(BLOCK_CONFIGS).map(key => {
+                  const b = BLOCK_CONFIGS[key]
+                  const isActive = state.active_block === key
+                  
+                  return (
+                    <div key={key} style={{ 
+                      display: isActive ? 'flex' : 'none',
+                      flexDirection: 'column',
+                      flex: 1,
+                      overflow: 'auto',
+                      padding: '16px'
+                    }}>
+                      {key === 'dashboard' && <DashboardPanel config={b} />}
+                      {key === 'diagram' && <DiagramPanel config={b} />}
+                      {key === 'charts' && <ChartsPanel config={b} />}
+                      {b.type === 'upload' && <BlockPanel blockKey={key} config={b} />}
+                      {key === 'motor' && <MotorForm config={b} />}
+                      {key === 'passives' && <PassivesPanel config={b} />}
+                      {key === 'feedback' && <FeedbackPanel config={b} />}
+                      {key === 'waveform' && <WaveformPanel config={b} />}
+                      {key === 'compare' && <ComparisonPanel config={b} />}
+                      {key === 'pcb_thermal' && <ThermalTracePanel config={b} />}
+                    </div>
+                  )
+                })}
               </Suspense>
             </ErrorBoundary>
           </main>

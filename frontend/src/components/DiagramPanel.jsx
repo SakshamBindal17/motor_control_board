@@ -155,23 +155,26 @@ function statusColor(status) {
 }
 
 /* ── Animated power flow dots ── */
-function FlowDots({ x1, y1, x2, y2, type }) {
+function FlowDots({ pathId, type }) {
   if (type !== 'power' && type !== 'phase') return null
-  const id = `flow-${x1}-${y1}-${x2}-${y2}`
   return (
     <g>
       <circle r={type === 'power' ? 3 : 2.5} fill={type === 'power' ? '#ff4444' : '#00e676'} opacity={0.8}>
-        <animateMotion dur={type === 'power' ? '2s' : '1.5s'} repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear">
-          <mpath xlinkHref={`#${id}`} />
+        <animateMotion dur={type === 'power' ? '3s' : '2.5s'} repeatCount="indefinite" rotate="auto">
+          <mpath xlinkHref={`#${pathId}`} />
         </animateMotion>
       </circle>
-      <path id={id} d={`M${x1},${y1} L${x2},${y2}`} fill="none" stroke="none" />
+      <circle r={type === 'power' ? 3 : 2.5} fill={type === 'power' ? '#ff4444' : '#00e676'} opacity={0.8}>
+        <animateMotion dur={type === 'power' ? '3s' : '2.5s'} begin="1s" repeatCount="indefinite" rotate="auto">
+          <mpath xlinkHref={`#${pathId}`} />
+        </animateMotion>
+      </circle>
     </g>
   )
 }
 
 /* ── Block component (rect or circle) ── */
-function Block({ def, id, status, isHovered, onHover, onClick }) {
+function Block({ def, id, status, isHovered, onHover, onClick, parallelCount = 1 }) {
   const { x, y, w, h, label, sublabel, color, isCircle } = def
   const sDone = status === 'done'
   const sColor = statusColor(status)
@@ -235,6 +238,14 @@ function Block({ def, id, status, isHovered, onHover, onClick }) {
         fill={color} fillOpacity={fillOpacity}
         stroke={color} strokeWidth={isHovered ? 2 : 1.5} strokeOpacity={strokeOpacity}
       />
+      {/* Parallel stacks indicator */}
+      {parallelCount > 1 && (
+        <g opacity={0.6}>
+          <rect x={x + 3} y={y - 3} width={w} height={h} rx={rx} fill="none" stroke={color} strokeWidth={1} />
+          <rect x={x + 6} y={y - 6} width={w} height={h} rx={rx} fill="none" stroke={color} strokeWidth={1} />
+          <text x={x + w - 2} y={y - 8} fontSize={8} fontWeight={800} fill={color} textAnchor="end">x{parallelCount}</text>
+        </g>
+      )}
       {/* Top accent bar */}
       <rect x={x} y={y} width={w} height={3} rx={1.5}
         fill={color} opacity={sDone ? 0.8 : 0.3} />
@@ -354,7 +365,7 @@ function renderWire(wire, idx) {
 
   return (
     <g key={idx}>
-      <path d={pathD} fill="none" stroke={strokeColor}
+      <path id={`wire-${idx}`} d={pathD} fill="none" stroke={strokeColor}
         strokeWidth={strokeW} strokeOpacity={0.45}
         strokeDasharray={dash}
         strokeLinecap="round" strokeLinejoin="round" />
@@ -421,13 +432,13 @@ function Legend() {
     { color: '#00d4e8', label: 'Current sense', dash: true, sw: 1 },
   ]
   return (
-    <g transform="translate(30, 500)">
+    <g transform="translate(30, 485)">
       <text x={0} y={0} fontSize={10} fontWeight={700} fill="var(--txt-2)"
         fontFamily="var(--font-ui)" letterSpacing="0.05em">
         SIGNAL LEGEND
       </text>
       {items.map((item, i) => (
-        <g key={i} transform={`translate(${i * 145}, 16)`}>
+        <g key={i} transform={`translate(${i * 125}, 16)`}>
           <line x1={0} y1={0} x2={25} y2={0}
             stroke={item.color} strokeWidth={item.sw}
             strokeDasharray={item.dash ? '4,3' : 'none'} strokeOpacity={0.7} />
@@ -556,7 +567,7 @@ export default function DiagramPanel({ config }) {
             {config.fullLabel || 'Block Diagram'}
           </h2>
           <p style={{ fontSize: 11, color: 'var(--txt-3)', margin: '2px 0 0', fontFamily: 'var(--font-mono)' }}>
-            3-Phase PMSM Inverter • {sysSpecs.bus_voltage}V / {(sysSpecs.power / 1000).toFixed(1)}kW • Click any block to configure
+            3-Phase PMSM Inverter • {sysSpecs.bus_voltage || '—'}V / {sysSpecs.power ? (sysSpecs.power / 1000).toFixed(1) : '—'}kW • Click any block to configure
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -620,14 +631,7 @@ export default function DiagramPanel({ config }) {
 
           {/* Animated flow dots */}
           {showFlow && WIRES.filter(w => w.type === 'power' || w.type === 'phase').map((wire, idx) => {
-            const from = BLOCKS[wire.from]
-            const to = BLOCKS[wire.to]
-            if (!from || !to) return null
-            const x1 = from.x + from.w
-            const y1 = from.y + from.h / 2
-            let x2 = to.isCircle ? to.x + to.w / 2 - Math.min(to.w, to.h) / 2 : to.x
-            const y2 = to.y + to.h / 2
-            return <FlowDots key={idx} x1={x1} y1={y1} x2={x2} y2={y2} type={wire.type} />
+            return <FlowDots key={idx} pathId={`wire-${idx}`} type={wire.type} />
           })}
 
           {/* Half-bridge bracket labels */}
@@ -644,17 +648,33 @@ export default function DiagramPanel({ config }) {
           ))}
 
           {/* All blocks */}
-          {Object.entries(BLOCKS).map(([id, def]) => (
-            <Block
-              key={id}
-              id={id}
-              def={def}
-              status={blockStatuses[id]}
-              isHovered={hoveredBlock === id}
-              onHover={setHoveredBlock}
-              onClick={handleNav}
-            />
-          ))}
+          {Object.entries(BLOCKS).map(([id, def]) => {
+            // Determine dynamic parallel count
+            let pCount = 1
+            if (id.startsWith('hs_') || id.startsWith('ls_')) {
+              pCount = state.project.system_specs.parallel_mosfets || 1
+            }
+
+            // Determine dynamic labels
+            let label = def.label
+            let sublabel = def.sublabel
+            if (id === 'motor') {
+              label = state.project.blocks.motor?.specs?.motor_type === 'bldc' ? 'BLDC' : 'PMSM'
+            }
+
+            return (
+              <Block
+                key={id}
+                id={id}
+                def={{ ...def, label, sublabel }}
+                status={blockStatuses[id]}
+                isHovered={hoveredBlock === id}
+                onHover={setHoveredBlock}
+                onClick={handleNav}
+                parallelCount={pCount}
+              />
+            )
+          })}
 
           {/* Legend */}
           <Legend />

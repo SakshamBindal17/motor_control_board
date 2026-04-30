@@ -402,20 +402,20 @@ function LossVsFreqChart({ data, fsw }) {
   return (
     <div>
       <div className="dashboard-card-title">Per-MOSFET Loss vs Switching Frequency</div>
-      <ResponsiveContainer width="100%" height={320}>
-        <AreaChart data={data} margin={{ top: 10, right: 30, left: 55, bottom: 5 }}>
+      <ResponsiveContainer width="100%" height={340}>
+        <AreaChart data={data} margin={{ top: 10, right: 30, left: 20, bottom: 40 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-1)" />
-          <XAxis dataKey="freq" label={{ value: 'Frequency (kHz)', position: 'bottom', offset: -2, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
-          <YAxis label={{ value: 'Loss (W)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
+          <XAxis dataKey="freq" label={{ value: 'Frequency (kHz)', position: 'insideBottom', offset: -20, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} interval={3} />
+          <YAxis label={{ value: 'Loss (W)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} width={50} />
           <Tooltip contentStyle={tooltipStyle} formatter={(val, name) => [`${val} W`, name]} />
-          <Legend wrapperStyle={{ fontSize: 10, color: 'var(--txt-2)' }} />
+          <Legend verticalAlign="top" align="center" height={40} iconType="circle" wrapperStyle={{ fontSize: 11, color: 'var(--txt-2)' }} />
           <Area type="monotone" dataKey="conduction" stackId="1" fill="#1e90ff" stroke="#1e90ff" fillOpacity={0.6} name="Conduction" />
           <Area type="monotone" dataKey="switching" stackId="1" fill="#ff4444" stroke="#ff4444" fillOpacity={0.6} name="Switching" />
           <Area type="monotone" dataKey="gate" stackId="1" fill="#bb86fc" stroke="#bb86fc" fillOpacity={0.6} name="Gate" />
           <Area type="monotone" dataKey="recovery" stackId="1" fill="#ffab00" stroke="#ffab00" fillOpacity={0.6} name="Recovery" />
           <Area type="monotone" dataKey="coss" stackId="1" fill="#00bcd4" stroke="#00bcd4" fillOpacity={0.6} name="Coss" />
           <Area type="monotone" dataKey="bodyDiode" stackId="1" fill="#e91e63" stroke="#e91e63" fillOpacity={0.6} name="Body Diode" />
-          {fsw && <ReferenceLine x={fsw} stroke="var(--amber)" strokeDasharray="5 5" label={{ value: `${fsw}kHz`, position: 'top', fill: 'var(--amber)', fontSize: 10 }} />}
+          {fsw && <ReferenceLine x={fsw} stroke="var(--amber)" strokeDasharray="5 5" label={{ value: `${fsw}kHz`, position: 'top', fill: 'var(--amber)', fontSize: 10, fontWeight: 700 }} />}
         </AreaChart>
       </ResponsiveContainer>
     </div>
@@ -426,15 +426,15 @@ function ThermalDeratingChart({ data, tAmb, iMax }) {
   return (
     <div>
       <div className="dashboard-card-title">Max Continuous Current vs Ambient Temperature</div>
-      <ResponsiveContainer width="100%" height={320}>
-        <AreaChart data={data} margin={{ top: 10, right: 30, left: 55, bottom: 5 }}>
+      <ResponsiveContainer width="100%" height={340}>
+        <AreaChart data={data} margin={{ top: 30, right: 30, left: 20, bottom: 40 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-1)" />
-          <XAxis dataKey="ambient" label={{ value: 'Ambient Temp (°C)', position: 'bottom', offset: -2, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
-          <YAxis label={{ value: 'Max Current (A)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
+          <XAxis dataKey="ambient" label={{ value: 'Ambient Temp (°C)', position: 'insideBottom', offset: -20, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} interval={1} />
+          <YAxis label={{ value: 'Max Current (A)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} width={50} />
           <Tooltip contentStyle={tooltipStyle} formatter={(val) => [`${val} A`, 'Max Current']} />
           <Area type="monotone" dataKey="maxCurrent" fill="#00e676" stroke="#00e676" fillOpacity={0.2} strokeWidth={2} name="Max Current" />
-          {tAmb != null && <ReferenceLine x={tAmb} stroke="var(--amber)" strokeDasharray="5 5" label={{ value: `${tAmb}°C`, position: 'top', fill: 'var(--amber)', fontSize: 10 }} />}
-          {iMax != null && <ReferenceLine y={iMax} stroke="var(--red)" strokeDasharray="5 5" label={{ value: `${iMax}A (design)`, position: 'right', fill: 'var(--red)', fontSize: 10 }} />}
+          {tAmb != null && <ReferenceLine x={tAmb} stroke="var(--amber)" strokeDasharray="5 5" label={{ value: `${tAmb}°C`, position: 'top', fill: 'var(--amber)', fontSize: 10, fontWeight: 700 }} />}
+          {iMax != null && <ReferenceLine y={iMax} stroke="var(--red)" strokeDasharray="5 5" label={{ value: `${iMax}A (design)`, position: 'insideTopLeft', fill: 'var(--red)', fontSize: 10, fontWeight: 700 }} />}
         </AreaChart>
       </ResponsiveContainer>
     </div>
@@ -445,14 +445,14 @@ function EfficiencyVsLoadChart({ data }) {
   return (
     <div>
       <div className="dashboard-card-title">MOSFET Stage Efficiency vs Load</div>
-      <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={data} margin={{ top: 10, right: 30, left: 55, bottom: 5 }}>
+      <ResponsiveContainer width="100%" height={340}>
+        <LineChart data={data} margin={{ top: 10, right: 80, left: 20, bottom: 40 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-1)" />
-          <XAxis dataKey="load" label={{ value: 'Load (%)', position: 'bottom', offset: -2, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
-          <YAxis yAxisId="eff" domain={[dataMin => Math.floor(dataMin / 5) * 5, 100]} label={{ value: 'Efficiency (%)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
-          <YAxis yAxisId="loss" orientation="right" label={{ value: 'Loss (W)', angle: 90, position: 'insideRight', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
+          <XAxis dataKey="load" label={{ value: 'Load (%)', position: 'insideBottom', offset: -20, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} interval={3} />
+          <YAxis yAxisId="eff" domain={[dataMin => Math.floor(dataMin / 5) * 5, 100]} label={{ value: 'Efficiency (%)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} width={55} />
+          <YAxis yAxisId="loss" orientation="right" label={{ value: 'Loss (W)', angle: 90, position: 'insideRight', offset: -15, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} width={60} />
           <Tooltip contentStyle={tooltipStyle} />
-          <Legend wrapperStyle={{ fontSize: 10, color: 'var(--txt-2)' }} />
+          <Legend verticalAlign="top" align="center" height={40} iconType="circle" wrapperStyle={{ fontSize: 11, color: 'var(--txt-2)' }} />
           <Line yAxisId="eff" type="monotone" dataKey="efficiency" stroke="#00e676" strokeWidth={2} dot={false} name="Efficiency (%)" />
           <Line yAxisId="loss" type="monotone" dataKey="loss" stroke="#ff4444" strokeWidth={2} dot={false} name="Total Loss (W)" />
         </LineChart>
@@ -465,14 +465,14 @@ function GateTimingChart({ data, currentRg }) {
   return (
     <div>
       <div className="dashboard-card-title">Switching Times & dV/dt vs Gate Resistance</div>
-      <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={data} margin={{ top: 10, right: 50, left: 55, bottom: 5 }}>
+      <ResponsiveContainer width="100%" height={340}>
+        <LineChart data={data} margin={{ top: 10, right: 80, left: 20, bottom: 40 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border-1)" />
-          <XAxis dataKey="rg" label={{ value: 'Rg external (Ω)', position: 'bottom', offset: -2, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
-          <YAxis yAxisId="time" label={{ value: 'Time (ns)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
-          <YAxis yAxisId="dvdt" orientation="right" label={{ value: 'dV/dt (V/µs)', angle: 90, position: 'insideRight', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 10 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} />
+          <XAxis dataKey="rg" label={{ value: 'Rg external (Ω)', position: 'insideBottom', offset: -20, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} interval={3} />
+          <YAxis yAxisId="time" label={{ value: 'Time (ns)', angle: -90, position: 'insideLeft', offset: 10, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} width={55} />
+          <YAxis yAxisId="dvdt" orientation="right" label={{ value: 'dV/dt (V/µs)', angle: 90, position: 'insideRight', offset: -15, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} width={65} />
           <Tooltip contentStyle={tooltipStyle} />
-          <Legend wrapperStyle={{ fontSize: 10, color: 'var(--txt-2)' }} />
+          <Legend verticalAlign="top" align="center" height={40} iconType="circle" wrapperStyle={{ fontSize: 11, color: 'var(--txt-2)' }} />
           <Line yAxisId="time" type="monotone" dataKey="riseTime" stroke="#1e90ff" strokeWidth={2} dot={false} name="Rise Time (ns)" />
           <Line yAxisId="time" type="monotone" dataKey="fallTime" stroke="#bb86fc" strokeWidth={2} dot={false} name="Fall Time (ns)" />
           <Line yAxisId="dvdt" type="monotone" dataKey="dvdt" stroke="#ffab00" strokeWidth={2} dot={false} name="dV/dt (V/µs)" />
@@ -483,7 +483,7 @@ function GateTimingChart({ data, currentRg }) {
               stroke="var(--green)"
               strokeDasharray="5 5"
               ifOverflow="extendDomain"
-              label={{ value: `Rg=${Math.round(currentRg)}Ω`, position: 'top', fill: 'var(--green)', fontSize: 10 }}
+              label={{ value: `Rg=${Math.round(currentRg)}Ω`, position: 'insideTopRight', fill: 'var(--green)', fontSize: 10, fontWeight: 700 }}
             />
           )}
         </LineChart>

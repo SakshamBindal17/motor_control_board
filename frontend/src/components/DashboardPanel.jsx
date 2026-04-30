@@ -97,14 +97,14 @@ export default function DashboardPanel() {
     const items = []
     const ml = C.mosfet_losses
     const nf = ml.num_fets || 6
-    if (ml.conduction_loss_per_fet_w > 0) items.push({ name: 'Conduction', value: +(ml.conduction_loss_per_fet_w * nf).toFixed(2), color: '#1e90ff' })
-    if (ml.switching_loss_per_fet_w > 0) items.push({ name: 'Switching', value: +(ml.switching_loss_per_fet_w * nf).toFixed(2), color: '#ff4444' })
-    if (ml.recovery_loss_per_fet_w > 0) items.push({ name: 'Recovery', value: +(ml.recovery_loss_per_fet_w * nf).toFixed(2), color: '#ffab00' })
-    if (ml.gate_charge_loss_per_fet_w > 0) items.push({ name: 'Gate', value: +(ml.gate_charge_loss_per_fet_w * nf).toFixed(2), color: '#bb86fc' })
-    if (ml.coss_loss_per_fet_w > 0) items.push({ name: 'Coss', value: +(ml.coss_loss_per_fet_w * nf).toFixed(2), color: '#00d4e8' })
-    if (ml.body_diode_loss_per_fet_w > 0) items.push({ name: 'Body Diode', value: +(ml.body_diode_loss_per_fet_w * nf).toFixed(2), color: '#ff7043' })
+    if ((ml.conduction_loss_per_fet_w ?? 0) > 0) items.push({ name: 'Conduction', value: +((ml.conduction_loss_per_fet_w ?? 0) * nf).toFixed(2), color: '#1e90ff' })
+    if ((ml.switching_loss_per_fet_w ?? 0) > 0) items.push({ name: 'Switching', value: +((ml.switching_loss_per_fet_w ?? 0) * nf).toFixed(2), color: '#ff4444' })
+    if ((ml.recovery_loss_per_fet_w ?? 0) > 0) items.push({ name: 'Recovery', value: +((ml.recovery_loss_per_fet_w ?? 0) * nf).toFixed(2), color: '#ffab00' })
+    if ((ml.gate_charge_loss_per_fet_w ?? 0) > 0) items.push({ name: 'Gate', value: +((ml.gate_charge_loss_per_fet_w ?? 0) * nf).toFixed(2), color: '#bb86fc' })
+    if ((ml.coss_loss_per_fet_w ?? 0) > 0) items.push({ name: 'Coss', value: +((ml.coss_loss_per_fet_w ?? 0) * nf).toFixed(2), color: '#00d4e8' })
+    if ((ml.body_diode_loss_per_fet_w ?? 0) > 0) items.push({ name: 'Body Diode', value: +((ml.body_diode_loss_per_fet_w ?? 0) * nf).toFixed(2), color: '#ff7043' })
     const motorCu = C.thermal?.motor_copper_loss_w
-    if (motorCu > 0) items.push({ name: 'Motor Cu', value: +motorCu.toFixed(2), color: '#00e676' })
+    if ((motorCu ?? 0) > 0) items.push({ name: 'Motor Cu', value: +(motorCu ?? 0).toFixed(2), color: '#00e676' })
     return items.length > 0 ? items : null
   }, [C])
 
@@ -372,7 +372,7 @@ export default function DashboardPanel() {
               <div className="dashboard-card-title">Cross-Datasheet Validation</div>
               <div className="dashboard-cv-grid">
                 {C.cross_validation.checks?.map((ck, i) => (
-                  <div key={i} className={`dashboard-cv-item dashboard-cv-item--${ck.status}`} data-tip={ck.message + (ck.advice ? '\\n\\n💡 ' + ck.advice : '')}>
+                  <div key={i} className={`dashboard-cv-item dashboard-cv-item--${ck.status}`} data-tip-json={JSON.stringify(ck)}>
                     <span className="dashboard-cv-icon">
                       {ck.status === 'pass' ? '✓' : ck.status === 'warn' ? '!' : ck.status === 'fail' ? '✗' : '–'}
                     </span>
