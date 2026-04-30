@@ -6,11 +6,11 @@ import { useProject, buildParamsDict } from '../context/ProjectContext.jsx'
    ═══════════════════════════════════════════════════════════════════════ */
 
 const CHANNELS = [
-  { id: 'vgs', label: 'CH1 Vgs', short: 'Vgs', unit: 'V', color: '#FFD700', desc: 'Gate-Source Voltage' },
-  { id: 'vds', label: 'CH2 Vds', short: 'Vds', unit: 'V', color: '#00CED1', desc: 'Drain-Source Voltage' },
-  { id: 'id', label: 'CH3 Id', short: 'Id', unit: 'A', color: '#32CD32', desc: 'Drain Current' },
-  { id: 'ig', label: 'CH4 Ig', short: 'Ig', unit: 'A', color: '#FF69B4', desc: 'Gate Current' },
-  { id: 'pd', label: 'CH5 Pd', short: 'Pd', unit: 'W', color: '#FF4444', desc: 'Instantaneous Power' },
+  { id: 'vgs', label: 'CH1 Vgs', short: 'Vgs', unit: 'V', color: '#FFD700', uiVar: 'var(--amber)', desc: 'Gate-Source Voltage' },
+  { id: 'vds', label: 'CH2 Vds', short: 'Vds', unit: 'V', color: '#00CED1', uiVar: 'var(--cyan)', desc: 'Drain-Source Voltage' },
+  { id: 'id', label: 'CH3 Id', short: 'Id', unit: 'A', color: '#32CD32', uiVar: 'var(--green)', desc: 'Drain Current' },
+  { id: 'ig', label: 'CH4 Ig', short: 'Ig', unit: 'A', color: '#FF69B4', uiVar: 'var(--purple)', desc: 'Gate Current' },
+  { id: 'pd', label: 'CH5 Pd', short: 'Pd', unit: 'W', color: '#FF4444', uiVar: 'var(--red)', desc: 'Instantaneous Power' },
 ]
 
 const DEFAULT_VISIBLE = { vgs: true, vds: true, id: false, ig: false, pd: false }
@@ -941,6 +941,7 @@ function drawScope(canvas, waveform, visibleChannels, viewWindow) {
   const pad = { top: 10 + badgeBarH, right: 20, bottom: 46, left: 58 }
   const plotW = w - pad.left - pad.right
   const plotH = h - pad.top - pad.bottom
+  if (plotW <= 0 || plotH <= 0) return
 
   // ── Background ──
   const bgGrad = ctx.createLinearGradient(0, 0, 0, h)
@@ -950,7 +951,7 @@ function drawScope(canvas, waveform, visibleChannels, viewWindow) {
   ctx.fillRect(0, 0, w, h)
 
   // CRT vignette
-  const vign = ctx.createRadialGradient(w / 2, h / 2, plotW * 0.3, w / 2, h / 2, w * 0.8)
+  const vign = ctx.createRadialGradient(w / 2, h / 2, Math.max(0, plotW * 0.3), w / 2, h / 2, Math.max(0, w * 0.8))
   vign.addColorStop(0, 'rgba(0,0,0,0)')
   vign.addColorStop(1, 'rgba(0,0,0,0.25)')
   ctx.fillStyle = vign
@@ -1494,7 +1495,7 @@ export default function WaveformPanel() {
               padding: '8px 12px', borderRadius: 8,
               border: '1px solid rgba(255,167,38,0.45)',
               background: 'rgba(255,167,38,0.10)',
-              color: '#FFCC80', fontSize: 11, lineHeight: 1.5,
+              color: 'var(--amber)', fontSize: 11, lineHeight: 1.5,
             }}>
               <div style={{ fontWeight: 700, marginBottom: 3 }}>
                 Guardrail fallback active: conservative timing model applied
@@ -1514,28 +1515,34 @@ export default function WaveformPanel() {
           )}
 
           {hasClampDiagnostics && (
-            <div style={{
-              padding: '8px 12px', borderRadius: 8,
-              border: '1px solid rgba(79,195,247,0.35)',
-              background: 'rgba(79,195,247,0.10)',
-              color: '#B3E5FC', fontSize: 11, lineHeight: 1.55,
+            <details style={{
+              background: 'var(--bg-2)', borderRadius: 8,
+              border: '1px solid var(--border-1)', fontSize: 11, color: 'var(--txt-2)',
+              marginBottom: 10
             }}>
-              <div style={{ fontWeight: 700, marginBottom: 3 }}>Clamp Activity Diagnostics</div>
-              <div>
-                Timing limits: di/dt on {timingClampInfo.di_dt_on_limited ? 'limited' : 'ok'}, di/dt off {timingClampInfo.di_dt_off_limited ? 'limited' : 'ok'},
-                {' '}Vls on {timingClampInfo.v_lcs_on_clamped ? 'clamped' : 'ok'}, Vls off {timingClampInfo.v_lcs_off_clamped ? 'clamped' : 'ok'}.
+              <summary style={{
+                padding: '8px 12px', cursor: 'pointer', fontWeight: 600, outline: 'none',
+                color: 'var(--txt-1)', display: 'flex', alignItems: 'center', gap: 6
+              }}>
+                <span style={{ color: 'var(--cyan)' }}>ℹ</span> Clamp Activity Diagnostics
+              </summary>
+              <div style={{ borderTop: '1px solid var(--border-1)', padding: '12px 14px', lineHeight: 1.6 }}>
+                <div style={{ marginBottom: 6 }}>
+                  <span style={{ color: 'var(--txt-1)', fontWeight: 600 }}>Timing Limits:</span> di/dt on {timingClampInfo.di_dt_on_limited ? 'limited' : 'ok'}, di/dt off {timingClampInfo.di_dt_off_limited ? 'limited' : 'ok'},
+                  {' '}Vls on {timingClampInfo.v_lcs_on_clamped ? 'clamped' : 'ok'}, Vls off {timingClampInfo.v_lcs_off_clamped ? 'clamped' : 'ok'}.
+                </div>
+                <div style={{ marginBottom: 6 }}>
+                  <span style={{ color: 'var(--txt-1)', fontWeight: 600 }}>Driver Limits:</span> Ig(on) {timingClampInfo.ig_miller_on_floored ? 'floored' : (timingClampInfo.ig_miller_on_capped ? 'capped' : 'ok')},
+                  {' '}Ig(off) {timingClampInfo.ig_miller_off_floored ? 'floored' : (timingClampInfo.ig_miller_off_capped ? 'capped' : 'ok')},
+                  {' '}Miller hard caps on/off: {timingClampInfo.t_r3_hard_capped ? 'yes' : 'no'} / {timingClampInfo.t_r3_off_hard_capped ? 'yes' : 'no'}.
+                </div>
+                <div>
+                  <span style={{ color: 'var(--txt-1)', fontWeight: 600 }}>Signal Clamps:</span> Vgs {parasiticClampInfo.vgs_clamped_points || 0}, Vds {parasiticClampInfo.vds_clamped_points || 0},
+                  {' '}Id {parasiticClampInfo.id_clamped_points || 0}, Ig {parasiticClampInfo.ig_clamped_points || 0} points.
+                  {' '}Vds spike-limited events: {parasiticClampInfo.vds_spike_limited_events || 0}.
+                </div>
               </div>
-              <div>
-                Driver limits: Ig(on) {timingClampInfo.ig_miller_on_floored ? 'floored' : (timingClampInfo.ig_miller_on_capped ? 'capped' : 'ok')},
-                {' '}Ig(off) {timingClampInfo.ig_miller_off_floored ? 'floored' : (timingClampInfo.ig_miller_off_capped ? 'capped' : 'ok')},
-                {' '}Miller hard caps on/off: {timingClampInfo.t_r3_hard_capped ? 'yes' : 'no'} / {timingClampInfo.t_r3_off_hard_capped ? 'yes' : 'no'}.
-              </div>
-              <div>
-                Signal clamps: Vgs {parasiticClampInfo.vgs_clamped_points || 0}, Vds {parasiticClampInfo.vds_clamped_points || 0},
-                {' '}Id {parasiticClampInfo.id_clamped_points || 0}, Ig {parasiticClampInfo.ig_clamped_points || 0} points.
-                {' '}Vds spike-limited events: {parasiticClampInfo.vds_spike_limited_events || 0}.
-              </div>
-            </div>
+            </details>
           )}
 
           {/* Toolbar */}
@@ -1547,13 +1554,13 @@ export default function WaveformPanel() {
                 title={ch.desc}
                 className="scope-ch-btn"
                 style={{
-                  borderColor: visible[ch.id] ? ch.color : 'var(--border-2)',
-                  background: visible[ch.id] ? `${ch.color}18` : 'transparent',
-                  color: visible[ch.id] ? ch.color : 'var(--txt-4)',
-                  opacity: visible[ch.id] ? 1 : 0.45,
+                  borderColor: visible[ch.id] ? ch.uiVar : 'var(--border-2)',
+                  background: visible[ch.id] ? 'var(--bg-3)' : 'transparent',
+                  color: visible[ch.id] ? ch.uiVar : 'var(--txt-4)',
+                  opacity: visible[ch.id] ? 1 : 0.6,
                 }}
               >
-                <span className="scope-ch-dot" style={{ background: visible[ch.id] ? ch.color : 'var(--txt-4)' }} />
+                <span className="scope-ch-dot" style={{ background: visible[ch.id] ? ch.uiVar : 'var(--txt-4)' }} />
                 {ch.short}
               </button>
             ))}
@@ -1637,27 +1644,70 @@ export default function WaveformPanel() {
             </div>
           )}
 
-          {/* Params strip */}
+          {/* Params section upgraded to cards */}
           {params && (
             <div style={{
-              padding: '6px 12px', background: 'var(--bg-2)', borderRadius: 8,
-              border: '1px solid var(--border-1)', fontSize: 10, color: 'var(--txt-3)',
-              lineHeight: 1.7, fontFamily: 'var(--font-mono)',
+              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '8px',
+              marginTop: '4px'
             }}>
-              <span style={{ color: 'var(--txt-2)', fontWeight: 700 }}>Params: </span>
-              Ciss={params.ciss_pf}pF · Qg={params.qg_nc}nC · Qgd_on={params.qgd_on_eff_nc ?? params.qgd_eff_nc ?? params.qgd_nc}nC · Qgd_off={params.qgd_off_eff_nc ?? params.qgd_eff_nc ?? params.qgd_nc}nC · Qgd_spec={params.qgd_spec_nc ?? params.qgd_nc}nC ·
-              Rg_int={params.rg_int_ohm}Ω · Rg_on={params.rg_on_ext_ohm}Ω · Rg_off={params.rg_off_ext_ohm}Ω ·
-              Vdrv={params.v_drv_v}V · Vbus={params.v_bus_v}V · Iload={params.i_load_a}A · fsw={params.fsw_khz}kHz · N={params.sample_points ?? '—'} · dt={params.sample_dt_ns ?? '—'}ns
+              <div className="dashboard-card" style={{ padding: '10px 12px', fontSize: 10, lineHeight: 1.6 }}>
+                <div style={{ color: 'var(--txt-1)', fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ color: '#4CAF50' }}>⚡</span> Capacitance & Charge
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, color: 'var(--txt-3)' }}>
+                  <span>Ciss:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.ciss_pf} pF</span>
+                  <span>Qg:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.qg_nc} nC</span>
+                  <span>Qgd (on):</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.qgd_on_eff_nc ?? params.qgd_eff_nc ?? params.qgd_nc} nC</span>
+                  <span>Qgd (off):</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.qgd_off_eff_nc ?? params.qgd_eff_nc ?? params.qgd_nc} nC</span>
+                </div>
+              </div>
+              <div className="dashboard-card" style={{ padding: '10px 12px', fontSize: 10, lineHeight: 1.6 }}>
+                <div style={{ color: 'var(--txt-1)', fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ color: '#FF9800' }}>⏣</span> Gate Resistances
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, color: 'var(--txt-3)' }}>
+                  <span>Rg (int):</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.rg_int_ohm} Ω</span>
+                  <span>Rg (on ext):</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.rg_on_ext_ohm} Ω</span>
+                  <span>Rg (off ext):</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.rg_off_ext_ohm} Ω</span>
+                </div>
+              </div>
+              <div className="dashboard-card" style={{ padding: '10px 12px', fontSize: 10, lineHeight: 1.6 }}>
+                <div style={{ color: 'var(--txt-1)', fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ color: '#03A9F4' }}>⚙</span> System State
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', columnGap: 8, color: 'var(--txt-3)' }}>
+                  <span>Vdrv / Vbus:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.v_drv_v} V / {params.v_bus_v} V</span>
+                  <span>Load Current:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.i_load_a} A</span>
+                  <span>Frequency:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.fsw_khz} kHz</span>
+                  <span>Resolution:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.sample_points ?? '—'} pts @ {params.sample_dt_ns ?? '—'} ns</span>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Note */}
-          <div style={{
-            padding: '5px 12px', background: 'rgba(255,171,0,0.04)', borderRadius: 8,
-            border: '1px solid rgba(255,171,0,0.1)', fontSize: 10, color: 'var(--amber)', lineHeight: 1.5, opacity: 0.7,
+          <details style={{
+            background: 'var(--bg-2)', borderRadius: 8,
+            border: '1px solid var(--border-1)', fontSize: 11, color: 'var(--txt-2)',
+            marginTop: '4px'
           }}>
-            ⚠ {waveform.model_note}
-          </div>
+            <summary style={{ 
+              padding: '8px 12px', cursor: 'pointer', fontWeight: 600, outline: 'none',
+              color: 'var(--amber)', borderBottom: '1px solid transparent'
+            }}>
+              <span style={{ marginRight: 6 }}>⚠</span> Model Information & Assumptions
+            </summary>
+            <div style={{ borderTop: '1px solid var(--border-1)', padding: '12px 14px' }}>
+              <ul style={{ margin: 0, paddingLeft: '18px', lineHeight: 1.7, opacity: 0.9, listStyleType: 'disc' }}>
+                {waveform.model_note?.split('. ').filter(Boolean).map((sentence, idx) => (
+                  <li key={idx} style={{ paddingBottom: '4px' }}>
+                    {sentence.trim()}{sentence.endsWith('.') ? '' : '.'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
+
+
         </>
       )}
     </div>
@@ -1700,11 +1750,11 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
 
   const inputStyle = {
     width: 64, padding: '3px 6px', fontSize: 11, textAlign: 'right',
-    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.20)',
-    borderRadius: 4, color: '#ffffff', fontFamily: 'var(--font-mono)', fontWeight: 600,
+    background: 'var(--bg-3)', border: '1px solid var(--border-2)',
+    borderRadius: 4, color: 'var(--txt-1)', fontFamily: 'var(--font-mono)', fontWeight: 600,
   }
-  const labelStyle = { fontSize: 11, color: '#c8cfd8', whiteSpace: 'nowrap', fontWeight: 600 }
-  const unitStyle = { fontSize: 10, color: '#90a0b0', fontWeight: 500 }
+  const labelStyle = { fontSize: 11, color: 'var(--txt-2)', whiteSpace: 'nowrap', fontWeight: 600 }
+  const unitStyle = { fontSize: 10, color: 'var(--txt-3)', fontWeight: 500 }
   const placeholderFor = (v) => v != null ? String(Math.round(v * 100) / 100) : '—'
 
   const calcRgOn = gateCalc?.rg_on_recommended_ohm
@@ -1729,11 +1779,11 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 14px',
-      background: hasOverrides ? 'rgba(100,200,255,0.06)' : 'rgba(255,255,255,0.03)',
-      borderRadius: 8, border: `1px solid ${hasOverrides ? 'rgba(100,200,255,0.20)' : 'rgba(255,255,255,0.10)'}`,
+      background: hasOverrides ? 'rgba(30,144,255,0.06)' : 'var(--bg-2)',
+      borderRadius: 8, border: `1px solid ${hasOverrides ? 'var(--accent-d)' : 'var(--border-1)'}`,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: hasOverrides ? '#4FC3F7' : '#c0cad4', letterSpacing: '.04em' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: hasOverrides ? 'var(--accent)' : 'var(--txt-2)', letterSpacing: '.04em' }}>
           🎛 WAVEFORM PARAMETERS
         </span>
         {hasOverrides && (
@@ -1743,7 +1793,7 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ ...labelStyle, color: '#FFD700' }}>Rg(on):</span>
+          <span style={labelStyle}>Rg(on):</span>
           <input type="text" inputMode="decimal" style={inputStyle}
             className="inp" placeholder={placeholderFor(calcRgOn)}
             value={local.rg_on_override} onKeyDown={handleKeyDown}
@@ -1751,7 +1801,7 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
           <span style={unitStyle}>Ω</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ ...labelStyle, color: '#FFD700' }}>Rg(off):</span>
+          <span style={labelStyle}>Rg(off):</span>
           <input type="text" inputMode="decimal" style={inputStyle}
             className="inp" placeholder={placeholderFor(calcRgOff)}
             value={local.rg_off_override} onKeyDown={handleKeyDown}
@@ -1759,18 +1809,15 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
           <span style={unitStyle}>Ω</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ ...labelStyle, color: '#00CED1' }}>Vds:</span>
+          <span style={labelStyle}>Vds:</span>
           <input type="text" inputMode="decimal" style={inputStyle}
             className="inp" placeholder={String(specs.peak_voltage || 60)}
             value={local.vds_override} onKeyDown={handleKeyDown}
             onChange={e => localUpdate('vds_override', e.target.value)} />
           <span style={unitStyle}>V</span>
         </div>
-        <div style={{ fontSize: 9, color: 'var(--txt-4)', lineHeight: 1.4, marginTop: 2 }}>
-          Vds defaults to V_peak ({specs.peak_voltage || 60}V), not V_bus ({specs.bus_voltage || 48}V) — models worst-case Vds at transient overshoot.
-        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ ...labelStyle, color: '#32CD32' }}>Id:</span>
+          <span style={labelStyle}>Id:</span>
           <input type="text" inputMode="decimal" style={inputStyle}
             className="inp" placeholder={String(specs.max_phase_current || 80)}
             value={local.id_override} onKeyDown={handleKeyDown}
@@ -1778,13 +1825,16 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
           <span style={unitStyle}>A</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <span style={{ ...labelStyle, color: '#FFD700' }}>Vgs:</span>
+          <span style={labelStyle}>Vgs:</span>
           <input type="text" inputMode="decimal" style={inputStyle}
             className="inp" placeholder={String(specs.gate_drive_voltage || 12)}
             value={local.vgs_drive_override} onKeyDown={handleKeyDown}
             onChange={e => localUpdate('vgs_drive_override', e.target.value)} />
           <span style={unitStyle}>V</span>
         </div>
+      </div>
+      <div style={{ fontSize: 9, color: 'var(--txt-4)', lineHeight: 1.4, marginTop: -2 }}>
+        Vds defaults to V_peak ({specs.peak_voltage || 60}V), not V_bus ({specs.bus_voltage || 48}V) — models worst-case Vds at transient overshoot.
       </div>
 
       {/* Apply button */}
@@ -1795,15 +1845,15 @@ function WaveformInputsBar({ project, dispatch, gateCalc }) {
           disabled={!dirty}
           style={{
             padding: '5px 14px', fontSize: 11, fontWeight: 700,
-            background: dirty ? 'rgba(76,175,80,0.25)' : 'rgba(255,255,255,0.06)',
-            border: `1px solid ${dirty ? 'rgba(76,175,80,0.5)' : 'rgba(255,255,255,0.15)'}`,
-            color: dirty ? '#81C784' : '#808890',
+            background: dirty ? 'rgba(0,230,118,0.12)' : 'var(--bg-3)',
+            border: `1px solid ${dirty ? 'var(--green-d)' : 'var(--border-2)'}`,
+            color: dirty ? 'var(--green)' : 'var(--txt-3)',
             borderRadius: 5, cursor: dirty ? 'pointer' : 'default',
           }}
         >
           {dirty ? '▶ Apply to Waveform' : '✓ Applied'}
         </button>
-        {dirty && <span style={{ fontSize: 10, color: '#FFD54F' }}>Press Enter or click Apply</span>}
+        {dirty && <span style={{ fontSize: 10, color: 'var(--amber)' }}>Press Enter or click Apply</span>}
         <div style={{ fontSize: 9, color: 'var(--txt-4)', marginLeft: 'auto' }}>
           Leave empty for defaults. Syncs with Passives tab.
         </div>
@@ -1880,19 +1930,19 @@ function PCBParasiticsBar({ project, dispatch, parasitics }) {
 
   const inputStyle = {
     width: 52, padding: '3px 6px', fontSize: 11, textAlign: 'right',
-    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.20)',
-    borderRadius: 4, color: '#ffffff', fontFamily: 'var(--font-mono)', fontWeight: 600,
+    background: 'var(--bg-3)', border: '1px solid var(--border-2)',
+    borderRadius: 4, color: 'var(--txt-1)', fontFamily: 'var(--font-mono)', fontWeight: 600,
   }
 
-  const labelStyle = { fontSize: 11, color: '#c8cfd8', whiteSpace: 'nowrap', fontWeight: 500 }
-  const unitStyle = { fontSize: 10, color: '#90a0b0', fontWeight: 500 }
-  const arrowStyle = { margin: '0 4px', color: '#90a0b0', fontSize: 12, fontWeight: 700 }
+  const labelStyle = { fontSize: 11, color: 'var(--txt-2)', whiteSpace: 'nowrap', fontWeight: 500 }
+  const unitStyle = { fontSize: 10, color: 'var(--txt-3)', fontWeight: 500 }
+  const arrowStyle = { margin: '0 4px', color: 'var(--txt-3)', fontSize: 12, fontWeight: 700 }
   const resultStyle = (v) => ({
     fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-mono)',
-    color: v > 0 ? '#4fc3f7' : '#808890',
+    color: v > 0 ? 'var(--accent)' : 'var(--txt-3)',
     padding: '2px 8px', borderRadius: 4,
-    background: v > 0 ? 'rgba(79,195,247,0.12)' : 'rgba(255,255,255,0.04)',
-    border: v > 0 ? '1px solid rgba(79,195,247,0.25)' : '1px solid rgba(255,255,255,0.08)',
+    background: v > 0 ? 'rgba(30,144,255,0.10)' : 'var(--bg-3)',
+    border: v > 0 ? '1px solid var(--accent-d)' : '1px solid var(--border-1)',
   })
 
   const dampingBadge = (zeta) => {
@@ -1905,12 +1955,12 @@ function PCBParasiticsBar({ project, dispatch, parasitics }) {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 14px',
-      background: hasParasitics ? 'rgba(255,140,0,0.06)' : 'rgba(255,255,255,0.03)',
-      borderRadius: 8, border: `1px solid ${hasParasitics ? 'rgba(255,140,0,0.20)' : 'rgba(255,255,255,0.10)'}`,
+      background: hasParasitics ? 'rgba(255,140,0,0.06)' : 'var(--bg-2)',
+      borderRadius: 8, border: `1px solid ${hasParasitics ? 'var(--amber)' : 'var(--border-1)'}`,
     }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: hasParasitics ? '#FFB74D' : '#c0cad4', letterSpacing: '.04em' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: hasParasitics ? 'var(--amber)' : 'var(--txt-2)', letterSpacing: '.04em' }}>
           📐 PCB TRACE PARASITICS
         </span>
         {hasParasitics && (
@@ -1922,11 +1972,11 @@ function PCBParasiticsBar({ project, dispatch, parasitics }) {
       {!hasParasitics && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
-          background: 'rgba(255,193,7,0.10)', border: '1px solid rgba(255,193,7,0.25)',
+          background: 'rgba(255,171,0,0.06)', border: '1px solid rgba(255,171,0,0.2)',
           borderRadius: 6,
         }}>
           <span style={{ fontSize: 14 }}>⚡</span>
-          <span style={{ fontSize: 11, color: '#FFD54F', fontWeight: 600 }}>
+          <span style={{ fontSize: 11, color: 'var(--amber)', fontWeight: 600 }}>
             Showing ideal waveform — enter PCB trace dimensions below for real-world parasitic effects
           </span>
         </div>
@@ -1998,9 +2048,9 @@ function PCBParasiticsBar({ project, dispatch, parasitics }) {
           disabled={!dirty}
           style={{
             padding: '5px 14px', fontSize: 11, fontWeight: 700,
-            background: dirty ? 'rgba(76,175,80,0.25)' : 'rgba(255,255,255,0.06)',
-            border: `1px solid ${dirty ? 'rgba(76,175,80,0.5)' : 'rgba(255,255,255,0.15)'}`,
-            color: dirty ? '#81C784' : '#808890',
+            background: dirty ? 'rgba(0,230,118,0.12)' : 'var(--bg-3)',
+            border: `1px solid ${dirty ? 'var(--green-d)' : 'var(--border-2)'}`,
+            color: dirty ? 'var(--green)' : 'var(--txt-3)',
             borderRadius: 5, cursor: dirty ? 'pointer' : 'default',
           }}
         >
@@ -2012,15 +2062,15 @@ function PCBParasiticsBar({ project, dispatch, parasitics }) {
       {/* Formula badge */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px',
-        background: 'rgba(100,181,246,0.08)', border: '1px solid rgba(100,181,246,0.15)',
+        background: 'rgba(30,144,255,0.08)', border: '1px solid rgba(30,144,255,0.15)',
         borderRadius: 5, width: 'fit-content',
       }}>
-        <span style={{ fontSize: 10, color: '#90CAF9', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
+        <span style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
           L(nH) = 0.2 × len × acosh(1 + 2h/w)
         </span>
-        <span style={{ fontSize: 9, color: '#78909C' }}>— IPC microstrip</span>
+        <span style={{ fontSize: 9, color: 'var(--txt-3)' }}>— IPC microstrip</span>
         {hasParasitics && (
-          <span style={{ fontSize: 9, color: '#B0BEC5', marginLeft: 4 }}>
+          <span style={{ fontSize: 9, color: 'var(--txt-4)', marginLeft: 4 }}>
             L = trace length, W = trace width, H = height above ground plane
           </span>
         )}
@@ -2049,7 +2099,7 @@ function TimingCard({ title, color, icon, rows }) {
               <span style={{ color: 'var(--txt-3)' }}>{r.label}</span>
               <span style={{
                 fontFamily: 'var(--font-mono)', fontWeight: r.bold ? 700 : 500,
-                color: r.hl ? '#FFD700' : r.bold ? 'var(--txt-1)' : 'var(--txt-2)', textAlign: 'right',
+                color: r.hl ? 'var(--amber)' : r.bold ? 'var(--txt-1)' : 'var(--txt-2)', textAlign: 'right',
               }}>
                 {typeof r.value === 'number' ? r.value.toFixed(1) : r.value} {r.unit}
               </span>
@@ -2060,3 +2110,4 @@ function TimingCard({ title, color, icon, rows }) {
     </div>
   )
 }
+

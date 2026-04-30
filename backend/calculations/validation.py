@@ -531,10 +531,25 @@ class ValidationMixin:
         self._current_module = "cross_validation"
         checks = []
 
-        def _add(rule_id, title, status, detail, advice=None):
+        # Helper to safely get part numbers
+        drv_pn = self._get(self.driver, "DRIVER", "part_number", "Driver")
+        fet_pn = self._get(self.mosfet, "MOSFET", "part_number", "MOSFET")
+        mcu_pn = self._get(self.mcu, "MCU", "part_number", "MCU")
+        
+        drv_part = f"Driver ({drv_pn})" if drv_pn != "Driver" else "Driver"
+        fet_part = f"MOSFET ({fet_pn})" if fet_pn != "MOSFET" else "MOSFET"
+        mcu_part = f"MCU ({mcu_pn})" if mcu_pn != "MCU" else "MCU"
+
+        def _add(rule_id, title, status, detail, advice=None, theory=None, formula=None, part_names=None):
             entry = {"id": rule_id, "title": title, "status": status, "detail": detail}
             if advice:
                 entry["advice"] = advice
+            if theory:
+                entry["theory"] = theory
+            if formula:
+                entry["formula"] = formula
+            if part_names:
+                entry["part_names"] = part_names
             checks.append(entry)
             tag = {"pass": "OK", "warn": "WARNING", "fail": "FAIL", "skip": "SKIP"}[status]
             self.audit_log.append(f"[Cross-Check] {tag}: {title} -- {detail}")
@@ -545,20 +560,25 @@ class ValidationMixin:
         if io_src is not None and qg is not None and io_src > 0:
             t_charge_ns = (qg / io_src) * 1e9
             target_ns = self._dc("gate.rise_time_target")
+            
+            theory = "The driver's peak source current determines how fast the MOSFET gate can be charged. Slower charging increases switching losses, while charging too fast causes EMI and ringing."
+            formula = "t_charge = Qg_total / Io_source"
+            parts = f"{drv_part} vs {fet_part}"
+            
             if t_charge_ns > target_ns * 2:
                 _add("drv_qg_charge", "Driver vs MOSFET Qg",
                      "fail",
                      f"Driver needs {t_charge_ns:.0f}ns to charge Qg={qg*1e9:.0f}nC (Io={io_src:.1f}A). Target is {target_ns}ns.",
-                     "Choose a driver with higher source current, or a MOSFET with lower Qg.")
+                     "Choose a driver with higher source current, or a MOSFET with lower Qg.", theory, formula, parts)
             elif t_charge_ns > target_ns:
                 _add("drv_qg_charge", "Driver vs MOSFET Qg",
                      "warn",
                      f"Gate charge time {t_charge_ns:.0f}ns is above target {target_ns}ns but within 2x. Rg_on will be near minimum.",
-                     "Consider increasing rise time target or using a stronger driver.")
+                     "Consider increasing rise time target or using a stronger driver.", theory, formula, parts)
             else:
                 _add("drv_qg_charge", "Driver vs MOSFET Qg",
                      "pass",
-                     f"Driver can charge Qg={qg*1e9:.0f}nC in {t_charge_ns:.0f}ns (target: {target_ns}ns). Headroom for external Rg.")
+                     f"Driver can charge Qg={qg*1e9:.0f}nC in {t_charge_ns:.0f}ns (target: {target_ns}ns). Headroom for external Rg.", None, theory, formula, parts)
         else:
             _add("drv_qg_charge", "Driver vs MOSFET Qg", "skip",
                  "Missing io_source or Qg -- cannot validate gate drive capability.")
@@ -568,21 +588,25 @@ class ValidationMixin:
         boot_vf = self._dc("gate.bootstrap_vf")
         v_boot = self.v_drv - boot_vf
         if vbs_max is not None:
+            theory = "The bootstrap capacitor charges to (VCC - Vf_diode). If this voltage exceeds the driver's maximum bootstrap rating (VBS_max), the high-side floating circuitry may break down and destroy the IC."
+            formula = "V_boot = VCC - Vf_diode < VBS_max"
+            parts = f"{drv_part} Bootstrap"
+            
             if v_boot > vbs_max:
                 _add("vbs_max_check", "Bootstrap vs VBS max",
                      "fail",
                      f"Bootstrap voltage ({v_boot:.1f}V) exceeds VBS_max ({vbs_max:.1f}V). Driver IC will be damaged.",
-                     "Reduce VCC supply or add Zener clamp on bootstrap pin.")
+                     "Reduce VCC supply or add Zener clamp on bootstrap pin.", theory, formula, parts)
             elif v_boot > vbs_max * 0.9:
                 _add("vbs_max_check", "Bootstrap vs VBS max",
                      "warn",
                      f"Bootstrap ({v_boot:.1f}V) is within 10% of VBS_max ({vbs_max:.1f}V). Limited headroom for transients.",
-                     "Consider adding a bootstrap Zener clamp for safety.")
+                     "Consider adding a bootstrap Zener clamp for safety.", theory, formula, parts)
             else:
                 margin_pct = ((vbs_max - v_boot) / vbs_max) * 100
                 _add("vbs_max_check", "Bootstrap vs VBS max",
                      "pass",
-                     f"Bootstrap {v_boot:.1f}V vs VBS_max {vbs_max:.1f}V -- {margin_pct:.0f}% margin.")
+                     f"Bootstrap {v_boot:.1f}V vs VBS_max {vbs_max:.1f}V -- {margin_pct:.0f}% margin.", None, theory, formula, parts)
         else:
             _add("vbs_max_check", "Bootstrap vs VBS max", "skip",
                  "VBS_max not extracted -- cannot validate bootstrap voltage limit.")
@@ -590,21 +614,25 @@ class ValidationMixin:
         # ── 3. Driver UVLO vs gate drive voltage ──
         vcc_uvlo = self._get(self.driver, "DRIVER", "vcc_uvlo", None)
         if vcc_uvlo is not None:
+            theory = "Gate drivers have an Under-Voltage Lockout (UVLO) threshold to prevent the MOSFET from operating in the linear region (where it acts as a resistor and burns up) if the supply voltage drops."
+            formula = "VCC > VCC_UVLO_ON + Margin"
+            parts = f"{drv_part} VCC"
+            
             uvlo_margin = self.v_drv - vcc_uvlo
             if uvlo_margin < 0:
                 _add("vcc_uvlo_margin", "VCC vs UVLO threshold",
                      "fail",
                      f"Gate drive ({self.v_drv}V) is BELOW VCC UVLO ({vcc_uvlo:.1f}V). Driver will remain locked out.",
-                     "Increase VCC supply voltage above UVLO threshold.")
+                     "Increase VCC supply voltage above UVLO threshold.", theory, formula, parts)
             elif uvlo_margin < 1.0:
                 _add("vcc_uvlo_margin", "VCC vs UVLO threshold",
                      "warn",
                      f"Only {uvlo_margin:.1f}V above UVLO ({vcc_uvlo:.1f}V). May brown out during load transients.",
-                     "Increase VCC or improve supply regulation.")
+                     "Increase VCC or improve supply regulation.", theory, formula, parts)
             else:
                 _add("vcc_uvlo_margin", "VCC vs UVLO threshold",
                      "pass",
-                     f"VCC {self.v_drv}V is {uvlo_margin:.1f}V above UVLO ({vcc_uvlo:.1f}V). Adequate margin.")
+                     f"VCC {self.v_drv}V is {uvlo_margin:.1f}V above UVLO ({vcc_uvlo:.1f}V). Adequate margin.", None, theory, formula, parts)
         else:
             _add("vcc_uvlo_margin", "VCC vs UVLO threshold", "skip",
                  "VCC UVLO not extracted -- cannot validate supply margin.")
@@ -612,20 +640,21 @@ class ValidationMixin:
         # ── 3b. Bootstrap UVLO extraction quality (data trust gate) ──
         uvlo_info = self._bootstrap_uvlo_info()
         vbs_uvlo = uvlo_info["value_v"]
+        theory_uvlo = "Bootstrap UVLO data quality ensures that the high-side floating supply has valid thresholds extracted from the datasheet. Invalid data here cascades into dangerous high-side linear-region operation."
         if uvlo_info["status"] == "verified":
             _add("vbs_uvlo_data_quality", "Bootstrap UVLO data quality",
                  "pass",
-                 f"Bootstrap UVLO extracted as {vbs_uvlo:.2f}V via '{uvlo_info['source_key']}' and is within practical range.")
+                 f"Bootstrap UVLO extracted as {vbs_uvlo:.2f}V via '{uvlo_info['source_key']}' and is within practical range.", None, theory_uvlo)
         elif uvlo_info["status"] == "missing":
             _add("vbs_uvlo_data_quality", "Bootstrap UVLO data quality",
                  "warn",
                  "Bootstrap UVLO is missing. Bootstrap UVLO margin checks are unverified.",
-                 "Re-extract the driver datasheet or provide vbs_uvlo manually before hardware sign-off.")
+                 "Re-extract the driver datasheet or provide vbs_uvlo manually before hardware sign-off.", theory_uvlo)
         else:
             _add("vbs_uvlo_data_quality", "Bootstrap UVLO data quality",
                  "fail",
                  f"Bootstrap UVLO extracted as {vbs_uvlo:.2f}V looks suspicious; margin checks are not trustworthy.",
-                 "Confirm UVLO units/condition in the datasheet and correct vbs_uvlo extraction.")
+                 "Confirm UVLO units/condition in the datasheet and correct vbs_uvlo extraction.", theory_uvlo)
 
         # ── 4. MCU dead-time resolution vs calculated minimum dead time ──
         dt_res_s = self._get(self.mcu, "MCU", "pwm_deadtime_res", None)
@@ -642,21 +671,25 @@ class ValidationMixin:
 
             dt_max_s = self._get(self.mcu, "MCU", "pwm_deadtime_max", None)
             dt_rec_ns = dt_min_ns * self._dc("dt.safety_mult")
+            
+            theory = "Dead-time prevents shoot-through by ensuring one switch turns off before the complementary switch turns on. The MCU sets this via a timer register. Coarse timer resolution forces you to round up significantly, adding unnecessary body-diode conduction losses."
+            formula = "DT_actual = ceil(DT_min / DT_resolution) × DT_resolution"
+            parts = f"{mcu_part} Timer vs {fet_part}"
 
             if dt_max_s is not None and dt_rec_ns > dt_max_s * 1e9:
                 _add("mcu_dt_resolution", "MCU dead-time vs design",
                      "fail",
                      f"Recommended DT ({dt_rec_ns:.0f}ns) exceeds MCU max ({dt_max_s*1e9:.0f}ns).",
-                     "Use a faster MOSFET/driver, reduce safety margin, or choose MCU with wider DT range.")
+                     "Use a faster MOSFET/driver, reduce safety margin, or choose MCU with wider DT range.", theory, formula, parts)
             elif dt_res_ns > dt_min_ns * 0.25:
                 _add("mcu_dt_resolution", "MCU dead-time vs design",
                      "warn",
                      f"DT resolution ({dt_res_ns:.1f}ns) is coarse vs minimum DT ({dt_min_ns:.0f}ns). Quantization adds {quantization_error_ns:.0f}ns.",
-                     "Acceptable, but limits fine-tuning. Consider MCU with finer DT resolution.")
+                     "Acceptable, but limits fine-tuning. Consider MCU with finer DT resolution.", theory, formula, parts)
             else:
                 _add("mcu_dt_resolution", "MCU dead-time vs design",
                      "pass",
-                     f"DT resolution {dt_res_ns:.1f}ns, minimum DT {dt_min_ns:.0f}ns, register={dt_reg}. Good precision.")
+                     f"DT resolution {dt_res_ns:.1f}ns, minimum DT {dt_min_ns:.0f}ns, register={dt_reg}. Good precision.", None, theory, formula, parts)
         else:
             _add("mcu_dt_resolution", "MCU dead-time vs design", "skip",
                  "Missing DT resolution or MOSFET/driver timing -- cannot validate dead-time programming.")
@@ -665,16 +698,18 @@ class ValidationMixin:
         adc_ref_mcu = self._get(self.mcu, "MCU", "adc_ref", None)
         adc_ref_dc = self._dc("prot.adc_ref")
         if adc_ref_mcu is not None and adc_ref_mcu > 0:
+            theory = "Hardware protection circuits (like over-current comparators or resistor dividers) are designed assuming a specific full-scale voltage. If the MCU's internal ADC reference differs, scaling factors will be incorrect."
+            
             diff_pct = abs(adc_ref_mcu - adc_ref_dc) / adc_ref_dc * 100 if adc_ref_dc > 0 else 0
             if diff_pct > 10:
                 _add("adc_ref_consistency", "ADC reference consistency",
                      "warn",
                      f"MCU ADC ref ({adc_ref_mcu:.2f}V) differs from design constant ({adc_ref_dc:.2f}V) by {diff_pct:.0f}%. Using MCU value in calculations.",
-                     "Update the ADC reference design constant to match your MCU, or verify the extracted value.")
+                     "Update the ADC reference design constant to match your MCU, or verify the extracted value.", theory)
             else:
                 _add("adc_ref_consistency", "ADC reference consistency",
                      "pass",
-                     f"MCU ADC ref ({adc_ref_mcu:.2f}V) matches design constant ({adc_ref_dc:.2f}V). Consistent.")
+                     f"MCU ADC ref ({adc_ref_mcu:.2f}V) matches design constant ({adc_ref_dc:.2f}V). Consistent.", None, theory)
         else:
             _add("adc_ref_consistency", "ADC reference consistency", "skip",
                  "ADC reference not extracted from MCU -- using design constant default.")
@@ -684,6 +719,10 @@ class ValidationMixin:
         coss = self._get(self.mosfet, "MOSFET", "coss", None)
         l_stray_nh = float(self.ovr.get("stray_inductance_nh", 10.0))
         if vds_max is not None:
+            theory = "At turn-off, rapid current collapse (di/dt) through PCB stray inductance causes a voltage spike. If this transient spike exceeds the Vds breakdown voltage, the MOSFET undergoes avalanche breakdown, destroying the die."
+            formula = "V_spike = V_bus + I_max × √(L_stray / Coss)"
+            parts = f"{fet_part} Vds"
+            
             if coss is not None and coss > 0:
                 v_overshoot = self.i_max * math.sqrt(l_stray_nh * 1e-9 / coss)
                 v_worst = self.v_peak + v_overshoot
@@ -696,16 +735,16 @@ class ValidationMixin:
                 _add("vds_ringing", "Vds vs peak + ringing",
                      "fail",
                      f"Peak + ringing ({v_worst:.0f}V) exceeds Vds_max ({vds_max:.0f}V). Avalanche breakdown risk!",
-                     "Use higher-voltage MOSFET, reduce stray inductance, or add snubber.")
+                     "Use higher-voltage MOSFET, reduce stray inductance, or add snubber.", theory, formula, parts)
             elif margin_pct < 10:
                 _add("vds_ringing", "Vds vs peak + ringing",
                      "warn",
                      f"Only {margin_pct:.0f}% margin: peak+ring={v_worst:.0f}V vs Vds_max={vds_max:.0f}V.",
-                     "Tight margin. Ensure snubber is properly designed and PCB layout is low-inductance.")
+                     "Tight margin. Ensure snubber is properly designed and PCB layout is low-inductance.", theory, formula, parts)
             else:
                 _add("vds_ringing", "Vds vs peak + ringing",
                      "pass",
-                     f"Vds_max={vds_max:.0f}V vs peak+ring={v_worst:.0f}V -- {margin_pct:.0f}% margin.")
+                     f"Vds_max={vds_max:.0f}V vs peak+ring={v_worst:.0f}V -- {margin_pct:.0f}% margin.", None, theory, formula, parts)
         else:
             _add("vds_ringing", "Vds vs peak + ringing", "skip",
                  "Vds_max not extracted -- cannot validate voltage headroom with ringing.")
@@ -713,20 +752,24 @@ class ValidationMixin:
         # ── 7. MOSFET Vgs_max vs gate drive voltage ──
         vgs_max = self._get(self.mosfet, "MOSFET", "vgs_max", None)
         if vgs_max is not None:
+            theory = "The gate oxide layer is extremely thin. Applying a voltage (V_drive) higher than the absolute maximum Vgs rating will physically puncture the oxide dielectric, causing an immediate short circuit."
+            formula = "V_drive < Vgs_max"
+            parts = f"{fet_part} Gate"
+            
             if self.v_drv > vgs_max:
                 _add("vgs_max_safety", "Gate drive vs Vgs max",
                      "fail",
                      f"Gate drive ({self.v_drv}V) > Vgs_max ({vgs_max:.0f}V). GATE OXIDE WILL FAIL.",
-                     "Reduce VCC or add gate clamp Zener. This is a critical safety issue.")
+                     "Reduce VCC or add gate clamp Zener. This is a critical safety issue.", theory, formula, parts)
             elif self.v_drv > vgs_max * 0.8:
                 _add("vgs_max_safety", "Gate drive vs Vgs max",
                      "warn",
                      f"Gate drive ({self.v_drv}V) is {self.v_drv/vgs_max*100:.0f}% of Vgs_max ({vgs_max:.0f}V). Add clamping Zener recommended.",
-                     "A 15V Zener + resistor clamp protects against transient overshoot.")
+                     "A 15V Zener + resistor clamp protects against transient overshoot.", theory, formula, parts)
             else:
                 _add("vgs_max_safety", "Gate drive vs Vgs max",
                      "pass",
-                     f"Vgs_max={vgs_max:.0f}V, V_drive={self.v_drv}V -- {((vgs_max-self.v_drv)/vgs_max*100):.0f}% headroom.")
+                     f"Vgs_max={vgs_max:.0f}V, V_drive={self.v_drv}V -- {((vgs_max-self.v_drv)/vgs_max*100):.0f}% headroom.", None, theory, formula, parts)
         else:
             _add("vgs_max_safety", "Gate drive vs Vgs max", "skip",
                  "Vgs_max not extracted -- cannot validate gate oxide safety.")
@@ -734,16 +777,20 @@ class ValidationMixin:
         # ── 8. Gate drive headroom vs Vgs_th ──
         vgs_th = self._get(self.mosfet, "MOSFET", "vgs_th", None)
         if vgs_th is not None:
+            theory = "To fully enhance the channel and achieve the rated Rds(on), the gate drive voltage must significantly exceed the threshold voltage (Vgs_th). If it's too close, the MOSFET operates with high resistance."
+            formula = "V_drive >> Vgs_th (typically +5V to +10V)"
+            parts = f"{drv_part} VCC vs {fet_part} Vth"
+            
             headroom = self.v_drv - vgs_th
             if headroom < 2:
                 _add("vgs_headroom", "V_drive headroom vs Vgs_th",
                      "fail" if headroom < 0 else "warn",
                      f"V_drive ({self.v_drv}V) - Vgs_th ({vgs_th:.1f}V) = {headroom:.1f}V. Need >=3V for full enhancement.",
-                     "Increase VCC or choose MOSFET with lower Vgs_th (logic-level FET).")
+                     "Increase VCC or choose MOSFET with lower Vgs_th (logic-level FET).", theory, formula, parts)
             else:
                 _add("vgs_headroom", "V_drive headroom vs Vgs_th",
                      "pass",
-                     f"V_drive - Vgs_th = {headroom:.1f}V headroom. MOSFET will fully enhance.")
+                     f"V_drive - Vgs_th = {headroom:.1f}V headroom. MOSFET will fully enhance.", None, theory, formula, parts)
         else:
             _add("vgs_headroom", "V_drive headroom vs Vgs_th", "skip",
                  "Vgs_th not extracted -- cannot validate drive headroom.")
@@ -752,6 +799,10 @@ class ValidationMixin:
         rth_ja_drv = self._get(self.driver, "DRIVER", "rth_ja", None)
         thermal_shutdown = self._get(self.driver, "DRIVER", "thermal_shutdown", None)
         if rth_ja_drv is not None and qg is not None:
+            theory = "The gate driver dissipates power continuously while charging and discharging the MOSFET gate capacitance. At high frequencies with large MOSFETs, this power (P = Qg*V*f) can heat the tiny driver IC past its thermal shutdown point."
+            formula = "P_drv = 2 × Qg × V_drv × fsw ; Tj = T_amb + P_drv × Rth_ja"
+            parts = f"{drv_part} Thermal"
+            
             p_driver = qg * self.v_drv * self.fsw * 2 + 0.05
             tj_drv = self.t_amb + p_driver * rth_ja_drv
             if thermal_shutdown is not None:
@@ -760,19 +811,19 @@ class ValidationMixin:
                     _add("drv_thermal_shutdown", "Driver thermal shutdown margin",
                          "fail",
                          f"Driver Tj ({tj_drv:.0f}C) exceeds thermal shutdown ({thermal_shutdown:.0f}C)!",
-                         "Reduce fsw, use lower-Qg MOSFET, or add driver heatsinking.")
+                         "Reduce fsw, use lower-Qg MOSFET, or add driver heatsinking.", theory, formula, parts)
                 elif margin < 20:
                     _add("drv_thermal_shutdown", "Driver thermal shutdown margin",
                          "warn",
                          f"Only {margin:.0f}C margin before driver thermal shutdown (Tj={tj_drv:.0f}C, TSD={thermal_shutdown:.0f}C).",
-                         "Consider thermal pad exposure or reduced switching frequency.")
+                         "Consider thermal pad exposure or reduced switching frequency.", theory, formula, parts)
                 else:
                     _add("drv_thermal_shutdown", "Driver thermal shutdown margin",
                          "pass",
-                         f"Driver Tj={tj_drv:.0f}C, shutdown at {thermal_shutdown:.0f}C -- {margin:.0f}C margin.")
+                         f"Driver Tj={tj_drv:.0f}C, shutdown at {thermal_shutdown:.0f}C -- {margin:.0f}C margin.", None, theory, formula, parts)
             else:
                 _add("drv_thermal_shutdown", "Driver thermal shutdown margin", "skip",
-                     f"Thermal shutdown not extracted. Driver Tj estimated at {tj_drv:.0f}C.")
+                     f"Thermal shutdown not extracted. Driver Tj estimated at {tj_drv:.0f}C.", None, theory, formula, parts)
         else:
             _add("drv_thermal_shutdown", "Driver thermal shutdown margin", "skip",
                  "Missing driver Rth_ja or MOSFET Qg -- cannot estimate driver temperature.")
@@ -781,6 +832,10 @@ class ValidationMixin:
         cpu_freq = self._get(self.mcu, "MCU", "cpu_freq_max", None)
         pwm_res = self._get(self.mcu, "MCU", "pwm_resolution", None)
         if cpu_freq is not None and pwm_res is not None:
+            theory = "Digital PWM generation relies on a timer counting clock ticks. As switching frequency increases, fewer ticks fit into a single period, effectively dropping the bit-resolution of the duty cycle. Low resolution causes jerky motor movement and acoustic noise."
+            formula = "Bits = log2(f_cpu / (2 × f_sw))"
+            parts = f"{mcu_part} Timer"
+            
             try:
                 cpu_hz = float(cpu_freq)
                 if cpu_hz < 1e6:
@@ -792,16 +847,16 @@ class ValidationMixin:
                     _add("mcu_pwm_capability", "MCU PWM resolution at fsw",
                          "fail",
                          f"Only {effective_bits:.1f} effective bits at {self.fsw/1e3:.0f}kHz (CPU={cpu_hz/1e6:.0f}MHz). Need >=8 bits.",
-                         "Reduce fsw or use MCU with higher clock frequency.")
+                         "Reduce fsw or use MCU with higher clock frequency.", theory, formula, parts)
                 elif effective_bits < 10:
                     _add("mcu_pwm_capability", "MCU PWM resolution at fsw",
                          "warn",
                          f"{effective_bits:.1f} effective bits at {self.fsw/1e3:.0f}kHz. Acceptable but limits current ripple control.",
-                         "10+ bits recommended for smooth FOC operation.")
+                         "10+ bits recommended for smooth FOC operation.", theory, formula, parts)
                 else:
                     _add("mcu_pwm_capability", "MCU PWM resolution at fsw",
                          "pass",
-                         f"{effective_bits:.1f} effective bits at {self.fsw/1e3:.0f}kHz (CPU={cpu_hz/1e6:.0f}MHz). Excellent resolution.")
+                         f"{effective_bits:.1f} effective bits at {self.fsw/1e3:.0f}kHz (CPU={cpu_hz/1e6:.0f}MHz). Excellent resolution.", None, theory, formula, parts)
             except (ValueError, TypeError):
                 _add("mcu_pwm_capability", "MCU PWM resolution at fsw", "skip",
                      "Could not parse CPU frequency or PWM resolution.")
@@ -812,17 +867,19 @@ class ValidationMixin:
         # ── 11. MCU complementary outputs (3-phase capability) ──
         comp_out = self._get(self.mcu, "MCU", "complementary_outputs", None)
         if comp_out is not None:
+            theory = "A 3-phase inverter requires 6 PWM signals total (3 high-side, 3 low-side). Specialized motor-control timers generate these in 'complementary pairs' with hardware dead-time insertion, which is critical for safety."
+            parts = f"{mcu_part} Timers"
             try:
                 n_comp = int(float(comp_out))
                 if n_comp < 3:
                     _add("mcu_complementary", "MCU complementary outputs",
                          "fail" if n_comp == 0 else "warn",
                          f"MCU has {n_comp} complementary pairs, need >=3 for 3-phase inverter.",
-                         "Use MCU with 3+ complementary PWM outputs (e.g., STM32 TIM1/TIM8)." if n_comp < 3 else None)
+                         "Use MCU with 3+ complementary PWM outputs (e.g., STM32 TIM1/TIM8)." if n_comp < 3 else None, theory, None, parts)
                 else:
                     _add("mcu_complementary", "MCU complementary outputs",
                          "pass",
-                         f"MCU has {n_comp} complementary PWM pairs -- sufficient for 3-phase control.")
+                         f"MCU has {n_comp} complementary PWM pairs -- sufficient for 3-phase control.", None, theory, None, parts)
             except (ValueError, TypeError):
                 _add("mcu_complementary", "MCU complementary outputs", "skip",
                      f"Could not parse complementary output count: {comp_out}")
@@ -830,11 +887,111 @@ class ValidationMixin:
             _add("mcu_complementary", "MCU complementary outputs", "skip",
                  "Complementary output count not extracted.")
 
+        # ── 13. Bootstrap Capacitor vs MOSFET Qg ──
+        try:
+            c_boot_res = self.calc_bootstrap_cap()
+            c_boot_nf = c_boot_res.get("c_boot_recommended_nf")
+            qg = self._get(self.mosfet, "MOSFET", "qg", None)
+            if c_boot_nf and qg:
+                c_boot_f = c_boot_nf * 1e-9
+                droop_v = qg / c_boot_f
+                theory = "The bootstrap capacitor supplies the entire gate charge (Qg) for the high-side MOSFET each cycle. If the capacitor is too small, its voltage will droop severely, potentially dropping below the driver's UVLO threshold and causing the MOSFET to unexpectedly shut off."
+                formula = "ΔV_droop = Qg / C_boot"
+                parts = f"Capacitor vs {fet_part}"
+                
+                max_droop = self.v_drv * 0.05
+                if droop_v > max_droop * 2:
+                    _add("boot_vs_qg", "Bootstrap vs MOSFET Qg",
+                         "fail",
+                         f"C_boot ({c_boot_nf}nF) is too small. Qg ({qg*1e9:.0f}nC) causes severe {droop_v:.2f}V droop per cycle.",
+                         "Increase Bootstrap Capacitor value (min 10x Qg / ΔV_allowed).", theory, formula, parts)
+                elif droop_v > max_droop:
+                    _add("boot_vs_qg", "Bootstrap vs MOSFET Qg",
+                         "warn",
+                         f"C_boot ({c_boot_nf}nF) causes {droop_v:.2f}V droop per cycle. Marginal stability.",
+                         "Consider a larger Bootstrap Capacitor.", theory, formula, parts)
+                else:
+                    _add("boot_vs_qg", "Bootstrap vs MOSFET Qg",
+                         "pass",
+                         f"C_boot ({c_boot_nf}nF) provides ample charge. Droop is minimal ({droop_v:.3f}V).", None, theory, formula, parts)
+            else:
+                _add("boot_vs_qg", "Bootstrap vs MOSFET Qg", "skip", "Missing C_boot or Qg -- cannot validate bootstrap droop.")
+        except Exception as e:
+            _add("boot_vs_qg", "Bootstrap vs MOSFET Qg", "skip", f"Error calculating bootstrap droop: {str(e)}")
+
+        # ── 14. Peak Current vs. ADC Reference ──
+        try:
+            adc_ref = self._get(self.mcu, "MCU", "adc_vref", 3.3)
+            csa_gain = self._dc("sense.csa_gain")
+            r_shunt_mohm = self.calc_shunt_resistors().get("single_shunt", {}).get("value_mohm", None)
+            
+            if adc_ref and csa_gain and r_shunt_mohm:
+                v_shunt_peak = self.i_max * (r_shunt_mohm * 1e-3) * csa_gain
+                theory = "If the amplified current-sense voltage exceeds the MCU's ADC Reference voltage, the ADC saturates at 100%. The MCU becomes entirely 'blind' to any further current increases, neutralizing software-based overcurrent protection."
+                formula = "V_adc = I_peak × R_shunt × Gain < V_ref"
+                parts = f"Shunt vs {mcu_part}"
+                
+                if v_shunt_peak > adc_ref:
+                    _add("shunt_vs_adc", "Peak Current vs ADC Reference",
+                         "fail",
+                         f"Peak current ({self.i_max}A) produces {v_shunt_peak:.2f}V at ADC, exceeding V_ref ({adc_ref}V). MCU is blind.",
+                         "Reduce Shunt Resistance or Amplifier Gain.", theory, formula, parts)
+                elif v_shunt_peak > adc_ref * 0.9:
+                    _add("shunt_vs_adc", "Peak Current vs ADC Reference",
+                         "warn",
+                         f"Peak current ({self.i_max}A) produces {v_shunt_peak:.2f}V at ADC, leaving <10% headroom to V_ref ({adc_ref}V).",
+                         "Consider slightly lower Shunt Resistance to prevent ADC saturation.", theory, formula, parts)
+                else:
+                    _add("shunt_vs_adc", "Peak Current vs ADC Reference",
+                         "pass",
+                         f"Peak current ({self.i_max}A) scales safely to {v_shunt_peak:.2f}V (V_ref = {adc_ref}V).", None, theory, formula, parts)
+            else:
+                _add("shunt_vs_adc", "Peak Current vs ADC Reference", "skip", "Missing ADC Ref, Gain, or Shunt value -- cannot validate MCU current sensing.")
+        except Exception as e:
+            _add("shunt_vs_adc", "Peak Current vs ADC Reference", "skip", f"Error validating shunt vs ADC: {str(e)}")
+
+        # ── 15. Gate Resistor vs Driver Peak Current ──
+        try:
+            io_src = self._get(self.driver, "DRIVER", "io_source", None)
+            gate_res = self.calc_gate_resistors()
+            rg_on_ext = gate_res.get("rg_on_recommended_ohm", None)
+            rg_int = self._get(self.mosfet, "MOSFET", "rg_int", 1.0)
+            
+            if io_src and rg_on_ext is not None:
+                total_rg_on = rg_on_ext + rg_int
+                i_peak_actual = self.v_drv / total_rg_on if total_rg_on > 0 else 999
+                theory = "The external gate resistor (Rg) limits the peak turn-on current. If Rg is too small, the driver's maximum source current limit is exceeded, forcing the IC into current-limit operation causing severe internal heating and premature failure."
+                formula = "I_peak = V_drive / (Rg_ext + Rg_int) < I_source_max"
+                parts = f"{drv_part} vs Resistor"
+                
+                if i_peak_actual > io_src * 1.1:
+                    _add("rg_vs_drv", "Gate Resistor vs Driver Peak Current",
+                         "fail",
+                         f"Rg ({total_rg_on:.1f}Ω total) allows {i_peak_actual:.1f}A peak, exceeding Driver max ({io_src:.1f}A).",
+                         "Increase external Rg_on to limit peak current.", theory, formula, parts)
+                elif i_peak_actual > io_src * 0.9:
+                    _add("rg_vs_drv", "Gate Resistor vs Driver Peak Current",
+                         "warn",
+                         f"Peak current ({i_peak_actual:.1f}A) is very close to Driver maximum ({io_src:.1f}A).",
+                         "Consider a slightly larger Rg_on to ensure driver safety.", theory, formula, parts)
+                else:
+                    _add("rg_vs_drv", "Gate Resistor vs Driver Peak Current",
+                         "pass",
+                         f"Rg ({total_rg_on:.1f}Ω total) restricts peak current to {i_peak_actual:.1f}A (Limit: {io_src:.1f}A).", None, theory, formula, parts)
+            else:
+                _add("rg_vs_drv", "Gate Resistor vs Driver Peak Current", "skip", "Missing Driver Io_source or Rg_on -- cannot validate driver peak current.")
+        except Exception as e:
+            _add("rg_vs_drv", "Gate Resistor vs Driver Peak Current", "skip", f"Error validating gate resistor: {str(e)}")
+
         # ── 12. Overall system thermal budget ──
         rth_jc = self._get(self.mosfet, "MOSFET", "rth_jc", None)
         tj_max = self._get(self.mosfet, "MOSFET", "tj_max", None)
         rds_on = self._get(self.mosfet, "MOSFET", "rds_on", None)
         if rth_jc is not None and tj_max is not None and rds_on is not None:
+            theory = "The MOSFET junction temperature (Tj) cannot exceed Tj_max, or the semiconductor degrades. Conduction losses alone establish a baseline temperature. If this baseline is too high, adding switching losses will guarantee thermal failure."
+            formula = "Tj_base = T_amb + (I_rms² × Rds_hot) × Rth_tot"
+            parts = f"{fet_part} Thermals"
+            
             rds_hot = rds_on * self._dc("thermal.rds_derating")
             i_rms = self.i_max / math.sqrt(2)
             p_cond = i_rms**2 * rds_hot
@@ -846,16 +1003,16 @@ class ValidationMixin:
                 _add("thermal_budget", "System thermal budget",
                      "fail",
                      f"Conduction loss alone pushes Tj to {tj_est:.0f}C (max {tj_max:.0f}C). Design is not viable.",
-                     "Use lower Rds(on) MOSFET, add heatsink, or reduce current.")
+                     "Use lower Rds(on) MOSFET, add heatsink, or reduce current.", theory, formula, parts)
             elif thermal_budget_pct < 20:
                 _add("thermal_budget", "System thermal budget",
                      "warn",
                      f"Thermal budget only {thermal_budget_pct:.0f}% remaining (Tj~{tj_est:.0f}C, switching losses not included).",
-                     "Adding switching + gate losses will push Tj higher. Consider thermal improvements.")
+                     "Adding switching + gate losses will push Tj higher. Consider thermal improvements.", theory, formula, parts)
             else:
                 _add("thermal_budget", "System thermal budget",
                      "pass",
-                     f"Thermal budget {thermal_budget_pct:.0f}% remaining. Tj~{tj_est:.0f}C from conduction alone (max {tj_max:.0f}C).")
+                     f"Thermal budget {thermal_budget_pct:.0f}% remaining. Tj~{tj_est:.0f}C from conduction alone (max {tj_max:.0f}C).", None, theory, formula, parts)
         else:
             _add("thermal_budget", "System thermal budget", "skip",
                  "Missing Rth_jc, Tj_max, or Rds_on -- cannot estimate thermal budget.")

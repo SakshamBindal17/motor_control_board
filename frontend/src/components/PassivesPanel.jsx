@@ -224,6 +224,150 @@ function Section({ id, icon, title, tier='optional', color, open, onToggle, over
   )
 }
 
+/* ─── Design Health Summary ─── */
+function DesignHealthSummary({ C, specs, ovr }) {
+  if (!C) return null
+  const caps = C.input_capacitors || {}
+  const snub = C.snubber || {}
+  const prot = C.protection_dividers || {}
+  const shunt = C.shunt_resistors || {}
+
+  const Card = ({ label, value, unit, status, trend }) => (
+    <div style={{
+      flex:1, background:'var(--bg-2)', borderRadius:10, padding:'10px 14px',
+      border:'1px solid var(--border-1)', display:'flex', flexDirection:'column', gap:4
+    }}>
+      <div style={{ fontSize:10, fontWeight:700, color:'var(--txt-3)', textTransform:'uppercase', letterSpacing:'.5px' }}>{label}</div>
+      <div style={{ display:'flex', alignItems:'baseline', gap:4 }}>
+        <span style={{ fontSize:18, fontWeight:800, color: status === 'err' ? 'var(--red)' : status === 'warn' ? '#ffab40' : 'var(--txt-1)' }}>{value}</span>
+        <span style={{ fontSize:11, color:'var(--txt-3)', fontWeight:500 }}>{unit}</span>
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={{ display:'flex', gap:12, marginBottom:16 }}>
+      <Card label="Total Bus Cap" value={fmtNum(caps.total_capacitance_uf, 0)} unit="µF" />
+      <Card label="Ripple Share" value={fmtNum(caps.i_mlcc_rms_a, 2)} unit="A rms (MLCC)" status={caps.c_mlcc_power_loss_w > 0.1 ? 'warn' : 'ok'} />
+      <Card label="Overshoot" value={fmtNum(snub.voltage_overshoot_v, 1)} unit="V" status={snub.voltage_overshoot_v > specs.bus_voltage * 0.5 ? 'err' : 'ok'} />
+      <Card label="OCP Trip" value={fmtNum(prot.ocp_trip_current_a, 1)} unit="A" />
+      <Card label="Shunt ADC" value={fmtNum(shunt.active?.adc_utilisation_pct, 1)} unit="%" status={shunt.active?.adc_utilisation_pct > 90 ? 'err' : 'ok'} />
+    </div>
+  )
+}
+
+/* ─── Dynamic Divider Diagram ─── */
+function DividerDiagram({ r1, r2, vbus, vout, color }) {
+  const R1 = parseFloat(r1) || 10
+  const R2 = parseFloat(r2) || 1
+  const ratio = R2 / (R1 + R2)
+  return (
+    <div style={{
+      margin:'12px 0', padding:10, background:'rgba(255,255,255,.03)', borderRadius:8,
+      border:'1px dashed rgba(255,255,255,.1)', display:'flex', alignItems:'center', gap:20
+    }}>
+      <div style={{ position:'relative', width:60, height:80 }}>
+        <div style={{ position:'absolute', top:0, left:25, width:10, height:10, borderRadius:'50%', background:color }} />
+        <div style={{ position:'absolute', top:10, left:29, width:2, height:10, background:color }} />
+        <div style={{ position:'absolute', top:20, left:20, width:20, height:20, border:`2px solid ${color}`, borderRadius:3, display:'flex', alignItems:'center', justifyContent:'center', fontSize:8, fontWeight:800 }}>R1</div>
+        <div style={{ position:'absolute', top:40, left:29, width:2, height:10, background:color }} />
+        <div style={{ position:'absolute', top:45, left:25, width:10, height:10, borderRadius:'50%', background:color }} />
+        <div style={{ position:'absolute', top:50, left:35, width:20, height:2, background:color }} />
+        <div style={{ position:'absolute', top:55, left:20, width:20, height:20, border:`2px solid ${color}`, borderRadius:3, display:'flex', alignItems:'center', justifyContent:'center', fontSize:8, fontWeight:800 }}>R2</div>
+        <div style={{ position:'absolute', top:75, left:29, width:2, height:5, background:color }} />
+        <div style={{ position:'absolute', top:80, left:15, width:30, height:2, background:color }} />
+      </div>
+      <div style={{ flex:1, display:'flex', flexDirection:'column', gap:4 }}>
+        <div style={{ fontSize:10, color:'var(--txt-3)' }}>Voltage Divider Physics:</div>
+        <div style={{ fontSize:11, fontWeight:700 }}>V_bus = {vbus}V → V_adc = {vout}V</div>
+        <div style={{ fontSize:9, color:'var(--txt-4)', fontFamily:'var(--font-mono)' }}>Ratio = R2 / (R1 + R2) = {fmtNum(ratio, 4)}</div>
+        <div style={{ fontSize:9, color:'var(--txt-4)', fontFamily:'var(--font-mono)' }}>{R1}kΩ / {R2}kΩ</div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── Shunt Kelvin Diagram ─── */
+function ShuntDiagram({ topology, r_shunt, gain, color }) {
+  const isSingle = topology === 'single'
+  return (
+    <div style={{
+      margin:'12px 0', padding:10, background:'rgba(255,255,255,.03)', borderRadius:8,
+      border:'1px dashed rgba(255,255,255,.1)', display:'flex', alignItems:'center', gap:20
+    }}>
+      <div style={{ position:'relative', width:100, height:60 }}>
+        <div style={{ position:'absolute', top:25, left:0, width:30, height:2, background:'rgba(255,255,255,.2)' }} />
+        <div style={{ position:'absolute', top:18, left:30, width:40, height:14, border:`2px solid ${color}`, borderRadius:2, display:'flex', alignItems:'center', justifyContent:'center', fontSize:8, fontWeight:800 }}>{r_shunt}mΩ</div>
+        <div style={{ position:'absolute', top:25, left:70, width:30, height:2, background:'rgba(255,255,255,.2)' }} />
+        <div style={{ position:'absolute', top:22, left:35, width:1.5, height:20, background:color }} />
+        <div style={{ position:'absolute', top:22, left:65, width:1.5, height:20, background:color }} />
+        <div style={{ position:'absolute', top:40, left:35, width:45, height:1.5, background:color }} />
+        <div style={{ position:'absolute', top:35, left:80, width:18, height:12, border:`1px solid ${color}`, borderRadius:2, fontSize:6, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700 }}>CSA</div>
+      </div>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:10, color:'var(--txt-3)' }}>{isSingle ? 'DC- Return Shunt' : 'Low-Side Phase Shunt'}</div>
+        <div style={{ fontSize:11, fontWeight:700 }}>Kelvin Connection → {gain}× Gain</div>
+        <div style={{ fontSize:9, color:'var(--txt-4)', marginTop:2 }}>Minimizes PCB trace resistance error</div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── Snubber RC Diagram ─── */
+function SnubberDiagram({ rs, cs, v_over, color }) {
+  return (
+    <div style={{
+      margin:'12px 0', padding:10, background:'rgba(255,255,255,.03)', borderRadius:8,
+      border:'1px dashed rgba(255,255,255,.1)', display:'flex', alignItems:'center', gap:20
+    }}>
+      <div style={{ position:'relative', width:100, height:60 }}>
+        <div style={{ position:'absolute', top:10, left:20, width:2, height:15, background:'#64b5f6' }} />
+        <div style={{ position:'absolute', top:25, left:10, width:20, height:2, background:'#64b5f6', transform:'rotate(-45deg)', transformOrigin:'left' }} />
+        <div style={{ position:'absolute', top:35, left:20, width:2, height:15, background:'#64b5f6' }} />
+        <div style={{ position:'absolute', top:10, left:20, width:40, height:1, background:color }} />
+        <div style={{ position:'absolute', top:10, left:60, width:1, height:10, background:color }} />
+        <div style={{ position:'absolute', top:20, left:55, width:10, height:2, background:color }} />
+        <div style={{ position:'absolute', top:25, left:55, width:10, height:2, background:color }} />
+        <div style={{ position:'absolute', top:35, left:50, width:20, height:10, border:`1px solid ${color}`, borderRadius:2, fontSize:6, display:'flex', alignItems:'center', justifyContent:'center' }}>Rs</div>
+        <div style={{ position:'absolute', top:45, left:60, width:1, height:5, background:color }} />
+        <div style={{ position:'absolute', top:50, left:20, width:40, height:1, background:color }} />
+      </div>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:10, color:'var(--txt-3)' }}>RC Snubber Network</div>
+        <div style={{ fontSize:11, fontWeight:700 }}>{cs}pF + {rs}Ω</div>
+        <div style={{ fontSize:9, color:'var(--txt-4)', marginTop:2 }}>Absorbs {v_over}V ringing spike</div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── EMI Pi-Filter Diagram ─── */
+function EMIDiagram({ choke, xcap, ycap, color }) {
+  return (
+    <div style={{
+      margin:'12px 0', padding:10, background:'rgba(255,255,255,.03)', borderRadius:8,
+      border:'1px dashed rgba(255,255,255,.1)', display:'flex', alignItems:'center', gap:20
+    }}>
+      <div style={{ position:'relative', width:120, height:60 }}>
+        <div style={{ position:'absolute', top:15, left:0, width:120, height:1, background:'rgba(255,255,255,.2)' }} />
+        <div style={{ position:'absolute', top:45, left:0, width:120, height:1, background:'rgba(255,255,255,.2)' }} />
+        <div style={{ position:'absolute', top:10, left:20, width:20, height:10, border:`1.5px solid ${color}`, borderRadius:4 }} />
+        <div style={{ position:'absolute', top:40, left:20, width:20, height:10, border:`1.5px solid ${color}`, borderRadius:4 }} />
+        <div style={{ position:'absolute', top:15, left:60, width:1, height:30, background:color }} />
+        <div style={{ position:'absolute', top:25, left:55, width:10, height:10, border:'1px solid var(--border-1)', background:'var(--bg-1)' }} />
+        <div style={{ position:'absolute', top:15, left:95, width:1, height:12, background:color }} />
+        <div style={{ position:'absolute', top:33, left:95, width:1, height:12, background:color }} />
+        <div style={{ position:'absolute', top:27, left:90, width:10, height:3, background:color }} />
+      </div>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:10, color:'var(--txt-3)' }}>EMI Pi-Filter Topology</div>
+        <div style={{ fontSize:11, fontWeight:700 }}>{choke}µH Choke + {xcap}nF X-Cap</div>
+        <div style={{ fontSize:9, color:'var(--txt-4)', marginTop:2 }}>Suppresses PWM switching noise</div>
+      </div>
+    </div>
+  )
+}
+
 /* ════════════════════════════════════════════════════════════════ */
 export default function PassivesPanel() {
   const { state, dispatch } = useProject()
@@ -237,7 +381,7 @@ export default function PassivesPanel() {
 
   // required/recommended open by default; optional sections start collapsed
   const [open, setOpen] = useState({
-    gate:true, caps:true, boot:false, shunts:false, prot:false, emi:false, pcb:true
+    gate:true, caps:true, boot:false, psu:false, shunts:false, prot:false, emi:false, pcb:true
   })
   const [bootTargetNs, setBootTargetNs] = useState('')
   const [bootSolve, setBootSolve]       = useState(null)
@@ -381,6 +525,9 @@ export default function PassivesPanel() {
   /* ── Render ────────────────────────────────────────────────── */
   return (
     <div style={{ display:'flex', flexDirection:'column', gap:10, paddingBottom:80 }}>
+
+      {/* Design Health Summary Banner */}
+      <DesignHealthSummary C={C} specs={specs} ovr={ovr} />
 
       {/* ── Page header ──────────────────────────────────────── */}
       <div style={{
@@ -540,7 +687,6 @@ export default function PassivesPanel() {
           <OvrField label="Ripple ΔV" unit="V"
             value={ovr.delta_v_ripple ?? ''} defaultVal={2.0}
             onChange={v => setOvr('delta_v_ripple', v)} onReset={() => resetOvr('delta_v_ripple')} />
-          {/* Bulk removed per DC limitation constraints */}
           {/* MLCC sub-header */}
           <div style={fullSpan}>
             <div style={{ fontSize:10, fontWeight:700, color:'#1e90ff', letterSpacing:'.5px',
@@ -581,20 +727,6 @@ export default function PassivesPanel() {
           <OvrField label="Film V-Rating" unit="V"
             value={ovr.film_v_rating_v ?? ''} defaultVal={100}
             onChange={v => setOvr('film_v_rating_v', v)} onReset={() => resetOvr('film_v_rating_v')} />
-            
-          {/* Logic Bypass sub-header */}
-          <div style={fullSpan}>
-            <div style={{ fontSize:10, fontWeight:700, color:'#1e90ff', letterSpacing:'.5px',
-              textTransform:'uppercase', marginBottom:4, paddingTop:4,
-              borderTop:'1px solid rgba(255,255,255,.06)' }}>Logic Bypass (VDD Isolation)</div>
-          </div>
-          <OvrField label="Bypass Count" unit="pcs" step={1}
-            value={ovr.bypass_qty ?? ''} defaultVal={2}
-            onChange={v => setOvr('bypass_qty', v)} onReset={() => resetOvr('bypass_qty')}
-            note="Total tiny caps immediately next to Gate Driver chips." />
-          <OvrField label="Bypass Size" unit="µF" step={0.1}
-            value={ovr.bypass_size_uf ?? ''} defaultVal={4.7}
-            onChange={v => setOvr('bypass_size_uf', v)} onReset={() => resetOvr('bypass_size_uf')} />
         </>}
         results={<>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
@@ -617,6 +749,7 @@ export default function PassivesPanel() {
               tip="True Vector Impedance Z = √(ESR² + Xc²). High-frequency AC current strictly splits via vector admittance, not just ESR." />
             <Row label="Power loss" value={fmtNum(icap.c_mlcc_power_loss_w, 4)} unit="W" src="auto" bold color={icap.c_mlcc_power_loss_w > 0.1 ? '#ff4444' : '#ffab00'}
               tip="P_loss = I_mlcc² × ESR_mlcc. Heat physically burned into the ceramics. If high, your MLCCs are sinking too much AC ripple!" />
+            <Row label="Ripple Share" value={fmtNum(icap.i_mlcc_rms_a, 2)} unit="A rms" src="auto" color="#00e676" />
             <Row label="DC Bias Limit" value={fv(icap.c_mlcc_v_rating)} unit="V" 
               src={ovr.mlcc_v_rating_v != null ? 'ovr' : 'auto'} />
           </div>
@@ -633,12 +766,36 @@ export default function PassivesPanel() {
               src={ovr.film_qty != null || ovr.film_size_uf != null ? 'ovr' : 'auto'} />
             <Row label="‖ Impedance" value={fmtNum(icap.c_film_z_mohm / (icap.c_film_qty || 1), 2)} unit="mΩ" src="auto"
               tip="|Z_parallel| = |Z_single| / N. Bulk AC current steering resistance." />
+            <Row label="Ripple Share" value={fmtNum(icap.i_film_rms_a, 2)} unit="A rms" src="auto" color="#00e676" />
             <Row label="V-rating" value={fv(icap.c_film_v_rating)} unit="V"
               src={ovr.film_v_rating_v != null ? 'ovr' : 'auto'} />
           </div>
+        </>}
+      />
 
-          <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
-            letterSpacing:'.5px', textTransform:'uppercase' }}>Logic Bypass</div>
+      {/* ══════════════════════════════════════════════════════ */}
+      {/* SECTION 3 — Decoupling & PSU                         */}
+      {/* ══════════════════════════════════════════════════════ */}
+      <Section
+        id="psu" icon="🔌" title="Decoupling & PSU" color="#4caf50"
+        tier="recommended"
+        open={open.psu} onToggle={tog}
+        overrideCount={cnt(['bypass_qty','bypass_size_uf'])}
+        stale={stale} noResults={!C}
+        inputs={<>
+          <div style={fullSpan}>
+            <div style={{ fontSize:10, fontWeight:700, color:'#4caf50', letterSpacing:'.5px',
+              textTransform:'uppercase', marginBottom:4 }}>Logic Bypass (VDD Isolation)</div>
+          </div>
+          <OvrField label="Bypass Count" unit="pcs" step={1}
+            value={ovr.bypass_qty ?? ''} defaultVal={2}
+            onChange={v => setOvr('bypass_qty', v)} onReset={() => resetOvr('bypass_qty')}
+            note="Total tiny caps immediately next to Gate Driver chips." />
+          <OvrField label="Bypass Size" unit="µF" step={0.1}
+            value={ovr.bypass_size_uf ?? ''} defaultVal={4.7}
+            onChange={v => setOvr('bypass_size_uf', v)} onReset={() => resetOvr('bypass_size_uf')} />
+        </>}
+        results={<>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
             <Row label="Lg Bypass" value={`${fv(icap.c_bypass_qty)}× ${fv(icap.c_bypass_size_uf)}µF`} src="auto"
               tip="Tiny capacitors placed strictly on driver/MCU logic VDD pins to stabilize." />
@@ -914,6 +1071,13 @@ export default function PassivesPanel() {
                 : 'One shunt per phase leg, between each low-side MOSFET source pin and the star-point GND.'} />
           </div>
 
+          <ShuntDiagram 
+            topology={ovr.shunt_topology || 'three_phase'} 
+            r_shunt={fmtNum(shunt.active?.value_mohm, 2)}
+            gain={fv(shunt.csa_gain)}
+            color="#ffab00"
+          />
+
           {/* ── Snubber ── */}
           <div style={{ margin:'6px 0 4px', fontSize:10, fontWeight:700, color:'var(--txt-3)',
             letterSpacing:'.5px', textTransform:'uppercase' }}>Snubber</div>
@@ -940,6 +1104,13 @@ export default function PassivesPanel() {
             <Row label="Total power" value={fmtNum(snub.p_total_all_snubbers_w, 3)} unit="W" src="auto"
               tip="Formula: P_total = N_fets × ½ × Cs × V_sw_peak² × fsw. Meaning: Each cycle the snubber cap charges to V_peak+V_overshoot, then dumps all that energy as heat into Rs." />
           </div>
+
+          <SnubberDiagram 
+            rs={fv(snub.rs_recommended_ohm)} 
+            cs={fmtNum(snub.cs_recommended_pf, 0)} 
+            v_over={fmtNum(snub.voltage_overshoot_v, 1)}
+            color="#ffab00"
+          />
         </>}
       />
 
@@ -983,6 +1154,14 @@ export default function PassivesPanel() {
             value={ovr.prot_r2_kohm ?? ''}
             onChange={v => setOvr('prot_r2_kohm', v)} onReset={() => resetOvr('prot_r2_kohm')}
             note="Blank = auto-select E24 standard value. Enter your physical board R2 to back-calculate actual trip voltage via: V_trip = V_ref × (R1+R2)/R2." />
+
+          <DividerDiagram 
+            r1={ovr.prot_r1_kohm || 100}
+            r2={fmtNum(prot.bus_divider_r2_kohm, 2)}
+            vbus={specs.bus_voltage || 48}
+            vout={fmtNum(prot.v_adc_bus_at_vbus, 2)}
+            color="#00e676"
+          />
 
           {/* ── NTC Thermistor ── */}
           <div style={fullSpan}>
@@ -1172,6 +1351,12 @@ export default function PassivesPanel() {
             <Row label="Y-cap" value={`${fv(emi.y_cap_nf)}nF / ${fv(emi.y_cap_v_rating)}V`}
               src={ovr.emi_y_cap_nf != null ? 'ovr' : 'auto'} />
           </div>
+
+          <EMIDiagram 
+            choke={fmtNum(emi.cm_choke_uh, 0)}
+            xcap={fv(emi.x_cap_nf)}
+            color="#cf6679"
+          />
         </>}
       />
 
