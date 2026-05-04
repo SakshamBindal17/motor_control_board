@@ -1,0 +1,127 @@
+{
+  "checks": [
+    {
+      "id": "drv_qg_charge",
+      "title": "Driver vs MOSFET Qg",
+      "status": "pass",
+      "detail": "Driver can charge Qg=120nC in 30ns (target: 40.0ns). Headroom for external Rg.",
+      "theory": "The driver's peak source current determines how fast the MOSFET gate can be charged. Slower charging increases switching losses, while charging too fast causes EMI and ringing.",
+      "formula": "t_charge = Qg_total / Io_source",
+      "part_names": "Driver vs MOSFET"
+    },
+    {
+      "id": "vbs_max_check",
+      "title": "Bootstrap vs VBS max",
+      "status": "skip",
+      "detail": "VBS_max not extracted -- cannot validate bootstrap voltage limit."
+    },
+    {
+      "id": "vcc_uvlo_margin",
+      "title": "VCC vs UVLO threshold",
+      "status": "skip",
+      "detail": "VCC UVLO not extracted -- cannot validate supply margin."
+    },
+    {
+      "id": "vbs_uvlo_data_quality",
+      "title": "Bootstrap UVLO data quality",
+      "status": "warn",
+      "detail": "Bootstrap UVLO is missing. Bootstrap UVLO margin checks are unverified.",
+      "advice": "Re-extract the driver datasheet or provide vbs_uvlo manually before hardware sign-off.",
+      "theory": "Bootstrap UVLO data quality ensures that the high-side floating supply has valid thresholds extracted from the datasheet. Invalid data here cascades into dangerous high-side linear-region operation."
+    },
+    {
+      "id": "mcu_dt_resolution",
+      "title": "MCU dead-time vs design",
+      "status": "skip",
+      "detail": "Missing DT resolution or MOSFET/driver timing -- cannot validate dead-time programming."
+    },
+    {
+      "id": "adc_ref_consistency",
+      "title": "ADC reference consistency",
+      "status": "skip",
+      "detail": "ADC reference not extracted from MCU -- using design constant default."
+    },
+    {
+      "id": "vds_ringing",
+      "title": "Vds vs peak + ringing",
+      "status": "skip",
+      "detail": "Vds_max not extracted -- cannot validate voltage headroom with ringing."
+    },
+    {
+      "id": "vgs_max_safety",
+      "title": "Gate drive vs Vgs max",
+      "status": "skip",
+      "detail": "Vgs_max not extracted -- cannot validate gate oxide safety."
+    },
+    {
+      "id": "vgs_headroom",
+      "title": "V_drive headroom vs Vgs_th",
+      "status": "skip",
+      "detail": "Vgs_th not extracted -- cannot validate drive headroom."
+    },
+    {
+      "id": "drv_thermal_shutdown",
+      "title": "Driver thermal shutdown margin",
+      "status": "skip",
+      "detail": "Missing driver Rth_ja or MOSFET Qg -- cannot estimate driver temperature."
+    },
+    {
+      "id": "mcu_pwm_capability",
+      "title": "MCU PWM resolution at fsw",
+      "status": "skip",
+      "detail": "CPU frequency or PWM resolution not extracted."
+    },
+    {
+      "id": "mcu_complementary",
+      "title": "MCU complementary outputs",
+      "status": "skip",
+      "detail": "Complementary output count not extracted."
+    },
+    {
+      "id": "boot_vs_qg",
+      "title": "Bootstrap vs MOSFET Qg",
+      "status": "pass",
+      "detail": "C_boot (680.0nF) provides ample charge. Droop is minimal (0.176V).",
+      "theory": "The bootstrap capacitor supplies the entire gate charge (Qg) for the high-side MOSFET each cycle. If the capacitor is too small, its voltage will droop severely, potentially dropping below the driver's UVLO threshold and causing the MOSFET to unexpectedly shut off.",
+      "formula": "\u0394V_droop = Qg / C_boot",
+      "part_names": "Capacitor vs MOSFET"
+    },
+    {
+      "id": "shunt_vs_adc",
+      "title": "Peak Current vs ADC Reference",
+      "status": "skip",
+      "detail": "Error validating shunt vs ADC: 'sense.csa_gain'"
+    },
+    {
+      "id": "rg_vs_drv",
+      "title": "Gate Resistor vs Driver Peak Current",
+      "status": "skip",
+      "detail": "Missing Driver Io_source or Rg_on -- cannot validate driver peak current."
+    },
+    {
+      "id": "thermal_budget",
+      "title": "System thermal budget",
+      "status": "skip",
+      "detail": "Missing Rth_jc, Tj_max, or Rds_on -- cannot estimate thermal budget."
+    }
+  ],
+  "summary": {
+    "total": 16,
+    "pass": 2,
+    "warn": 1,
+    "fail": 0,
+    "skip": 13,
+    "health_score": 83
+  },
+  "_meta": {
+    "hardcoded": [],
+    "fallbacks": [
+      {
+        "param": "part_number",
+        "value": "Driver",
+        "block": "DRIVER",
+        "message": "part_number fallback Driver \u2014 upload DRIVER datasheet"
+      }
+    ]
+  }
+}
