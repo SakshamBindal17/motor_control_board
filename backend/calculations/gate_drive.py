@@ -89,10 +89,19 @@ class GateDriveMixin:
         legacy_rg_on  = _parse_rg((self.sys or {}).get("rg_on_override", ""))
         legacy_rg_off = _parse_rg((self.sys or {}).get("rg_off_override", ""))
 
-        hs_rg_on_manual  = _parse_rg((self.sys or {}).get("hs_rg_on_override", "")) or legacy_rg_on
-        hs_rg_off_manual = _parse_rg((self.sys or {}).get("hs_rg_off_override", "")) or legacy_rg_off
-        ls_rg_on_manual  = _parse_rg((self.sys or {}).get("ls_rg_on_override", "")) or legacy_rg_on
-        ls_rg_off_manual = _parse_rg((self.sys or {}).get("ls_rg_off_override", "")) or legacy_rg_off
+        hs_rg_on_manual  = _parse_rg((self.sys or {}).get("hs_rg_on_override",  ""))
+        hs_rg_off_manual = _parse_rg((self.sys or {}).get("hs_rg_off_override", ""))
+        ls_rg_on_manual  = _parse_rg((self.sys or {}).get("ls_rg_on_override",  ""))
+        ls_rg_off_manual = _parse_rg((self.sys or {}).get("ls_rg_off_override", ""))
+
+        # Only fall back to legacy single-Rg keys (from old Waveform tab) if NONE of
+        # the new per-leg keys were populated.  This prevents stale Waveform overrides
+        # from silently triggering manual_override when the user has cleared the HS/LS fields.
+        if all(v is None for v in [hs_rg_on_manual, hs_rg_off_manual, ls_rg_on_manual, ls_rg_off_manual]):
+            hs_rg_on_manual  = legacy_rg_on
+            hs_rg_off_manual = legacy_rg_off
+            ls_rg_on_manual  = legacy_rg_on
+            ls_rg_off_manual = legacy_rg_off
 
         t_fall_target_ns = float(self.ovr.get("gate_fall_time_ns", 40))
 
@@ -550,7 +559,16 @@ class GateDriveMixin:
         # Take the worst-case path
         dt_min_path = "turn_off" if dt_off_min >= dt_on_min else "turn_on"
         dt_min = max(dt_off_min, dt_on_min)
-        dt_rec = round(dt_min * dt_safety_mult)   # ns
+        
+        # Determine recommended dead time: either user override or calculated
+        dt_rec = round(dt_min * dt_safety_mult)   # default ns
+        try:
+            dt_ovr = float(self.ovr.get("deadtime_override_ns", -1))
+            if dt_ovr > 0:
+                dt_rec = dt_ovr
+                self.audit_log.append(f"[Dead Time] Using user override: {dt_rec}ns.")
+        except (TypeError, ValueError):
+            pass
 
         self.audit_log.append(
             f"[Dead Time] Turn-off path: {dt_off_min:.1f}ns "
@@ -562,7 +580,7 @@ class GateDriveMixin:
         )
         self.audit_log.append(
             f"[Dead Time] Limiting path: {dt_min_path} ({dt_min:.1f}ns). "
-            f"Recommended: {dt_rec:.0f}ns ({dt_safety_mult}× safety margin)."
+            f"Recommended: {dt_rec:.0f}ns ({dt_safety_mult}× safety margin or override)."
         )
         self._log_hc("dead_time", "Absolute margin", f"{dt_abs_margin} ns", "Baseline safety margin added to minimum", "dt.abs_margin")
         self._log_hc("dead_time", "Safety multiplier", f"{dt_safety_mult}x", "Recommended margin over minimum dead time", "dt.safety_mult")

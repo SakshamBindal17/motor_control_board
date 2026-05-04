@@ -283,9 +283,11 @@ class MosfetMixin:
         qoss = self._get(self.mosfet, "MOSFET", "qoss", None)  # C
         if qoss is not None:
             p_coss_per_fet = 0.5 * qoss * self.v_bus * self.fsw
+            p_qoss_per_fet = qoss * self.v_bus * self.fsw
             self.audit_log.append(f"[MOSFET] Coss: Qoss={qoss*1e9:.0f}nC, E_oss=0.5*Qoss*Vbus, 1 event/cycle → {p_coss_per_fet:.4f}W.")
         else:
             p_coss_per_fet = 0
+            p_qoss_per_fet = 0
 
         # ─── Dead-time body diode conduction loss (per FET) ───────────
         # During dead time, load current flows through body diode of the complementary FET.
@@ -309,7 +311,7 @@ class MosfetMixin:
         )
 
         # ─── Total loss per FET ───────────────────────────────────────
-        p_total_1 = p_cond + p_sw + p_rr + p_gate + p_coss_per_fet + p_body_diode
+        p_total_1 = p_cond + p_sw + p_rr + p_gate + p_coss_per_fet + p_qoss_per_fet + p_body_diode
         p_total_6 = p_total_1 * self.num_fets
 
         # Junction temp estimate — use cooling-method-aware Rth_SA (consistent with thermal module)
@@ -330,6 +332,7 @@ class MosfetMixin:
             "recovery_loss_per_fet_w":    round(p_rr,      3),
             "gate_charge_loss_per_fet_w": round(p_gate,    4),
             "coss_loss_per_fet_w":        round(p_coss_per_fet, 4),
+            "qoss_loss_per_fet_w":        round(p_qoss_per_fet, 4),
             "body_diode_loss_per_fet_w":  round(p_body_diode, 3),
             "total_loss_per_fet_w":       round(p_total_1, 3),
             "total_all_fets_w":           round(p_total_6, 3),
@@ -349,6 +352,7 @@ class MosfetMixin:
                 "rds_basis":    f"Rds(on)={rds_mohm}mΩ × {rds_derating} temp derating",
                 "irms_method":  f"I_rms(total switch)={round(i_rms_sw,2)}A, I_rms/device={round(i_rms_sw_dev,2)}A (N={round(n_parallel,3)}) — {rms_method}",
                 "sw_basis":     f"tr={tr_ns}ns, tf={tf_ns}ns @ fsw={self.fsw/1e3:.0f}kHz, Vbus={self.v_bus}V — {sw_method}",
+                "sw_note":      "Thermal estimate uses peak I_max switching (worst-case). True FOC sinusoidal switching loss will be ~36% lower.",
                 "rr_basis":     f"Qrr={qrr_nc}nC × Vbus × fsw",
                 "coss_basis":   f"Qoss={'%.0f' % (qoss*1e9) if qoss else 'N/A'}nC — {'from datasheet' if qoss else 'not extracted'}",
                 "body_diode":   f"Vf={body_diode_vf:.1f}V, dt={dt_ns:.0f}ns, 2 events/cycle",
@@ -422,7 +426,7 @@ class MosfetMixin:
             results["id_cont_a"] = round(id_cont, 1)
             results["i_max_a"] = self.i_max
             results["current_margin_pct"] = round(i_margin_pct, 1)
-            results["current_ok"] = id_cont >= self.i_max * 1.25  # 25% derating (Tc=25°C rating vs real PCB)
+            results["current_ok"] = id_cont >= self.i_max * 1.5  # 50% margin recommended for novices
 
             if id_cont < self.i_max:
                 warnings.append(
@@ -434,9 +438,15 @@ class MosfetMixin:
                 warnings.append(
                     f"WARNING: Id_cont ({id_cont}A) has < 25% margin over I_max ({self.i_max}A). "
                     f"Datasheet Id_cont is rated at Tc=25°C — on a real PCB, effective current "
-                    f"capacity is significantly lower. Recommend ≥ 1.25× derating."
+                    f"capacity is significantly lower."
                 )
                 self.audit_log.append(f"[MOSFET Rating] WARNING: Id_cont margin is only {i_margin_pct:.0f}% (need ≥ 25%).")
+            elif id_cont < self.i_max * 1.5:
+                warnings.append(
+                    f"CAUTION: Id_cont ({id_cont}A) has < 50% margin over I_max ({self.i_max}A). "
+                    f"Not recommended for novice designers. True safety depends on Tj and total MOSFET loss."
+                )
+                self.audit_log.append(f"[MOSFET Rating] CAUTION: Id_cont margin is only {i_margin_pct:.0f}% (novice recommendation ≥ 50%).")
             else:
                 self.audit_log.append(f"[MOSFET Rating] Id_cont={id_cont}A vs I_max={self.i_max}A — OK ({i_margin_pct:.0f}% margin).")
         else:

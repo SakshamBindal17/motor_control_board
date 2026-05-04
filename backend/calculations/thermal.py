@@ -133,7 +133,9 @@ class ThermalMixin:
             if idd_q and idd_q > 0:
                 p_driver_quiescent = idd_q * self.v_drv
             else:
-                p_driver_quiescent = 0.05  # 50mW typical fallback
+                idd_fallback = self._dc("gate.idd_quiescent_fallback")
+                p_driver_quiescent = idd_fallback * self.v_drv
+                self._log_hc("thermal", "Driver quiescent current", f"{idd_fallback} A", "Fallback for driver thermal calculation", "gate.idd_quiescent_fallback")
                 
             p_driver_total = p_driver_gate + p_driver_quiescent
             tj_driver = self.t_amb + p_driver_total * rth_ja_drv

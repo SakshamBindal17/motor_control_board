@@ -225,7 +225,7 @@ class ValidationMixin:
             id_cont = self._get(self.mosfet, "MOSFET", "id_cont", None)
             if id_cont is not None:
                 results["mosfet_current_margin_a"] = round(id_cont - i_rated, 1)
-                results["mosfet_for_motor_ok"] = id_cont >= i_rated * 1.25
+                results["mosfet_for_motor_ok"] = id_cont >= i_rated * 1.5
                 if id_cont < i_rated:
                     warnings.append(
                         f"DANGER: MOSFET Id_cont ({id_cont:.0f}A) < motor rated current "
@@ -235,6 +235,11 @@ class ValidationMixin:
                     warnings.append(
                         f"WARNING: MOSFET Id_cont ({id_cont:.0f}A) has <25% margin over "
                         f"motor rated current ({i_rated:.1f}A). Marginal at elevated temperatures."
+                    )
+                elif id_cont < i_rated * 1.5:
+                    warnings.append(
+                        f"CAUTION: MOSFET Id_cont ({id_cont:.0f}A) has <50% margin over "
+                        f"motor rated current ({i_rated:.1f}A). Novice designers are recommended to use ≥1.5x."
                     )
 
         # ── 9. Modulation index / voltage utilization ─────────────
@@ -323,7 +328,7 @@ class ValidationMixin:
                 unit_lower = adc_unit.lower().strip()
 
                 # Check if unit indicates a time duration
-                is_time_unit = any(u in unit_lower for u in ['s', 'µs', 'us', 'ns', 'ms', 'sec'])
+                is_time_unit = any(u in unit_lower for u in ['s', 'µs', 'us', 'ns', 'ms', 'sec', 'μs'])
                 # Exclude SPS/MSPS/KSPS which contain 's' but are rates
                 if any(u in unit_lower for u in ['sps', 'msps', 'ksps', '/s', 'samples']):
                     is_time_unit = False
@@ -453,7 +458,7 @@ class ValidationMixin:
             try:
                 adc_val = float(adc_rate_raw)
                 unit_lower = adc_unit.lower().strip()
-                is_time = any(u in unit_lower for u in ['s', 'µs', 'us', 'ns', 'ms'])
+                is_time = any(u in unit_lower for u in ['s', 'µs', 'us', 'ns', 'ms', 'μs'])
                 if any(u in unit_lower for u in ['sps', 'msps', 'ksps', '/s', 'samples']):
                     is_time = False
                 if is_time:

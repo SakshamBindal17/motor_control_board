@@ -142,12 +142,14 @@ class PassivesMixin:
         i_rip_per_cap = 0 if n_caps == 0 else I_bulk / n_caps
 
         # ── Bypass Capacitor Power Loss ──
-        # Power lost charging C_bypass per switch cycle: P = fsw * num_fets * (0.5 * Q_g^2 / C_bypass)
+        # The energy required to charge the gates (0.5 * Qg^2 / C_bypass) is supplied by the bypass
+        # capacitor, but it is NOT dissipated as heat in the capacitor itself.
+        # High-quality MLCCs have near-zero ESR, so self-heating from gate-drive discharge is negligible.
+        # The heat is dissipated in the gate driver output stage and gate resistors.
+        # We explicitly set this to 0.0 to prevent false thermal warnings for the bypass caps.
         qg = self._get(self.mosfet, "MOSFET", "qg", 92e-9)
         c_bypass_total_f = bypass_size_uf * 1e-6 * bypass_qty
         p_bypass_w = 0.0
-        if c_bypass_total_f > 0:
-            p_bypass_w = fsw * self.num_fets * (0.5 * (qg**2) / c_bypass_total_f)
 
         self.audit_log.append(
             f"[DC Bus] Scalar AC impedance split at {fsw/1000:.0f}kHz: "

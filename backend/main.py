@@ -102,6 +102,9 @@ async def calculate(req: CalcRequest):
         return {"success": True, "data": results}
     except ValueError as e:
         raise HTTPException(422, f"Validation error: {str(e)}")
+    except (KeyError, TypeError) as e:
+        logger.error(f"Input schema error ({type(e).__name__}): {str(e)}")
+        raise HTTPException(400, f"Input error: {type(e).__name__} - {str(e)}")
     except Exception as e:
         logger.error(f"Calc error: {type(e).__name__}: {str(e)}")
         raise HTTPException(500, f"Calculation failed: {str(e)}")

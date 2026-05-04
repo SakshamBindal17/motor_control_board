@@ -118,6 +118,10 @@ backend/cache/
 # Build output
 frontend/dist/
 
+# Local configuration and personal setup files
+AGENTS.md
+CLAUDE.md
+
 # User requested additions
 docs/
 saved_manually/

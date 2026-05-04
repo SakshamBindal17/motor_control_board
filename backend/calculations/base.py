@@ -29,6 +29,7 @@ DESIGN_CONSTANTS = {
     "gate.rg_bootstrap":       (10.0, "Ω",    "Gate Drive",  "Bootstrap series R",           "Limits bootstrap diode charging current"),
     "gate.bootstrap_vf":       (1.0,  "V",    "Gate Drive",  "Bootstrap diode Vf",           "Worst-case default for integrated bootstrap diodes (0.7–1.0V). Set to 0.6V for external Schottky."),
     "gate.driver_derating_per_c": (0.003, "1/°C", "Gate Drive", "Driver IO derating",        "Driver source/sink current derating per °C above 25°C. Typical: 0.3%/°C."),
+    "gate.idd_quiescent_fallback": (0.05, "A",    "Gate Drive",  "Driver quiescent current",     "Fallback for internal quiescent power if not extracted"),
     # Bootstrap
     "boot.min_cap":            (100,  "nF",   "Bootstrap",   "Min practical boot cap",       "Floor for bootstrap capacitor value"),
     "boot.safety_margin":      (2.0,  "x",    "Bootstrap",   "Safety margin multiplier",     "Applied before E12 snap. Higher = more conservative. 2.0× for worst-case design."),
@@ -214,6 +215,7 @@ class CalculationEngine(MosfetMixin, GateDriveMixin, PassivesMixin, ProtectionMi
         "snub.ring_q_factor":    (1.0,  50.0),
         "thermal.rds_alpha":     (0.1,  5.0),
         "gate.driver_derating_per_c": (0.0, 0.02),
+        "gate.idd_quiescent_fallback": (0.0, 1.0),
         "adc.max_duty_cycle":    (0.5,  0.99),
 
         "emi.cm_choke_uh":       (1,    10000),
