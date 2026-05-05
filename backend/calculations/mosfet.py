@@ -278,16 +278,14 @@ class MosfetMixin:
         p_gate = qg * self.v_drv * self.fsw
 
         # ─── Output capacitance loss (Coss/Qoss) ─────────────────────
-        # Coss energy is stored at turn-off (from bus), dissipated at turn-on → 1 event/cycle
-        # E_oss ≈ 0.5 × Qoss × V_bus (charge-equivalent for nonlinear Coss)
+        # Hard-switch turn-ON: Coss energy (stored at Vbus) is dissipated in channel
+        # E_oss = 0.5 × Qoss × V_bus  (energy in field = Q×V/2 for nonlinear Coss)
         qoss = self._get(self.mosfet, "MOSFET", "qoss", None)  # C
         if qoss is not None:
             p_coss_per_fet = 0.5 * qoss * self.v_bus * self.fsw
-            p_qoss_per_fet = qoss * self.v_bus * self.fsw
-            self.audit_log.append(f"[MOSFET] Coss: Qoss={qoss*1e9:.0f}nC, E_oss=0.5*Qoss*Vbus, 1 event/cycle → {p_coss_per_fet:.4f}W.")
+            self.audit_log.append(f"[MOSFET] Coss: Qoss={qoss*1e9:.0f}nC, E_oss=0.5*Qoss*Vbus={p_coss_per_fet*1e3:.2f}mW/FET.")
         else:
             p_coss_per_fet = 0
-            p_qoss_per_fet = 0
 
         # ─── Dead-time body diode conduction loss (per FET) ───────────
         # During dead time, load current flows through body diode of the complementary FET.
@@ -311,7 +309,7 @@ class MosfetMixin:
         )
 
         # ─── Total loss per FET ───────────────────────────────────────
-        p_total_1 = p_cond + p_sw + p_rr + p_gate + p_coss_per_fet + p_qoss_per_fet + p_body_diode
+        p_total_1 = p_cond + p_sw + p_rr + p_gate + p_coss_per_fet + p_body_diode
         p_total_6 = p_total_1 * self.num_fets
 
         # Junction temp estimate — use cooling-method-aware Rth_SA (consistent with thermal module)
@@ -332,7 +330,6 @@ class MosfetMixin:
             "recovery_loss_per_fet_w":    round(p_rr,      3),
             "gate_charge_loss_per_fet_w": round(p_gate,    4),
             "coss_loss_per_fet_w":        round(p_coss_per_fet, 4),
-            "qoss_loss_per_fet_w":        round(p_qoss_per_fet, 4),
             "body_diode_loss_per_fet_w":  round(p_body_diode, 3),
             "total_loss_per_fet_w":       round(p_total_1, 3),
             "total_all_fets_w":           round(p_total_6, 3),

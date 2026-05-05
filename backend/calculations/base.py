@@ -23,7 +23,7 @@ DESIGN_CONSTANTS = {
     "thermal.rth_sa":          (10.0, "°C/W", "Thermal",     "PCB-to-ambient Rth",           "Forced-air convection default. Use 20+ for natural convection."),
     "thermal.safe_margin":     (30,   "°C",   "Thermal",     "Safe margin threshold",        "Minimum acceptable Tj headroom"),
     "thermal.vias_per_fet":    (16,   "pcs",  "Thermal",     "Thermal vias per FET",         "0.3mm vias under thermal pad"),
-    "thermal.rds_alpha":       (2.1,  "",     "Thermal",     "Rds temp exponent",            "Power-law α for Rds(Tj): Rds_hot = Rds25 × (Tj/298)^α. Si=2.1, SiC=0.4"),
+    "thermal.rds_alpha":       (2.1,  "",     "Thermal",     "Rds temp exponent α",          "Power-law α for Rds(Tj): Rds_hot = Rds25 × (Tj/298K)^α. Si≈2.1, SiC≈0.4"),
     # Gate Drive
     "gate.rise_time_target":   (40,   "ns",   "Gate Drive",  "Rise time target",             "Default target for Rg_on sizing"),
     "gate.rg_bootstrap":       (10.0, "Ω",    "Gate Drive",  "Bootstrap series R",           "Limits bootstrap diode charging current"),
@@ -35,6 +35,7 @@ DESIGN_CONSTANTS = {
     "boot.safety_margin":      (2.0,  "x",    "Bootstrap",   "Safety margin multiplier",     "Applied before E12 snap. Higher = more conservative. 2.0× for worst-case design."),
     # Input Capacitors
     "input.spwm_mod_index":    (0.9,  "",     "Input Caps",  "SPWM modulation index",        "3-phase SPWM approx when Lph unavailable"),
+    "input.motor_pf":          (0.85, "",     "Input Caps",  "Motor power factor",           "cosΦ used in Kolar DC-link ripple formula. Varies 0.7 (light load) to 0.95 (field weakening)."),
     "input.min_bulk_count":    (4,    "pcs",  "Input Caps",  "Min bulk cap count",           "Minimum parallel caps for ESR distribution"),
     "input.bulk_cap_uf":       (100,  "µF",   "Input Caps",  "Bulk cap size",                "Standard electrolytic per-cap value"),
     "input.esr_per_cap":       (80,   "mΩ",   "Input Caps",  "Typical ESR per cap",          "Electrolytic ESR estimate for thermal calc"),
@@ -61,8 +62,8 @@ DESIGN_CONSTANTS = {
     "snub.coss_mult":          (3,    "x",    "Snubber",     "Coss multiplier",              "Snubber cap = N × Coss for overdamped response"),
     "snub.ring_q_factor":      (8.0,  "",     "Snubber",     "Ring Q factor",                "LC ringing Q for waveform model. Typical: 8 (48V Si), 12 (SiC), 15 (high-L PCB)"),
 
-    # Thermal
-    "thermal.rds_alpha":       (2.1,  "",     "Thermal",     "Rds temp exponent α",          "Power-law α for Rds(Tj): Rds_hot = Rds25 × (Tj/298K)^α. Si≈2.1, SiC≈0.4"),
+    # Sensing
+    "sense.csa_gain":          (20.0, "V/V",  "Protection",  "CSA gain",                     "Current sense amplifier gain. Typical discrete op-amp: 20–50 V/V. Adjust to match design."),
 
     # EMI Filter
     "emi.cm_choke_uh":         (330,  "µH",   "EMI Filter",  "CM choke inductance",          "Common-mode choke baseline value"),

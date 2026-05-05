@@ -191,12 +191,13 @@ class GateDriveMixin:
             v_peak = getattr(self, "v_peak", self.v_bus * 1.5)
             dv_dt_peak = 0 if t_rise_actual_ns <= 0 else v_peak / (t_rise_actual_ns * 1e-9) / 1e6
 
-            # Switching loss approximations for component trace analysis
+            # Switching loss: sinusoidally-averaged (matches mosfet.py convention)
+            # P_sw = V_bus × I_peak × (tr + tf) × fsw / π
             n_parallel = max(1.0, float(self.num_fets) / 6.0)
             i_load = self.i_max / n_parallel
             e_on = 0.5 * self.v_bus * i_load * (t_rise_actual_ns * 1e-9)
             e_off = 0.5 * self.v_bus * i_load * (t_fall_actual_ns * 1e-9)
-            p_sw = (e_on + e_off) * self.fsw
+            p_sw = (e_on + e_off) * self.fsw * (2 / math.pi)
             
             # Peak gate currents (Absolute Max at Start of Switching)
             i_peak_on = vdrv / rg_on_total

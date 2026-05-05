@@ -899,9 +899,12 @@ class ValidationMixin:
             qg = self._get(self.mosfet, "MOSFET", "qg", None)
             if c_boot_nf and qg:
                 c_boot_f = c_boot_nf * 1e-9
-                droop_v = qg / c_boot_f
+                # Use q_total from forward calc (Qg + leakage) to match exactly
+                q_total_nc = c_boot_res.get("q_total_nc")
+                q_total = (q_total_nc * 1e-9) if q_total_nc else qg
+                droop_v = q_total / c_boot_f
                 theory = "The bootstrap capacitor supplies the entire gate charge (Qg) for the high-side MOSFET each cycle. If the capacitor is too small, its voltage will droop severely, potentially dropping below the driver's UVLO threshold and causing the MOSFET to unexpectedly shut off."
-                formula = "ΔV_droop = Qg / C_boot"
+                formula = "ΔV_droop = (Qg + Q_leak) / C_boot"
                 parts = f"Capacitor vs {fet_part}"
                 
                 max_droop = self.v_drv * 0.05
@@ -926,7 +929,7 @@ class ValidationMixin:
 
         # ── 14. Peak Current vs. ADC Reference ──
         try:
-            adc_ref = self._get(self.mcu, "MCU", "adc_vref", 3.3)
+            adc_ref = self._get(self.mcu, "MCU", "adc_ref", 3.3)
             csa_gain = self._dc("sense.csa_gain")
             r_shunt_mohm = self.calc_shunt_resistors().get("single_shunt", {}).get("value_mohm", None)
             
