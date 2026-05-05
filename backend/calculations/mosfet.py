@@ -122,7 +122,7 @@ class MosfetMixin:
         else:
             # Iterative Tj-dependent derating (user-overridable: Si≈2.1, SiC≈0.4)
             alpha_rds = self._dc("thermal.rds_alpha")
-            t_ref = 300.0  # 27°C in Kelvin (datasheet Rds(on) reference)
+            t_ref = 298.15  # 25°C in Kelvin (datasheet Rds(on) reference)
             tj_est = 100.0  # initial guess in °C
             tj_iters = 0
             for _ in range(20):
@@ -179,8 +179,8 @@ class MosfetMixin:
             try:
                 gr = self.calc_gate_resistors()
                 self._current_module = "mosfet_losses"  # restore after subroutine
-                rg_on_ext = gr.get("rg_on_recommended_ohm", None)
-                rg_off_ext = gr.get("rg_off_recommended_ohm", None)
+                rg_on_ext = gr.get("hs_rg_on_ohm", None)
+                rg_off_ext = gr.get("hs_rg_off_ohm", None)
                 rg_source = "gate_resistors module"
             except Exception:
                 rg_on_ext = None

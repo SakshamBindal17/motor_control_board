@@ -964,7 +964,7 @@ class ValidationMixin:
         try:
             io_src = self._get(self.driver, "DRIVER", "io_source", None)
             gate_res = self.calc_gate_resistors()
-            rg_on_ext = gate_res.get("rg_on_recommended_ohm", None)
+            rg_on_ext = gate_res.get("hs_rg_on_ohm", None)
             rg_int = self._get(self.mosfet, "MOSFET", "rg_int", 1.0)
             
             if io_src and rg_on_ext is not None:
