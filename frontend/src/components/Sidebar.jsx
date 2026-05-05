@@ -114,7 +114,7 @@ export default function Sidebar({ blocks }) {
           <NavItem
             cfg={blocks.pcb_thermal}
             isActive={active_block === 'pcb_thermal'}
-            status={(project.pcb_trace_thermal?.results && !(project.pcb_trace_thermal?.sections?.length === 1 && project.pcb_trace_thermal.sections[0].trace_width_mm === 7 && project.pcb_trace_thermal.sections[0].trace_length_mm === 20)) ? 'done' : null}
+            status={project.pcb_trace_thermal?.results ? 'done' : null}
             onClick={() => select('pcb_thermal')}
           />
         </div>

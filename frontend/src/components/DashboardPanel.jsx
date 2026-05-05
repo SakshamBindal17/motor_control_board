@@ -208,6 +208,7 @@ export default function DashboardPanel() {
                 unit="W"
                 sub={`${C.mosfet_losses?.num_fets || 6} MOSFETs`}
                 color={(() => { const n = C.mosfet_losses?.num_fets || 6; const totalW = C.mosfet_losses?.total_all_fets_w ?? C.mosfet_losses?.total_all_6_fets_w; return totalW > 10 * n ? 'var(--red)' : totalW > 6.67 * n ? 'var(--amber)' : 'var(--green)' })()}
+                tip="Sum of conduction + switching + recovery + gate charge + Coss + body-diode losses across all MOSFETs. Target: <5W/FET for 3kW design."
               />
               <MetricCard
                 label="Efficiency"
@@ -216,6 +217,7 @@ export default function DashboardPanel() {
                 dec={2}
                 sub="MOSFET stage"
                 color={C.mosfet_losses?.efficiency_mosfet_pct >= 97 ? 'var(--green)' : C.mosfet_losses?.efficiency_mosfet_pct >= 94 ? 'var(--amber)' : 'var(--red)'}
+                tip="Inverter stage efficiency = 1 − P_loss / P_output. Excludes motor copper and core losses. Target: >97% for high-performance FOC."
               />
               <MetricCard
                 label="Junction Temp"
@@ -224,6 +226,7 @@ export default function DashboardPanel() {
                 dec={1}
                 sub={`Margin: ${C.thermal?.thermal_margin_c != null ? C.thermal.thermal_margin_c.toFixed(0) + '°C' : '—'}`}
                 color={C.thermal?.thermal_margin_c > 30 ? 'var(--green)' : C.thermal?.thermal_margin_c > 10 ? 'var(--amber)' : 'var(--red)'}
+                tip="Estimated MOSFET junction temperature: Tj = T_amb + P_fet × (Rth_jc + Rth_cs + Rth_sa). Margin = Tj_max − Tj_est. Need >20°C margin minimum."
               />
               <MetricCard
                 label="Dead Time"
@@ -232,6 +235,7 @@ export default function DashboardPanel() {
                 dec={0}
                 sub={`${C.dead_time?.dt_pct_of_period != null ? C.dead_time.dt_pct_of_period.toFixed(2) : '—'}% of period`}
                 color="var(--accent)"
+                tip="Dead time = td_off + tf + prop_delay + 20ns safety margin. Prevents shoot-through (both FETs conducting simultaneously). Too large → distortion; too small → shoot-through."
               />
               <MetricCard
                 label="Bus Ripple"
@@ -240,14 +244,16 @@ export default function DashboardPanel() {
                 dec={3}
                 sub={`${C.input_capacitors?.n_bulk_caps || '—'} caps`}
                 color="var(--cyan)"
+                tip="DC bus voltage ripple from 3-phase SVPWM switching. Calculated using Kolar analytical formula. Target: <2V (typ 1–2% of Vbus for 48V system)."
               />
               <MetricCard
                 label="Rg ON"
-                value={C.gate_resistors?.rg_on_recommended_ohm}
+                value={C.gate_resistors?.hs_rg_on_ohm}
                 unit="Ω"
                 dec={1}
-                sub={`dV/dt: ${C.gate_resistors?.dv_dt_v_per_us != null ? C.gate_resistors.dv_dt_v_per_us.toFixed(0) + ' V/µs' : '—'}`}
+                sub={`dV/dt: ${C.gate_resistors?.hs_dv_dt_bus != null ? C.gate_resistors.hs_dv_dt_bus.toFixed(0) + ' V/µs' : '—'}`}
                 color="var(--purple)"
+                tip="High-side turn-on gate resistor (E24 standard value). Controls switching speed and EMI. Lower Rg → faster switching, higher dV/dt and EMI. Higher Rg → slower, lower losses in driver."
               />
             </div>
           </div>
@@ -357,9 +363,9 @@ export default function DashboardPanel() {
                 <div className="dashboard-cap-grid">
                   <CapRow label="DT min" value={C.dead_time.dt_minimum_ns} unit="ns" />
                   <CapRow label="DT actual" value={C.dead_time.dt_actual_ns} unit="ns" />
-                  <CapRow label="Rise time" value={C.gate_resistors?.gate_rise_time_ns} unit="ns" dec={1} />
-                  <CapRow label="Fall time" value={C.gate_resistors?.gate_fall_time_ns} unit="ns" dec={1} />
-                  <CapRow label="dV/dt" value={C.gate_resistors?.dv_dt_v_per_us} unit="V/µs" dec={0} />
+                  <CapRow label="Rise time" value={C.gate_resistors?.hs_gate_rise_time_ns} unit="ns" dec={1} />
+                  <CapRow label="Fall time" value={C.gate_resistors?.hs_gate_fall_time_ns} unit="ns" dec={1} />
+                  <CapRow label="dV/dt" value={C.gate_resistors?.hs_dv_dt_bus} unit="V/µs" dec={0} />
                   <CapRow label="DT %" value={C.dead_time.dt_pct_of_period} unit="%" dec={2} />
                 </div>
               </div>
@@ -391,9 +397,9 @@ export default function DashboardPanel() {
 
 /* ═══ Sub-components ════════════════════════════════════════════════════ */
 
-function MetricCard({ label, value, unit, sub, color, dec = 1 }) {
+function MetricCard({ label, value, unit, sub, color, dec = 1, tip }) {
   return (
-    <div className="dashboard-metric">
+    <div className="dashboard-metric" data-tip={tip} style={{ cursor: tip ? 'help' : 'default' }}>
       <div className="dashboard-metric-label">{label}</div>
       <div className="dashboard-metric-value" style={{ color }}>
         {value != null ? fmtNum(value, dec) : '—'}
