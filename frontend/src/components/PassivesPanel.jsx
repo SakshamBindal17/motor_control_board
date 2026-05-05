@@ -682,10 +682,10 @@ export default function PassivesPanel() {
                 tip="Standard E-series resistor value calculated to most closely match your target switching speeds." />
               <Row label="Rise / Fall" value={`${fmtNum(gate.hs_gate_rise_time_ns,1)} / ${fmtNum(gate.hs_gate_fall_time_ns,1)}`} unit="ns" src="auto" 
                 tip="Actual physical times given the real E-series resistor. t_rise = Rg_on_total × Qgd / (Vdrv−Vplateau)  |  t_fall = Rg_off_total × Qgd / Vplateau" />
-              <Row label="dV/dt Bus" value={fmtNum(gate.hs_dv_dt_bus,1)} unit="V/μs" src="auto" color={gate.hs_dv_dt_bus > 10 ? '#ff5252' : gate.hs_dv_dt_bus > 5 ? '#ffab40' : '#4caf50'} 
-                tip="dV/dt = Vbus / t_rise. Nominal operating stress. Keep < 5 V/ns for low EMI footprint." />
-              <Row label="dV/dt Peak" value={fmtNum(gate.hs_dv_dt_peak,1)} unit="V/μs" src="auto" color={gate.hs_dv_dt_peak > 10 ? '#ff5252' : gate.hs_dv_dt_peak > 5 ? '#ffab40' : '#4caf50'} 
-                tip="dV/dt = Vpeak / t_rise. Worst-case transient stress. Keep < 10 V/ns to prevent motor phase insulation breakdown." />
+              <Row label="dV/dt Bus" value={fmtNum(gate.hs_dv_dt_bus,1)} unit="V/μs" src="auto" color={gate.hs_dv_dt_bus > 10000 ? '#ff5252' : gate.hs_dv_dt_bus > 5000 ? '#ffab40' : '#4caf50'}
+                tip="dV/dt = Vbus / t_rise. Nominal operating stress. Keep < 5000 V/μs (5 V/ns) for low EMI footprint." />
+              <Row label="dV/dt Peak" value={fmtNum(gate.hs_dv_dt_peak,1)} unit="V/μs" src="auto" color={gate.hs_dv_dt_peak > 10000 ? '#ff5252' : gate.hs_dv_dt_peak > 5000 ? '#ffab40' : '#4caf50'}
+                tip="dV/dt = Vpeak / t_rise. Worst-case transient stress. Keep < 10000 V/μs (10 V/ns) to prevent motor phase insulation breakdown." />
               <Row label="I_peak On/Off" value={`${fmtNum(gate.hs_i_peak_on_a,1)} / ${fmtNum(gate.hs_i_peak_off_a,1)}`} unit="A" src="auto" 
                 tip="I_peak_on = (Vdrv−Vplateau)/Rg_on_total | I_peak_off = Vplateau/Rg_off_total. Used to validate High Side Gate Driver IC capability." />
               <Row label="Sw Loss (Psw)" value={fmtNum(gate.hs_p_sw_w,2)} unit="W" src="auto" 
@@ -698,10 +698,10 @@ export default function PassivesPanel() {
                 tip="Standard E-series resistor value calculated to most closely match your target switching speeds." />
               <Row label="Rise / Fall" value={`${fmtNum(gate.ls_gate_rise_time_ns,1)} / ${fmtNum(gate.ls_gate_fall_time_ns,1)}`} unit="ns" src="auto" 
                 tip="Actual physical times given the real E-series resistor. Differs slightly from target because resistors are discrete values." />
-              <Row label="dV/dt Bus" value={fmtNum(gate.ls_dv_dt_bus,1)} unit="V/μs" src="auto" color={gate.ls_dv_dt_bus > 10 ? '#ff5252' : gate.ls_dv_dt_bus > 5 ? '#ffab40' : '#4caf50'} 
-                tip="dV/dt = Vbus / t_rise" />
-              <Row label="dV/dt Peak" value={fmtNum(gate.ls_dv_dt_peak,1)} unit="V/μs" src="auto" color={gate.ls_dv_dt_peak > 10 ? '#ff5252' : gate.ls_dv_dt_peak > 5 ? '#ffab40' : '#4caf50'} 
-                tip="dV/dt = Vpeak / t_rise" />
+              <Row label="dV/dt Bus" value={fmtNum(gate.ls_dv_dt_bus,1)} unit="V/μs" src="auto" color={gate.ls_dv_dt_bus > 10000 ? '#ff5252' : gate.ls_dv_dt_bus > 5000 ? '#ffab40' : '#4caf50'}
+                tip="dV/dt = Vbus / t_rise. Keep < 5000 V/μs (5 V/ns)." />
+              <Row label="dV/dt Peak" value={fmtNum(gate.ls_dv_dt_peak,1)} unit="V/μs" src="auto" color={gate.ls_dv_dt_peak > 10000 ? '#ff5252' : gate.ls_dv_dt_peak > 5000 ? '#ffab40' : '#4caf50'}
+                tip="dV/dt = Vpeak / t_rise. Keep < 10000 V/μs (10 V/ns)." />
               <Row label="I_peak On/Off" value={`${fmtNum(gate.ls_i_peak_on_a,1)} / ${fmtNum(gate.ls_i_peak_off_a,1)}`} unit="A" src="auto" 
                 tip="Validates your Low Side Driver IC source/sink limits." />
               <Row label="Sw Loss (Psw)" value={fmtNum(gate.ls_p_sw_w,2)} unit="W" src="auto" 
