@@ -86,11 +86,11 @@ def generate_pdf_report(project: dict, calculations: dict) -> bytes:
         story.append(Paragraph("3. Gate Drive Design", h1_style))
         gate_data = [
             ["Component", "Value", "Note"],
-            ["Rg_on (Turn-On)", f"{gr.get('rg_on_recommended_ohm', '—')} Ω", "Standard E24 value"],
-            ["Rg_off (Turn-Off)", f"{gr.get('rg_off_recommended_ohm', '—')} Ω", "+ 1N4148 Schottky bypass"],
+            ["Rg_on HS (Turn-On)", f"{gr.get('hs_rg_on_ohm', '—')} Ω", "Standard E24 value"],
+            ["Rg_off HS (Turn-Off)", f"{gr.get('hs_rg_off_ohm', '—')} Ω", "+ 1N4148 Schottky bypass"],
             ["Rg_bootstrap", f"{gr.get('rg_bootstrap_ohm', 10)} Ω", "Bootstrap charge limiter"],
-            ["Gate Rise Time", f"{gr.get('gate_rise_time_ns', '—')} ns", "Actual achieved"],
-            ["dV/dt", f"{gr.get('dv_dt_v_per_us', '—')} V/µs", "Switch node slew rate"],
+            ["Gate Rise Time (HS)", f"{gr.get('hs_gate_rise_time_ns', '—')} ns", "Actual achieved"],
+            ["dV/dt (HS, bus)", f"{gr.get('hs_dv_dt_bus', '—')} V/µs", "Switch node slew rate"],
         ]
         story.append(_make_table(gate_data))
         story.append(Spacer(1, 6*mm))
@@ -279,8 +279,8 @@ def _build_bom(calculations, project=None) -> list:
 
     if "gate_resistors" in calculations:
         gr = calculations["gate_resistors"]
-        add("Gate Resistor (ON)", "Turn-on gate resistor", f"{gr.get('rg_on_recommended_ohm', '4.7')} Ω", 6, "0402, 0.1W", "~$0.02")
-        add("Gate Resistor (OFF)", "Turn-off gate resistor + bypass diode", f"{gr.get('rg_off_recommended_ohm', '2.2')} Ω + 1N4148", 6, "0402, 0.1W", "~$0.05")
+        add("Gate Resistor (ON)", "Turn-on gate resistor", f"{gr.get('hs_rg_on_ohm', '4.7')} Ω", 6, "0402, 0.1W", "~$0.02")
+        add("Gate Resistor (OFF)", "Turn-off gate resistor + bypass diode", f"{gr.get('hs_rg_off_ohm', '2.2')} Ω + 1N4148", 6, "0402, 0.1W", "~$0.05")
 
     if "input_capacitors" in calculations:
         ic = calculations["input_capacitors"]
@@ -311,8 +311,8 @@ def _build_bom(calculations, project=None) -> list:
     if "emi_filter" in calculations:
         ef = calculations["emi_filter"]
         add("CM Choke", "Common-mode EMI filter", f"{ef.get('cm_choke_uh', 330)} µH CM", 1, "≥ I_max rating", "~$1.50")
-        add("X Capacitor", "Differential-mode EMI filter", f"{ef.get('cx_cap_nf', 100)} nF / 275Vac X2", 2, "X2 class, 275Vac", "~$0.40")
-        add("Y Capacitor", "Common-mode bypass to chassis", f"{ef.get('cy_cap_pf', 2200)} pF / 250Vac Y2", 2, "Y2 class, 250Vac", "~$0.25")
+        add("X Capacitor", "Differential-mode EMI filter", f"{ef.get('x_cap_nf', 100)} nF / 275Vac X2", 2, "X2 class, 275Vac", "~$0.40")
+        add("Y Capacitor", "Common-mode bypass to chassis", f"{ef.get('y_cap_nf', 4.7)} nF / 250Vac Y2", 2, "Y2 class, 250Vac", "~$0.25")
 
     add("TVS Diode", "Bus overvoltage transient clamp", "SMBJ58A or P6KE62A", 2, "600W, 58V clamp", "~$0.30")
     add("NTC Thermistor", "MOSFET temperature sensing", "10 kΩ @ 25°C, B=3950", 2, "0402 NTC", "~$0.15")
