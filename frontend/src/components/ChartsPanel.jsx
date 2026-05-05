@@ -25,19 +25,19 @@ function computeLossVsFreq(mosfetParams, systemSpecs) {
   const dtNs = systemSpecs.dead_time_ns || 200 // dead time for body diode conduction
   const rdsHot = rds * Math.pow((125 + 273.15) / 300, 2.1) // power-law derating at ~125°C
 
-  // 3-phase SPWM per-switch RMS (Mohan textbook): I_peak × sqrt(1/8 + M/(3π))
-  // M = modulation index ≈ 0.9 for typical SPWM
+  // 3-phase SPWM per-switch RMS: I_peak × sqrt(1/8 + M*PF/(3π))
   const M = 0.9
-  const iRms = iMax * Math.sqrt(1/8 + M / (3 * Math.PI))
+  const PF = 0.85 // Typical motor power factor
+  const iRms = iMax * Math.sqrt(1/8 + (M * PF) / (3 * Math.PI))
 
   const points = []
   for (let f = 5000; f <= 100000; f += 2500) {
     const pCond = iRms * iRms * rdsHot
-    // Sinusoidally-averaged switching loss: P_sw = V × I_peak × (tr+tf) × f / π
+    // Sinusoidally-averaged switching loss: P_sw = V_bus × I_peak × (tr+tf) × f / π
     const pSw = vBus * iMax * (tr + tf) * f / Math.PI
     const pGate = qg * vDrv * f
     const pRr = qrr * vBus * f
-    // Coss energy loss: P_coss = 0.5 × Qoss × Vbus × fsw
+    // Coss energy loss: P_coss = 0.5 × Qoss × V_bus × fsw
     const pCoss = 0.5 * qoss * vBus * f
     // Body diode conduction during dead time (2 occurrences per PWM cycle): P_body = Vf × I_avg_diode × 2 × dt × fsw
     const pBody = bodyVf * iMax * (2 / Math.PI) * (2 * dtNs * 1e-9) * f
@@ -68,7 +68,8 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
   // or fall back to realistic PCB defaults (natural convection, NO heatsink)
   const thermal = calcResults?.thermal || {}
   const rthCS = thermal.rth_cs_c_per_w || 0.5       // TIM: case-to-PCB
-  const rthSA = thermal.rth_sa_pcb_c_per_w || 20.0  // PCB-to-ambient (natural convection)
+  // Fallback: 39°C/W matches natural convection without heatsink (backend thermal module default)
+  const rthSA = thermal.rth_sa_pcb_c_per_w || 39.0
   const rthTotal = rthJC + rthCS + rthSA
 
   const vBus = systemSpecs.bus_voltage || 48
@@ -79,15 +80,16 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
   const vDrv = systemSpecs.gate_drive_voltage || 12
   const fsw = systemSpecs.pwm_freq_hz || 20000
 
-  // 3-phase SPWM per-switch RMS (Mohan textbook): sqrt(1/8 + M/(3π))
+  // 3-phase SPWM per-switch RMS: sqrt(1/8 + M*PF/(3π))
   const M = 0.9
-  const kRms = Math.sqrt(1/8 + M / (3 * Math.PI))
-  
+  const PF = 0.85
+  const kRms = Math.sqrt(1/8 + (M * PF) / (3 * Math.PI))
+
   const designIMax = systemSpecs.max_phase_current || 80
 
   const points = []
   for (let tAmb = -20; tAmb <= 105; tAmb += 5) {
-    // Sinusoidally-averaged switching loss per amp: V × (tr+tf) × f / π
+    // Sinusoidally-averaged switching loss per amp: V_bus × (tr+tf) × f / π
     const pSwPerAmp = vBus * (tr + tf) * fsw / Math.PI
     const pGateFixed = qg * vDrv * fsw
     const pRrFixed = qrr * vBus * fsw
@@ -157,9 +159,10 @@ function computeEfficiencyVsLoad(mosfetParams, systemSpecs) {
   const numFets = systemSpecs.num_fets || 6
   const rdsHot = rds * Math.pow((125 + 273.15) / 300, 2.1) // power-law derating at ~125°C
 
-  // 3-phase SPWM per-switch RMS (Mohan textbook)
+  // 3-phase SPWM per-switch RMS
   const M = 0.9
-  const kRms = Math.sqrt(1/8 + M / (3 * Math.PI))
+  const PF = 0.85
+  const kRms = Math.sqrt(1/8 + (M * PF) / (3 * Math.PI))
   const points = []
   for (let loadPct = 5; loadPct <= 100; loadPct += 5) {
     const pOut = pRated * loadPct / 100
@@ -169,7 +172,7 @@ function computeEfficiencyVsLoad(mosfetParams, systemSpecs) {
     // Per-FET RMS from SPWM modulation
     const iFetRms = iPeak * kRms
     const pCond = iFetRms * iFetRms * rdsHot * numFets
-    // Sinusoidally-averaged switching loss: V × I_peak × (tr+tf) × f / π, per FET
+    // Sinusoidally-averaged switching loss: V_bus × I_peak × (tr+tf) × f / π, per FET
     const pSw = vBus * iPeak * (tr + tf) * fsw / Math.PI * numFets
     const pGate = qg * vDrv * fsw * numFets
     const pRr = qrr * vBus * fsw * numFets
@@ -203,19 +206,19 @@ function computeGateTimingVsRg(mosfetParams, systemSpecs) {
     
     // Switching transit times driven primarily by Miller charge
     const iGateOn = (vDrv - vPlateau) / rgTotal
-    const tRise = qgd / iGateOn
+    const tMillerOn = qgd / iGateOn
     
     // Discharge driven by plateau bias alone
     const iGateOff = vPlateau / rgTotal
-    const tFall = qgd / iGateOff
+    const tMillerOff = qgd / iGateOff
     
     // dV/dt estimated from bus voltage switching speed
-    const dvdt = vPeak / (tRise * 1e9) * 1000 // V/µs
+    const dvdt = vPeak / (tMillerOn * 1e9) * 1000 // V/µs
 
     points.push({
       rg: rg,
-      riseTime: +(tRise * 1e9).toFixed(1),
-      fallTime: +(tFall * 1e9).toFixed(1),
+      millerOn: +(tMillerOn * 1e9).toFixed(1),
+      millerOff: +(tMillerOff * 1e9).toFixed(1),
       dvdt: +dvdt.toFixed(0),
     })
   }
@@ -345,7 +348,7 @@ export default function ChartsPanel() {
               <EfficiencyVsLoadChart data={effData} />
             )}
             {activeChart === 'gate_timing' && gateData && (
-              <GateTimingChart data={gateData} currentRg={project.calculations?.gate_resistors?.rg_on_recommended_ohm} />
+              <GateTimingChart data={gateData} currentRg={project.calculations?.gate_resistors?.hs_rg_on_ohm} />
             )}
           </div>
 
@@ -364,7 +367,10 @@ export default function ChartsPanel() {
                 <strong style={{ color: 'var(--txt-2)' }}>Loss vs Switching Frequency: </strong>
                 Shows how MOSFET losses scale with PWM frequency. Conduction loss stays constant while switching and gate losses increase linearly.
                 The orange marker shows your current operating point ({systemSpecs.pwm_freq_hz / 1000} kHz).
-                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>Note: Charts use simplified overlap switching model — see Calculations tab for Qgd-based results.</em>
+                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>
+                  Note: Charts use simplified overlap switching model — see Calculations tab for Qgd-based results.
+                  Switching, recovery, and Coss losses computed at V_bus = {systemSpecs.bus_voltage}V (operating DC link voltage). Rds(on) derated to 125°C.
+                </em>
               </>
             )}
             {activeChart === 'thermal_derating' && (
@@ -372,6 +378,10 @@ export default function ChartsPanel() {
                 <strong style={{ color: 'var(--txt-2)' }}>Thermal Derating: </strong>
                 Maximum continuous phase current vs ambient temperature, limited by Tj_max.
                 Above a certain ambient temperature, you must reduce current to stay within safe operating area.
+                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>
+                  Switching losses at V_bus = {systemSpecs.bus_voltage}V; Rds(on) solved iteratively with Tj-dependent derating.
+                  Thermal path: Rth_JC + Rth_CS (TIM) + Rth_SA ({calcResults?.thermal?.rth_sa_pcb_c_per_w != null ? `${calcResults.thermal.rth_sa_pcb_c_per_w} °C/W from calc` : '39 °C/W default, natural convection'}).
+                </em>
               </>
             )}
             {activeChart === 'efficiency_vs_load' && (
@@ -379,13 +389,19 @@ export default function ChartsPanel() {
                 <strong style={{ color: 'var(--txt-2)' }}>Efficiency vs Load: </strong>
                 MOSFET stage efficiency from 5% to 100% load. At light loads, fixed losses (gate charge, recovery) dominate.
                 At heavy loads, conduction loss (I&sup2;R) takes over.
+                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>
+                  Switching, recovery, and Coss losses at V_bus = {systemSpecs.bus_voltage}V. Rds(on) derated to 125°C (fixed). All 6 FETs included.
+                </em>
               </>
             )}
             {activeChart === 'gate_timing' && (
               <>
                 <strong style={{ color: 'var(--txt-2)' }}>Gate Timing vs Rg: </strong>
-                Turn-on/off times and dV/dt as a function of external gate resistance. Lower Rg means faster switching but higher EMI (dV/dt).
-                Find the sweet spot between switching loss and EMI.
+                Miller plateau duration (Qgd / Ig) and resulting dV/dt as a function of external gate resistance.
+                Lower Rg means faster Vds transition but higher EMI (dV/dt). Find the sweet spot between switching loss and EMI.
+                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>
+                  dV/dt computed at V_peak = {systemSpecs.peak_voltage || systemSpecs.bus_voltage}V (worst case transient). "Miller Time" here is Miller plateau duration — full datasheet tr/tf includes pre- and post-threshold regions too.
+                </em>
               </>
             )}
           </div>
@@ -473,8 +489,8 @@ function GateTimingChart({ data, currentRg }) {
           <YAxis yAxisId="dvdt" orientation="right" label={{ value: 'dV/dt (V/µs)', angle: 90, position: 'insideRight', offset: -15, style: { fill: 'var(--txt-3)', fontSize: 11, fontWeight: 600 } }} stroke="var(--txt-4)" tick={{ fill: 'var(--txt-3)', fontSize: 10 }} width={65} />
           <Tooltip contentStyle={tooltipStyle} />
           <Legend verticalAlign="top" align="center" height={40} iconType="circle" wrapperStyle={{ fontSize: 11, color: 'var(--txt-2)' }} />
-          <Line yAxisId="time" type="monotone" dataKey="riseTime" stroke="#1e90ff" strokeWidth={2} dot={false} name="Rise Time (ns)" />
-          <Line yAxisId="time" type="monotone" dataKey="fallTime" stroke="#bb86fc" strokeWidth={2} dot={false} name="Fall Time (ns)" />
+          <Line yAxisId="time" type="monotone" dataKey="millerOn" stroke="#1e90ff" strokeWidth={2} dot={false} name="Miller Time On (ns)" />
+          <Line yAxisId="time" type="monotone" dataKey="millerOff" stroke="#bb86fc" strokeWidth={2} dot={false} name="Miller Time Off (ns)" />
           <Line yAxisId="dvdt" type="monotone" dataKey="dvdt" stroke="#ffab00" strokeWidth={2} dot={false} name="dV/dt (V/µs)" />
           {currentRg != null && (
             <ReferenceLine
