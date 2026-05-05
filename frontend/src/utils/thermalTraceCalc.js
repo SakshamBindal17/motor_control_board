@@ -417,6 +417,7 @@ export function computeRecommendations(params, result) {
   {
     let bestR = null, bestAdd = null, solved = false;
     for (const add of [2, 4, 6, 8, 10, 12, 14, 16]) {
+      if (p.nExt + p.nInt + add > 12) continue;
       const r2 = iterativeSolve({ ...p, nInt: p.nInt + add });
       if (!r2) continue;
       bestR = r2; bestAdd = add;

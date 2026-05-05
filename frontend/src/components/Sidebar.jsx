@@ -114,7 +114,7 @@ export default function Sidebar({ blocks }) {
           <NavItem
             cfg={blocks.pcb_thermal}
             isActive={active_block === 'pcb_thermal'}
-            status={project.pcb_trace_thermal?.results ? 'done' : null}
+            status={(project.pcb_trace_thermal?.results && !(project.pcb_trace_thermal?.sections?.length === 1 && project.pcb_trace_thermal.sections[0].trace_width_mm === 7 && project.pcb_trace_thermal.sections[0].trace_length_mm === 20)) ? 'done' : null}
             onClick={() => select('pcb_thermal')}
           />
         </div>
@@ -157,24 +157,6 @@ export default function Sidebar({ blocks }) {
           />
         ))}
       </nav>
-
-      {/* API key warning */}
-      {!state.settings.gemini_api_keys?.some(k => k.trim()) && (
-        <div
-          onClick={() => dispatch({ type: 'TOGGLE_SETTINGS' })}
-          style={{
-            padding: '8px 14px',
-            background: 'rgba(255,68,68,.08)',
-            borderTop: '1px solid rgba(255,68,68,.2)',
-            fontSize: 10,
-            color: 'var(--red)',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', gap: 6,
-          }}
-        >
-          ⚠ No Gemini API key — click to add
-        </div>
-      )}
     </aside>
   )
 }

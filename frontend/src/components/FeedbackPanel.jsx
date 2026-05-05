@@ -67,7 +67,7 @@ export default function FeedbackPanel({ config }) {
             <div style={secHead}><span>📏</span> Current Sensing</div>
             <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10, fontSize: 11 }}>
               <ModeRow mode="Single Shunt (Low-Side)" color="#3b82f6"
-                items={shunts?.single_shunt ? [
+                items={shunts?.topology_mode === 'single' ? [
                   `Rshunt = ${shunts.single_shunt.value_mohm} mΩ`,
                   `V_shunt @ Imax = ${shunts.single_shunt.v_shunt_mv} mV`,
                   `V_ADC = ${shunts.single_shunt.v_adc_v} V`,
@@ -76,7 +76,7 @@ export default function FeedbackPanel({ config }) {
               />
               <div style={{ height: 1, background: 'var(--border-1)' }} />
               <ModeRow mode="3-Phase Shunts" color="#22c55e"
-                items={shunts?.three_shunt ? [
+                items={shunts?.topology_mode === 'three_phase' ? [
                   `Rshunt = ${shunts.three_shunt.value_mohm} mΩ × 3`,
                   `V_shunt @ Imax = ${shunts.three_shunt.v_shunt_mv} mV`,
                   `V_ADC = ${shunts.three_shunt.v_adc_v} V each`,
@@ -107,7 +107,7 @@ export default function FeedbackPanel({ config }) {
             <div style={secHead}><span>🛡️</span> Protection Chain</div>
             <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, fontSize: 11 }}>
               {prot ? <>
-                <ProtRow label="OCP (Hardware)" value={`${prot.ocp?.ocp_hw_a ?? '—'} A`}     color="var(--red)"   note="Via driver IC direct shutdown" />
+                <ProtRow label="OCP (Hardware)" value={`${prot.ocp?.hw_threshold_a ?? '—'} A`}     color="var(--red)"   note="Via driver IC direct shutdown" />
                 <ProtRow label="OCP (Software)" value={`${prot.ocp?.sw_threshold_a ?? sys.max_phase_current} A`} color="var(--amber)" note="MCU comparator, ~10µs latency" />
                 <ProtRow label="OVP"            value={`${prot.ovp?.trip_voltage_v ?? '—'} V`} color="var(--amber)" note="Resistor divider + comparator" />
                 <ProtRow label="UVP"            value={`${prot.uvp?.trip_voltage_v ?? '—'} V`} color="var(--amber)" note={`Hyst: ${prot.uvp?.hysteresis_voltage_v ?? '—'}V`} />
