@@ -449,8 +449,8 @@ function computeWaveformFrontend(
   const v_bus = parseFloat(systemSpecs.vds_override) || systemSpecs.peak_voltage || 60
   const i_load = parseFloat(systemSpecs.id_override) || systemSpecs.max_phase_current || 80
 
-  const rg_on_ext = parseFloat(systemSpecs.rg_on_override) || gateCalc?.rg_on_recommended_ohm || 4.7
-  const rg_off_ext = parseFloat(systemSpecs.rg_off_override) || gateCalc?.rg_off_recommended_ohm || 2.2
+  const rg_on_ext = parseFloat(systemSpecs.rg_on_override) || gateCalc?.hs_rg_on_ohm || 4.7
+  const rg_off_ext = parseFloat(systemSpecs.rg_off_override) || gateCalc?.hs_rg_off_ohm || 2.2
 
   const rg_on = rg_int + rg_on_ext
   const rg_off = rg_int + rg_off_ext

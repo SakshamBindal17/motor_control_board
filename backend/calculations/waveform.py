@@ -65,8 +65,8 @@ class WaveformMixin:
         # ── Gate resistors from gate_resistors module ─────────────────
         try:
             gate_calc  = self.calc_gate_resistors()
-            rg_on_ext  = gate_calc.get("rg_on_recommended_ohm",  4.7)
-            rg_off_ext = gate_calc.get("rg_off_recommended_ohm", 2.2)
+            rg_on_ext  = gate_calc.get("hs_rg_on_ohm",  4.7)
+            rg_off_ext = gate_calc.get("hs_rg_off_ohm", 2.2)
         except Exception:
             rg_on_ext  = 4.7
             rg_off_ext = 2.2
