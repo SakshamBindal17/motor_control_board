@@ -22,6 +22,8 @@ class ValidationMixin:
 
         rpm       = _f("max_speed_rpm")
         pole_pairs = _f("pole_pairs")
+        if pole_pairs is not None:
+            pole_pairs = int(pole_pairs)
         rph_mohm  = _f("rph_mohm")
         lph_uh    = _f("lph_uh")
         kt        = _f("kt_nm_per_a")
@@ -91,7 +93,7 @@ class ValidationMixin:
                     )
 
         # ── 3. Kt current cross-check ────────────────────────────
-        if kt is not None and kt > 0 and rated_tq is not None:
+        if kt is not None and kt > 0 and rated_tq is not None and rated_tq > 0:
             i_rated = rated_tq / kt
             results["i_rated_from_kt_a"] = round(i_rated, 1)
             results["i_max_system_a"] = self.i_max
@@ -204,7 +206,7 @@ class ValidationMixin:
         if rds_on is not None and rds_on > 0:
             alpha = self._dc("thermal.rds_alpha")
             tj_worst = self._get(self.mosfet, "MOSFET", "tj_max", 175.0) or 175.0
-            rds_hot = rds_on * ((tj_worst / 298.15) ** alpha)
+            rds_hot = rds_on * (((tj_worst + 273.15) / 298.15) ** alpha)
             # Shoot-through: V_bus across 2 series MOSFETs (one high + one low)
             i_fault = self.v_bus / (2.0 * rds_hot)
             results["i_fault_shoot_through_a"] = round(i_fault, 1)

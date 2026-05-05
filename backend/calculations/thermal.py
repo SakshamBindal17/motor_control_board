@@ -294,7 +294,7 @@ class ThermalMixin:
             p_cond_max = max(0.0, p_headroom - p_sw_fixed)
             # Rds_hot at worst Tj → iterate once for self-consistency
             # Tj_guess = t_amb + p_headroom × rth_tot = tj_max (by definition)
-            rds_hot = rds_25 * ((tj_max / 298.15) ** alpha)
+            rds_hot = rds_25 * (((tj_max + 273.15) / 298.15) ** alpha)
             # P_cond = I² × Rds_hot / n_par (parallel MOSFET scaling)
             i_safe = math.sqrt(p_cond_max * n_par / rds_hot) if (rds_hot > 0 and p_cond_max > 0) else 0.0
             curve.append({

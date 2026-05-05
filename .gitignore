@@ -136,3 +136,8 @@ ui_changes.diff
 .graphify_python
 .graphify_uncached.txt
 graphify-out/
+
+# Session and patch files
+*_session.json
+*.patch
+last_commit.patch
