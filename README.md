@@ -12,7 +12,7 @@ mc-designer-v2/
 │
 ├── backend/                          ← Python FastAPI server (port 8472)
 │   ├── main.py                       ← API routes
-│   ├── claude_service.py             ← PDF → Gemini AI extraction + SHA-256 disk cache
+│   ├── llm_service.py             ← PDF → Gemini AI extraction + SHA-256 disk cache
 │   ├── calc_engine.py                ← Calculation engine (re-exports from calculations/)
 │   ├── calculations/                 ← Individual calculation modules
 │   │   ├── mosfet.py

@@ -53,7 +53,7 @@ Production API URL is set via `VITE_API_URL` on Vercel (see Deployment section).
 mc-designer-v2/
 ├── backend/
 │   ├── main.py               # FastAPI app: all API routes, CORS, multipart upload
-│   ├── claude_service.py     # PDF → Gemini extraction; two-pass system; SHA-256 disk cache;
+│   ├── llm_service.py     # PDF → Gemini extraction; two-pass system; SHA-256 disk cache;
 │   │                         # exponential backoff on 503; key rotation on 429
 │   ├── calc_engine.py        # Shim re-exporting CalculationEngine from calculations/;
 │   │                         # defines CALC_DEPS (param sets that feed formulas directly)
@@ -131,7 +131,7 @@ User uploads PDF
     → POST /api/extract/{mcu|driver|mosfet}
       Headers: X-API-Keys: key1,key2,...
       Body: multipart/form-data (file)
-    → claude_service.py:
+    → llm_service.py:
         1. SHA-256 hash of PDF bytes → check disk cache
         2. Cache miss → Pass 1: full extraction via Gemini (gemini-3-flash-preview, thinking mode)
         3. Pass 2: re-verify CALC_DEPS parameters (calc-critical params always re-verified)
@@ -247,7 +247,7 @@ In the app: open Settings → add Gemini API key(s) → confirm system specs (48
 - **Documentation:** Added `docs/CALCULATIONS_REFERENCE.md` (in-depth formulas, theory, worked examples) and `docs/FALLBACKS_AND_HARDCODED_VALUES.md` (all parameter fallbacks and hardcoded constants with locations).
 - **Calculation improvements:** Ripple current calc uses motor `Lph` when available; bootstrap cap snapped to E12 standard values; snubber cap snapped to E12 pF values.
 - **UI improvements:** Light theme contrast fixes (txt-3: `#7a9ab8` → `#4a6a8a` for WCAG compliance); MotorForm refactored to CSS vars with CheckRow warn state.
-- **AI migration:** Migrated from Anthropic Claude (`claude-haiku-4-5-20251001`) to **Google Gemini** (`gemini-3-flash-preview`). `claude_service.py` now uses `google-genai` SDK. Removed `httpx==0.27.2` pin (was required for Anthropic SDK compatibility only). API key header changed from `X-API-Key` to `X-API-Keys` (supports multiple keys with auto-rotation).
+- **AI migration:** Migrated from Anthropic Claude (`claude-haiku-4-5-20251001`) to **Google Gemini** (`gemini-3-flash-preview`). `llm_service.py` now uses `google-genai` SDK. Removed `httpx==0.27.2` pin (was required for Anthropic SDK compatibility only). API key header changed from `X-API-Key` to `X-API-Keys` (supports multiple keys with auto-rotation).
 - **Two-pass extraction:** Added Pass 2 re-verification for CALC_DEPS parameters. Added CALC_DEPS sets in `calc_engine.py` for both Pass 2 targeting and cache invalidation. PROMPT_VERSION bumped to `v14-gemini`.
 - **New endpoints:** Added `/api/reverse-calculate` (target-to-component design), `/api/export/spice` (SPICE netlist), `/api/design-constants` (design constant schema).
 - **Startup scripts:** Added cross-platform scripts: `START.bat` (Windows), `START.sh` (Linux), `START.command` (macOS).

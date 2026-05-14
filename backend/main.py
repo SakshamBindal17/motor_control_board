@@ -8,7 +8,7 @@ import json, io, traceback, logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from claude_service import extract_parameters_from_pdf
+from llm_service import extract_parameters_from_pdf
 from calc_engine import CalculationEngine
 from report_generator import generate_pdf_report, generate_excel_report
 from spice_export import generate_spice_netlist

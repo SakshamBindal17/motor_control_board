@@ -26,13 +26,13 @@ All items below are implemented and merged to main. Do not re-implement.
 
 | # | What | Files Changed |
 |---|------|--------------|
-| A | Multi-API-key support — Settings UI accepts N keys; backend rotates on 429 | `SettingsModal.jsx`, `ProjectContext.jsx`, `api.js`, `main.py`, `claude_service.py`, `Header.jsx`, `BlockPanel.jsx`, `ComparisonPanel.jsx`, `Sidebar.jsx` |
-| B | Pass 2 independent key rotation — Pass 1 succeeds on key K; Pass 2 tries K, K+1, … independently without re-running Pass 1 | `claude_service.py` |
-| C | 503 retry with exponential backoff (5→10→20→40→60 s) | `claude_service.py` |
+| A | Multi-API-key support — Settings UI accepts N keys; backend rotates on 429 | `SettingsModal.jsx`, `ProjectContext.jsx`, `api.js`, `main.py`, `llm_service.py`, `Header.jsx`, `BlockPanel.jsx`, `ComparisonPanel.jsx`, `Sidebar.jsx` |
+| B | Pass 2 independent key rotation — Pass 1 succeeds on key K; Pass 2 tries K, K+1, … independently without re-running Pass 1 | `llm_service.py` |
+| C | 503 retry with exponential backoff (5→10→20→40→60 s) | `llm_service.py` |
 | D | Frontend cycling status message — "Gemini is reading…" → "servers busy, retrying…" at 60 s | `BlockPanel.jsx` |
-| E | File processing loop timeout — 120 s max; raises `TimeoutError` instead of hanging forever | `claude_service.py` |
-| F | `asyncio.TimeoutError` caught at `wait_for` — surfaces as clean error message | `claude_service.py` |
-| G | `_parse_raw` always ensures `parameters` key — prevents silent empty-data returns | `claude_service.py` |
+| E | File processing loop timeout — 120 s max; raises `TimeoutError` instead of hanging forever | `llm_service.py` |
+| F | `asyncio.TimeoutError` caught at `wait_for` — surfaces as clean error message | `llm_service.py` |
+| G | `_parse_raw` always ensures `parameters` key — prevents silent empty-data returns | `llm_service.py` |
 | H | Error message sanitization in all routes — no more `type(e).__name__` in HTTP responses | `main.py` |
 | I | Specific error messages: 429 quota, 504 timeout, 500 file-processing | `main.py` |
 | J | Fetch timeout in frontend — 11 min for extraction, 30 s for all other routes | `api.js` |
@@ -50,7 +50,7 @@ All items below are implemented and merged to main. Do not re-implement.
 > This section was written before v14-gemini. All listed params are now ESSENTIAL in the prompts.
 > **No action required at the prompt level.**
 
-The following params were claimed missing from extraction prompts — all are now confirmed ESSENTIAL in `claude_service.py` v14-gemini:
+The following params were claimed missing from extraction prompts — all are now confirmed ESSENTIAL in `llm_service.py` v14-gemini:
 
 | Param | Block | Status |
 |-------|-------|--------|
@@ -729,7 +729,7 @@ See Phase 0 below. These are crash-risk items — they are now the first things 
 | §6 Report | `report_generator.py` | — |
 | §7 Unit bounds | `unit_utils.py` | `MotorForm.jsx` |
 | §8 E-series | `calculations/protection.py` | — |
-| §11 Prompt improvements | `claude_service.py` | — |
+| §11 Prompt improvements | `llm_service.py` | — |
 | §15 New modules | `calculations/gate_drive.py`, `calculations/mosfet.py` | `CalculationsPanel.jsx` |
 | §COMPAT Motor compat | `calculations/motor_compat.py` (new), `main.py` | `App.jsx`, new `MotorCompatPanel.jsx` |
 | §SPICE improvements | — | `ReportPanel.jsx` |

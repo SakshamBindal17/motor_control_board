@@ -18,8 +18,10 @@ export const PARAM_LABELS = {
   // ── MOSFET good-to-have ─────────────────────────────────────────────────
   vgs_max: 'Max Gate-Source Voltage', id_pulsed: 'Pulsed Drain Current',
   ciss: 'Input Capacitance', crss: 'Reverse Transfer Capacitance',
-  rg_int: 'Internal Gate Resistance', vgs_plateau: 'Gate Plateau Voltage', 
+  rg_int: 'Internal Gate Resistance', vgs_plateau: 'Gate Plateau Voltage',
   qoss: 'Output Charge (Qoss)',
+  coss_er: 'Energy-Related Output Capacitance (Coss,er)',
+  g_fs: 'Forward Transconductance',
   // ── Gate Driver essential ────────────────────────────────────────────────
   vcc_range: 'VCC Supply Voltage Range', vcc_uvlo: 'VCC UVLO',
   vbs_max: 'Max Bootstrap Voltage', vbs_uvlo: 'Bootstrap UVLO',
