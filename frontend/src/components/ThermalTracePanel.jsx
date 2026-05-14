@@ -780,9 +780,11 @@ export default function ThermalTracePanel({ config }) {
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{
-                      fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-                      background: rec.solves ? 'var(--green)' : 'var(--amber)',
-                      color: '#000', flexShrink: 0
+                      fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+                      background: 'transparent',
+                      border: `1.5px solid ${rec.solves ? 'var(--green)' : 'var(--amber)'}`,
+                      color: rec.solves ? 'var(--green)' : 'var(--amber)',
+                      flexShrink: 0, letterSpacing: '.04em',
                     }}>
                       {rec.solves ? 'SOLVES' : 'PARTIAL'}
                     </span>
@@ -849,27 +851,24 @@ export default function ThermalTracePanel({ config }) {
 
         return (
           <div className="card" style={{ padding: '14px 16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-              <div style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0,
-                background: 'rgba(100,181,246,.12)', border: '1px solid rgba(100,181,246,.3)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17 }}>🖥️</div>
+
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                background: 'rgba(100,181,246,.1)', border: '1px solid rgba(100,181,246,.25)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🖥️</div>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 13, color: '#64b5f6' }}>PCB Power Loop Impedance</div>
-                <div style={{ fontSize: 10, color: 'var(--txt-3)' }}>
-                  Half-bridge commutation loop inductance · Bus bar resistance · Layout guidelines
-                </div>
+                <div style={{ fontSize: 10, color: 'var(--txt-3)' }}>Half-bridge commutation loop inductance · Bus bar resistance · Layout guidelines</div>
               </div>
             </div>
 
-            {/* Unique inputs only: gate trace width + power clearance + external bus bar */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
+            {/* 3 inputs */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
               {[
-                { label: 'Gate Trace Width', unit: 'mm', val: ovr.gate_trace_w_mm ?? '', onChg: v => setOvrLocal('gate_trace_w_mm', v), ph: '0.3',
-                  note: 'Gate drive signal trace' },
-                { label: 'Power Clearance', unit: 'mm', val: ovr.power_clearance_mm ?? '', onChg: v => setOvrLocal('power_clearance_mm', v), ph: '1.0',
-                  note: 'High-voltage spacing' },
-                { label: 'Ext. Bus Bar L', unit: 'nH', val: ovr.ext_busbar_nh ?? '', onChg: v => setOvrLocal('ext_busbar_nh', v), ph: 'e.g. 2.0',
-                  note: 'External boltable bus bar inductance' },
+                { label: 'Gate Trace Width', unit: 'mm', val: ovr.gate_trace_w_mm ?? '', onChg: v => setOvrLocal('gate_trace_w_mm', v), ph: '0.3', note: 'Gate drive signal trace' },
+                { label: 'Power Clearance',  unit: 'mm', val: ovr.power_clearance_mm ?? '', onChg: v => setOvrLocal('power_clearance_mm', v), ph: '1.0', note: 'High-voltage spacing' },
+                { label: 'Ext. Bus Bar L',   unit: 'nH', val: ovr.ext_busbar_nh ?? '', onChg: v => setOvrLocal('ext_busbar_nh', v), ph: 'e.g. 2.0', note: 'External boltable bus bar inductance' },
               ].map(f => (
                 <div key={f.label}>
                   <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--txt-3)', marginBottom: 3 }}>
@@ -880,22 +879,70 @@ export default function ThermalTracePanel({ config }) {
                     onChange={e => f.onChg(e.target.value)}
                     style={{ width: '100%', fontSize: 12, padding: '5px 8px' }}
                   />
-                  {f.note && <div style={{ fontSize: 9, color: 'var(--txt-4)', marginTop: 2 }}>{f.note}</div>}
+                  <div style={{ fontSize: 9, color: 'var(--txt-4)', marginTop: 2 }}>{f.note}</div>
                 </div>
               ))}
             </div>
 
             {/* Data source note */}
             <div style={{
-              padding: '6px 10px', borderRadius: 6, marginBottom: 12,
-              background: 'rgba(100,181,246,.06)', border: '1px solid rgba(100,181,246,.15)',
+              padding: '5px 10px', borderRadius: 6, marginBottom: 14,
+              background: 'rgba(100,181,246,.05)', border: '1px solid rgba(100,181,246,.12)',
               fontSize: 10, color: 'var(--txt-3)', display: 'flex', alignItems: 'center', gap: 6,
             }}>
-              <span style={{ fontSize: 14 }}>🔗</span>
-              <span>Trace geometry, layer stack, and via data are automatically pulled from the <strong style={{ color: '#64b5f6' }}>bus bar sections</strong> above.</span>
+              <span>🔗</span>
+              <span>Trace geometry, layer stack, and via data are pulled from the <strong style={{ color: '#64b5f6' }}>bus bar sections</strong> above.</span>
             </div>
 
-            {/* Per-section inductance breakdown */}
+            {/* Result banner */}
+            <div style={{
+              padding: '12px 14px', borderRadius: 8, marginBottom: 12,
+              background: totalLoopNh != null ? `${loopColor}0d` : 'var(--bg-2)',
+              border: `1px solid ${totalLoopNh != null ? loopColor + '40' : 'var(--border-1)'}`,
+            }}>
+              <div style={{ fontSize: 9, fontWeight: 600, color: 'var(--txt-4)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>
+                Half-Bridge Power Loop Inductance
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
+                  <span style={{ fontSize: 26, fontWeight: 800, fontFamily: 'var(--font-mono)', color: totalLoopNh != null ? loopColor : 'var(--txt-4)', lineHeight: 1 }}>
+                    {totalLoopNh != null ? fmtNum(totalLoopNh, 2) : '—'}
+                  </span>
+                  <span style={{ fontSize: 13, color: 'var(--txt-3)' }}>nH</span>
+                </div>
+                {totalLoopNh != null && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: loopColor }}>
+                    {loopSt === 'OK' ? '✓ GOOD' : loopSt === 'WARNING' ? '⚠ WARNING' : '✗ CRITICAL'}
+                  </span>
+                )}
+              </div>
+              <div style={{ marginTop: 6, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 9.5, color: 'var(--txt-4)' }}>
+                  Target: <strong style={{ color: 'var(--green)' }}>&lt; 5.0 nH</strong>
+                </span>
+                {[
+                  { label: 'OK', range: '≤ 5', color: 'var(--green)' },
+                  { label: 'Warn', range: '≤ 10', color: 'var(--amber)' },
+                  { label: 'Critical', range: '> 10', color: 'var(--red)' },
+                ].map(t => (
+                  <span key={t.label} style={{ fontSize: 9.5, color: t.color, display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: t.color, display: 'inline-block', flexShrink: 0 }} />
+                    {t.label} {t.range} nH
+                  </span>
+                ))}
+              </div>
+              {totalLoopNh == null && (
+                <div style={{ fontSize: 10, color: 'var(--txt-4)', marginTop: 5 }}>
+                  Enter trace width and length in the bus bar sections above to calculate.
+                </div>
+              )}
+              <div style={{ marginTop: 8, fontSize: 9.5, color: 'var(--txt-4)', fontFamily: 'var(--font-mono)', lineHeight: 1.7 }}>
+                <div>L<sub>total</sub> = Σ L<sub>sec</sub> + L<sub>ext</sub></div>
+                <div>L<sub>sec</sub> ≈ 0.4 × l × [ ln(4l / (w+t)) + 0.5 ] nH</div>
+              </div>
+            </div>
+
+            {/* Per-section table */}
             {validSecs.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--txt-3)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 6 }}>
@@ -905,12 +952,9 @@ export default function ThermalTracePanel({ config }) {
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
                     <thead>
                       <tr style={{ background: 'var(--bg-3)' }}>
-                        <th style={{ padding: '5px 8px', textAlign: 'left', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Section</th>
-                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Length</th>
-                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Width</th>
-                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Cu</th>
-                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>L (nH)</th>
-                        <th style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>Contrib.</th>
+                        {['Section','Length','Width','Cu','L (nH)','Contrib.'].map((h, i) => (
+                          <th key={h} style={{ padding: '5px 8px', textAlign: i === 0 ? 'left' : 'right', fontWeight: 600, color: 'var(--txt-3)', fontSize: 10 }}>{h}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -918,10 +962,7 @@ export default function ThermalTracePanel({ config }) {
                         const pct = totalLoopNh > 0 ? (s.L_nH / totalLoopNh * 100) : 0
                         const isWorst = validSecs.length > 1 && s.L_nH === Math.max(...validSecs.map(x => x.L_nH))
                         return (
-                          <tr key={i} style={{
-                            background: isWorst ? 'rgba(255,171,0,.06)' : 'transparent',
-                            borderTop: '1px solid var(--border-1)',
-                          }}>
+                          <tr key={i} style={{ background: isWorst ? 'rgba(255,171,0,.05)' : 'transparent', borderTop: '1px solid var(--border-1)' }}>
                             <td style={{ padding: '5px 8px', fontWeight: 600, color: isWorst ? 'var(--amber)' : 'var(--txt-1)' }}>
                               {s.name}{isWorst && validSecs.length > 1 ? ' ⚠' : ''}
                             </td>
@@ -934,21 +975,18 @@ export default function ThermalTracePanel({ config }) {
                         )
                       })}
                       {extBusbarNh > 0 && (
-                        <tr style={{ background: 'rgba(100,181,246,.05)', borderTop: '1px solid var(--border-1)' }}>
+                        <tr style={{ background: 'rgba(100,181,246,.04)', borderTop: '1px solid var(--border-1)' }}>
                           <td style={{ padding: '5px 8px', fontWeight: 600, color: '#64b5f6' }}>External Bus Bar</td>
-                          <td colSpan={3} style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--txt-4)' }}>Manual Override</td>
+                          <td colSpan={3} style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--txt-4)', fontSize: 10 }}>Manual override</td>
                           <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 700, fontFamily: 'var(--font-mono)', color: '#64b5f6' }}>{fmtNum(extBusbarNh, 2)}</td>
                           <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--txt-3)' }}>{fmtNum((extBusbarNh / totalLoopNh) * 100, 0)}%</td>
                         </tr>
                       )}
-                      {/* Total row */}
                       {(validSecs.length > 1 || extBusbarNh > 0) && (
                         <tr style={{ borderTop: '2px solid var(--border-2)', background: 'var(--bg-3)' }}>
                           <td style={{ padding: '5px 8px', fontWeight: 700, color: loopColor }}>TOTAL</td>
                           <td colSpan={3} />
-                          <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 800, fontFamily: 'var(--font-mono)', color: loopColor, fontSize: 13 }}>
-                            {fmtNum(totalLoopNh, 2)}
-                          </td>
+                          <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 800, fontFamily: 'var(--font-mono)', color: loopColor, fontSize: 13 }}>{fmtNum(totalLoopNh, 2)}</td>
                           <td style={{ padding: '5px 8px', textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--txt-3)' }}>100%</td>
                         </tr>
                       )}
@@ -958,49 +996,15 @@ export default function ThermalTracePanel({ config }) {
               </div>
             )}
 
-            {/* Loop inductance result banner */}
-            <div style={{
-              padding: '10px 14px', borderRadius: 8,
-              background: totalLoopNh != null ? `${loopColor}0e` : 'var(--bg-2)',
-              border: `1px solid ${totalLoopNh != null ? loopColor + '55' : 'var(--border-1)'}`,
-              marginBottom: 10,
-            }}>
-              <div style={{ fontSize: 10, color: 'var(--txt-3)', marginBottom: 4 }}>
-                Half-Bridge Power Loop Inductance
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                <span style={{ fontSize: 22, fontWeight: 800, fontFamily: 'var(--font-mono)', color: totalLoopNh != null ? loopColor : 'var(--txt-4)' }}>
-                  {totalLoopNh != null ? `${+(totalLoopNh).toFixed(2)}` : '—'}
-                </span>
-                <span style={{ fontSize: 13, color: 'var(--txt-3)' }}>nH</span>
-                {totalLoopNh != null && (
-                  <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: loopColor }}>
-                    {loopSt === 'OK' ? '✓ GOOD' : loopSt === 'WARNING' ? '⚠ WARNING' : '✗ CRITICAL'}
-                  </span>
-                )}
-              </div>
-              {totalLoopNh != null && (
-                <div style={{ fontSize: 10, color: 'var(--txt-4)', marginTop: 4 }}>
-                  Target &lt; 5.0 nH · L = Σ L_section + L_ext · L_section ≈ 0.4 × l × [ln(4l/(w+t)) + 0.5] nH
-                </div>
-              )}
-              {totalLoopNh == null && (
-                <div style={{ fontSize: 10, color: 'var(--txt-4)', marginTop: 4 }}>
-                  Enter trace width and length in the bus bar sections above to calculate loop inductance.
-                </div>
-              )}
-            </div>
-
-            {/* Bus bar resistance + impedance metrics */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+            {/* Metrics row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: C ? 10 : 0 }}>
               {[
-                { label: 'Bus Bar Resistance', val: busBarR != null ? `${fmtNum(busBarR, 3)} mΩ` : '—', note: 'Total series R' },
-                { label: 'Bus Bar Vdrop', val: busBarVdrop != null ? `${fmtNum(busBarVdrop, 2)} mV` : '—', note: 'I × R_total' },
-                { label: 'Bus Bar Power Loss', val: busBarPloss != null ? `${fmtNum(busBarPloss, 3)} W` : '—', note: 'I² × R' },
-                { label: 'Loop Inductance', val: totalLoopNh != null ? `${fmtNum(totalLoopNh, 2)} nH` : '—', note: 'Σ L_section + L_ext' },
+                { label: 'Bus Bar Resistance', val: busBarR    != null ? `${fmtNum(busBarR, 3)} mΩ`    : '—', note: 'Total series R' },
+                { label: 'Bus Bar Vdrop',      val: busBarVdrop!= null ? `${fmtNum(busBarVdrop, 2)} mV` : '—', note: 'I × R_total' },
+                { label: 'Bus Bar Power Loss', val: busBarPloss!= null ? `${fmtNum(busBarPloss, 3)} W`  : '—', note: 'I² × R' },
+                { label: 'Loop Inductance',    val: totalLoopNh!= null ? `${fmtNum(totalLoopNh, 2)} nH` : '—', note: 'Σ L_section + L_ext' },
               ].map(r => (
-                <div key={r.label} style={{ background: 'var(--bg-3)', borderRadius: 7,
-                  padding: '8px 10px', border: '1px solid var(--border-1)' }}>
+                <div key={r.label} style={{ background: 'var(--bg-3)', borderRadius: 7, padding: '8px 10px', border: '1px solid var(--border-1)' }}>
                   <div style={{ fontSize: 9, color: 'var(--txt-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>{r.label}</div>
                   <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--txt-1)' }}>{r.val}</div>
                   <div style={{ fontSize: 8.5, color: 'var(--txt-4)', marginTop: 2 }}>{r.note}</div>
@@ -1008,16 +1012,15 @@ export default function ThermalTracePanel({ config }) {
               ))}
             </div>
 
-            {/* Backend guidelines (if available) */}
+            {/* Backend guidelines */}
             {C && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                 {[
-                  { label: 'Power trace (rec.)', val: pcbg.power_trace_w_mm != null ? `${fmtNum(pcbg.power_trace_w_mm, 2)} mm` : '—' },
-                  { label: 'Gate trace width', val: ovr.gate_trace_w_mm != null ? `${fmtNum(ovr.gate_trace_w_mm, 2)} mm` : `${fmtNum(pcbg.gate_trace_w_mm, 2)} mm` },
-                  { label: 'Power clearance', val: ovr.power_clearance_mm != null ? `${fmtNum(ovr.power_clearance_mm, 1)} mm` : `${fmtNum(pcbg.power_clearance_mm, 1)} mm` },
+                  { label: 'Power Trace (rec.)', val: pcbg.power_trace_w_mm != null ? `${fmtNum(pcbg.power_trace_w_mm, 2)} mm` : '—' },
+                  { label: 'Gate Trace Width',   val: ovr.gate_trace_w_mm  != null ? `${fmtNum(ovr.gate_trace_w_mm, 2)} mm`  : (pcbg.gate_trace_w_mm  != null ? `${fmtNum(pcbg.gate_trace_w_mm, 2)} mm`  : '—') },
+                  { label: 'Power Clearance',    val: ovr.power_clearance_mm!= null ? `${fmtNum(ovr.power_clearance_mm, 1)} mm` : (pcbg.power_clearance_mm!= null ? `${fmtNum(pcbg.power_clearance_mm, 1)} mm` : '—') },
                 ].map(r => (
-                  <div key={r.label} style={{ background: 'var(--bg-3)', borderRadius: 7,
-                    padding: '8px 10px', border: '1px solid var(--border-1)' }}>
+                  <div key={r.label} style={{ background: 'var(--bg-3)', borderRadius: 7, padding: '8px 10px', border: '1px solid var(--border-1)' }}>
                     <div style={{ fontSize: 9.5, color: 'var(--txt-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 3 }}>{r.label}</div>
                     <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--txt-1)' }}>{r.val}</div>
                   </div>

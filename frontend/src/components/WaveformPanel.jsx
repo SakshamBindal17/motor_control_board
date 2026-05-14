@@ -1428,11 +1428,12 @@ export default function WaveformPanel() {
 
   const exportPNG = useCallback(() => {
     if (!canvasRef.current) return
+    const projectName = (project.name || 'untitled').replace(/\s+/g, '_').toLowerCase()
     const link = document.createElement('a')
-    link.download = `waveform_${zoomLevel.toFixed(1)}x.png`
+    link.download = `${projectName}_waveform.png`
     link.href = canvasRef.current.toDataURL('image/png')
     link.click()
-  }, [zoomLevel])
+  }, [project.name])
 
   const handleZoomSlider = useCallback((e) => {
     const z = parseFloat(e.target.value)
@@ -1483,7 +1484,6 @@ export default function WaveformPanel() {
             Scroll to zoom • Click and drag to pan • Shift+scroll to pan
           </div>
         </div>
-        {hasData && <button onClick={exportPNG} className="scope-btn" title="Export current zoomed view as PNG">📷 Export PNG</button>}
       </div>
 
       {!hasData ? (
@@ -1521,37 +1521,6 @@ export default function WaveformPanel() {
             </div>
           )}
 
-          {hasClampDiagnostics && (
-            <details style={{
-              background: 'var(--bg-2)', borderRadius: 8,
-              border: '1px solid var(--border-1)', fontSize: 11, color: 'var(--txt-2)',
-              marginBottom: 10
-            }}>
-              <summary style={{
-                padding: '8px 12px', cursor: 'pointer', fontWeight: 600, outline: 'none',
-                color: 'var(--txt-1)', display: 'flex', alignItems: 'center', gap: 6
-              }}>
-                <span style={{ color: 'var(--cyan)' }}>ℹ</span> Clamp Activity Diagnostics
-              </summary>
-              <div style={{ borderTop: '1px solid var(--border-1)', padding: '12px 14px', lineHeight: 1.6 }}>
-                <div style={{ marginBottom: 6 }}>
-                  <span style={{ color: 'var(--txt-1)', fontWeight: 600 }}>Timing Limits:</span> di/dt on {timingClampInfo.di_dt_on_limited ? 'limited' : 'ok'}, di/dt off {timingClampInfo.di_dt_off_limited ? 'limited' : 'ok'},
-                  {' '}Vls on {timingClampInfo.v_lcs_on_clamped ? 'clamped' : 'ok'}, Vls off {timingClampInfo.v_lcs_off_clamped ? 'clamped' : 'ok'}.
-                </div>
-                <div style={{ marginBottom: 6 }}>
-                  <span style={{ color: 'var(--txt-1)', fontWeight: 600 }}>Driver Limits:</span> Ig(on) {timingClampInfo.ig_miller_on_floored ? 'floored' : (timingClampInfo.ig_miller_on_capped ? 'capped' : 'ok')},
-                  {' '}Ig(off) {timingClampInfo.ig_miller_off_floored ? 'floored' : (timingClampInfo.ig_miller_off_capped ? 'capped' : 'ok')},
-                  {' '}Miller hard caps on/off: {timingClampInfo.t_r3_hard_capped ? 'yes' : 'no'} / {timingClampInfo.t_r3_off_hard_capped ? 'yes' : 'no'}.
-                </div>
-                <div>
-                  <span style={{ color: 'var(--txt-1)', fontWeight: 600 }}>Signal Clamps:</span> Vgs {parasiticClampInfo.vgs_clamped_points || 0}, Vds {parasiticClampInfo.vds_clamped_points || 0},
-                  {' '}Id {parasiticClampInfo.id_clamped_points || 0}, Ig {parasiticClampInfo.ig_clamped_points || 0} points.
-                  {' '}Vds spike-limited events: {parasiticClampInfo.vds_spike_limited_events || 0}.
-                </div>
-              </div>
-            </details>
-          )}
-
           {/* Toolbar */}
           <div className="scope-toolbar">
             {CHANNELS.map(ch => (
@@ -1587,6 +1556,65 @@ export default function WaveformPanel() {
 
           {/* PCB Parasitic Inductance Inputs */}
           <PCBParasiticsBar project={project} dispatch={dispatch} parasitics={waveform?.parasitics} />
+
+          {/* Clamp diagnostics + Export PNG — just above canvas */}
+          {(hasClampDiagnostics || hasData) && (() => {
+            const chip = (label, severity = 'warn') => {
+              const col = severity === 'danger' ? 'var(--red)' : 'var(--amber)'
+              return (
+                <span key={label} style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '2px 8px', borderRadius: 4, fontSize: 9.5, fontWeight: 500,
+                  background: `${col}15`, border: `1px solid ${col}35`, color: col,
+                }}>
+                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: col, flexShrink: 0 }} />
+                  {label}
+                </span>
+              )
+            }
+            const spikeEvents = parasiticClampInfo.vds_spike_limited_events || 0
+            const allChips = [
+              timingClampInfo.di_dt_on_limited   && chip('di/dt ON: rise rate limited'),
+              timingClampInfo.di_dt_off_limited  && chip('di/dt OFF: fall rate limited'),
+              timingClampInfo.v_lcs_on_clamped   && chip('Vls ON: source inductance clamped'),
+              timingClampInfo.v_lcs_off_clamped  && chip('Vls OFF: source inductance clamped'),
+              (timingClampInfo.ig_miller_on_floored || timingClampInfo.ig_miller_on_capped)  && chip('Ig ON: gate current limited'),
+              (timingClampInfo.ig_miller_off_floored || timingClampInfo.ig_miller_off_capped) && chip('Ig OFF: gate current limited'),
+              timingClampInfo.t_r3_hard_capped      && chip('Miller ON: hard cap hit', 'danger'),
+              timingClampInfo.t_r3_off_hard_capped  && chip('Miller OFF: hard cap hit', 'danger'),
+              ...['Vgs','Vds','Id','Ig'].map(sig => {
+                const pts = parasiticClampInfo[`${sig.toLowerCase()}_clamped_points`] || 0
+                return pts > 0 ? chip(`${sig}: clamped at ${pts} pts`) : null
+              }),
+              spikeEvents > 0 && chip(`Vds: ${spikeEvents} spike event${spikeEvents > 1 ? 's' : ''}`, 'danger'),
+            ].filter(Boolean)
+
+            return (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 10, marginBottom: 6,
+              }}>
+                {hasClampDiagnostics ? (
+                  <div style={{
+                    flex: 1, background: 'var(--bg-2)', borderRadius: 8,
+                    border: '1px solid var(--border-1)', padding: '7px 12px',
+                    display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                  }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--amber)', textTransform: 'uppercase', letterSpacing: '.05em', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      ⚠ Clamp Activity
+                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{allChips}</div>
+                  </div>
+                ) : <div style={{ flex: 1 }} />}
+                {hasData && (
+                  <button onClick={exportPNG} className="scope-btn" title={`Save as ${(project.name||'untitled').replace(/\s+/g,'_').toLowerCase()}_waveform.png`}
+                    style={{ flexShrink: 0 }}>
+                    📷 Export PNG
+                  </button>
+                )}
+              </div>
+            )
+          })()}
 
           {/* Scope display */}
           <div style={{
