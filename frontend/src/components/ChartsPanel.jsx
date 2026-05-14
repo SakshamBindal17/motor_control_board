@@ -98,10 +98,11 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
     const bodyVf = mosfetParams.body_diode_vf_si || 0.7
     const dtNs = systemSpecs.dead_time_ns || 200
     const pCossFixed = 0.5 * qoss * vBus * fsw
-    const pBodyFixed = bodyVf * designIMax * (2 / Math.PI) * (2 * dtNs * 1e-9) * fsw
+    // Body diode loss scales with current — use designIMax only for budget check
+    const pBodyAtMax = bodyVf * designIMax * (2 / Math.PI) * (2 * dtNs * 1e-9) * fsw
 
-    // Available thermal budget
-    const tBudget = tjMax - tAmb - (pGateFixed + pRrFixed + pCossFixed + pBodyFixed) * rthTotal
+    // Available thermal budget (conservative: assume full design current for fixed losses)
+    const tBudget = tjMax - tAmb - (pGateFixed + pRrFixed + pCossFixed + pBodyAtMax) * rthTotal
     if (tBudget <= 0) {
       points.push({ ambient: tAmb, maxCurrent: 0 })
       continue
@@ -117,7 +118,9 @@ function computeThermalDerating(mosfetParams, systemSpecs, calcResults) {
       const rdsHot = rds * Math.pow((tj + 273.15) / 300, 2.1)
       const pCond = iRms * iRms * rdsHot
       const pSw = pSwPerAmp * currentAllowed
-      const pTotal = pCond + pSw + pGateFixed + pRrFixed + pCossFixed + pBodyFixed
+      // Body diode loss scales with actual current (not fixed at design max)
+      const pBody = bodyVf * currentAllowed * (2 / Math.PI) * (2 * dtNs * 1e-9) * fsw
+      const pTotal = pCond + pSw + pGateFixed + pRrFixed + pCossFixed + pBody
       const tjNew = tAmb + pTotal * rthTotal
 
       // Update Tj estimate (moving average for stability)
@@ -177,7 +180,8 @@ function computeEfficiencyVsLoad(mosfetParams, systemSpecs) {
     const pGate = qg * vDrv * fsw * numFets
     const pRr = qrr * vBus * fsw * numFets
     const pCoss = 0.5 * qoss * vBus * fsw * numFets
-    const pBody = bodyVf * iPeak * (2 / Math.PI) * (2 * dtNs * 1e-9) * fsw * numFets
+    // Only numFets/2 = 3 body diodes conduct per dead time (one low-side per phase leg)
+    const pBody = bodyVf * iPeak * (2 / Math.PI) * (2 * dtNs * 1e-9) * fsw * (numFets / 2)
     const pLoss = pCond + pSw + pGate + pRr + pCoss + pBody
 
     const eff = pOut / (pOut + pLoss) * 100
@@ -352,6 +356,56 @@ export default function ChartsPanel() {
             )}
           </div>
 
+          {/* Prominent warnings */}
+          {activeChart === 'efficiency_vs_load' && (
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              padding: '10px 14px',
+              background: 'color-mix(in srgb, var(--amber) 12%, var(--bg-1))',
+              border: '2px solid var(--amber)',
+              borderRadius: 8,
+              fontSize: 12,
+              color: 'var(--txt-1)',
+              lineHeight: 1.5,
+            }}>
+              <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>⚠️</span>
+              <div>
+                <strong style={{ color: 'var(--amber)', display: 'block', marginBottom: 3 }}>
+                  MOSFET Switching Losses Only — NOT System Efficiency
+                </strong>
+                This chart shows losses in the 6 power MOSFETs only. It does <strong>not</strong> include motor copper losses
+                (I²R in windings), iron/eddy-current losses, gate driver quiescent current, or controller power.
+                Real drive system efficiency is typically <strong>5–15% lower</strong> than shown here.
+                Use this chart to compare MOSFET operating points, not as a final system efficiency spec.
+              </div>
+            </div>
+          )}
+          {activeChart === 'thermal_derating' && calcResults?.thermal?.rth_sa_pcb_c_per_w == null && (
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              padding: '10px 14px',
+              background: 'color-mix(in srgb, var(--red) 12%, var(--bg-1))',
+              border: '2px solid var(--red)',
+              borderRadius: 8,
+              fontSize: 12,
+              color: 'var(--txt-1)',
+              lineHeight: 1.5,
+            }}>
+              <span style={{ fontSize: 18, flexShrink: 0, marginTop: 1 }}>🔴</span>
+              <div>
+                <strong style={{ color: 'var(--red)', display: 'block', marginBottom: 3 }}>
+                  Using Default Thermal Path — No Heatsink, Natural Convection Only (39 °C/W)
+                </strong>
+                Calculations tab has not been run yet, so this chart assumes <strong>bare PCB with no heatsink</strong> and
+                natural convection (R_th_SA = 39 °C/W). This is a worst-case baseline — the derating curve will be
+                much less aggressive with a heatsink or forced airflow.
+                <strong style={{ display: 'block', marginTop: 4 }}>
+                  Run the Calculations tab first for an accurate thermal path based on your design.
+                </strong>
+              </div>
+            </div>
+          )}
+
           {/* Chart description */}
           <div style={{
             padding: '10px 14px',
@@ -365,11 +419,12 @@ export default function ChartsPanel() {
             {activeChart === 'loss_vs_freq' && (
               <>
                 <strong style={{ color: 'var(--txt-2)' }}>Loss vs Switching Frequency: </strong>
-                Shows how MOSFET losses scale with PWM frequency. Conduction loss stays constant while switching and gate losses increase linearly.
+                Per-MOSFET losses vs PWM frequency. Conduction loss stays constant; switching, gate, and recovery losses increase linearly.
                 The orange marker shows your current operating point ({systemSpecs.pwm_freq_hz / 1000} kHz).
-                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>
-                  Note: Charts use simplified overlap switching model — see Calculations tab for Qgd-based results.
-                  Switching, recovery, and Coss losses computed at V_bus = {systemSpecs.bus_voltage}V (operating DC link voltage). Rds(on) derated to 125°C.
+                Multiply "Total" by 6 to get inverter-wide loss.
+                <em style={{ display: 'block', marginTop: 6, padding: '6px 10px', background: 'color-mix(in srgb, var(--cyan) 10%, var(--bg-1))', borderLeft: '3px solid var(--cyan)', borderRadius: 4, color: 'var(--cyan)', fontStyle: 'normal', fontWeight: 600, fontSize: 11 }}>
+                  📐 Simplified overlap switching model — see Calculations tab for Qgd-based results.
+                  V_bus = {systemSpecs.bus_voltage}V. Rds(on) derated to 125°C (isothermal — actual Tj rises with frequency).
                 </em>
               </>
             )}
@@ -377,30 +432,32 @@ export default function ChartsPanel() {
               <>
                 <strong style={{ color: 'var(--txt-2)' }}>Thermal Derating: </strong>
                 Maximum continuous phase current vs ambient temperature, limited by Tj_max.
-                Above a certain ambient temperature, you must reduce current to stay within safe operating area.
-                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>
-                  Switching losses at V_bus = {systemSpecs.bus_voltage}V; Rds(on) solved iteratively with Tj-dependent derating.
-                  Thermal path: Rth_JC + Rth_CS (TIM) + Rth_SA ({calcResults?.thermal?.rth_sa_pcb_c_per_w != null ? `${calcResults.thermal.rth_sa_pcb_c_per_w} °C/W from calc` : '39 °C/W default, natural convection'}).
+                Above a certain ambient, reduce current to stay within SOA.
+                <em style={{ display: 'block', marginTop: 6, padding: '6px 10px', background: 'color-mix(in srgb, var(--cyan) 10%, var(--bg-1))', borderLeft: '3px solid var(--cyan)', borderRadius: 4, color: 'var(--cyan)', fontStyle: 'normal', fontWeight: 600, fontSize: 11 }}>
+                  📐 V_bus = {systemSpecs.bus_voltage}V. Rds(on) solved iteratively with Tj-dependent derating (exponent 2.1).
+                  Thermal path: Rth_JC + Rth_CS (0.5 °C/W TIM) + Rth_SA ({calcResults?.thermal?.rth_sa_pcb_c_per_w != null ? `${calcResults.thermal.rth_sa_pcb_c_per_w} °C/W from Calculations` : '39 °C/W default — no heatsink'}).
                 </em>
               </>
             )}
             {activeChart === 'efficiency_vs_load' && (
               <>
-                <strong style={{ color: 'var(--txt-2)' }}>Efficiency vs Load: </strong>
-                MOSFET stage efficiency from 5% to 100% load. At light loads, fixed losses (gate charge, recovery) dominate.
-                At heavy loads, conduction loss (I&sup2;R) takes over.
-                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>
-                  Switching, recovery, and Coss losses at V_bus = {systemSpecs.bus_voltage}V. Rds(on) derated to 125°C (fixed). All 6 FETs included.
+                <strong style={{ color: 'var(--txt-2)' }}>MOSFET Stage Efficiency vs Load: </strong>
+                Inverter switching stage efficiency 5–100% load. At light load, fixed losses (gate, recovery) dominate.
+                At full load, conduction (I²R) dominates.
+                <em style={{ display: 'block', marginTop: 6, padding: '6px 10px', background: 'color-mix(in srgb, var(--cyan) 10%, var(--bg-1))', borderLeft: '3px solid var(--cyan)', borderRadius: 4, color: 'var(--cyan)', fontStyle: 'normal', fontWeight: 600, fontSize: 11 }}>
+                  📐 V_bus = {systemSpecs.bus_voltage}V. Rds(on) derated to 125°C (fixed). All 6 FETs included. Body diode loss: 3 FETs (one low-side per phase leg).
                 </em>
               </>
             )}
             {activeChart === 'gate_timing' && (
               <>
                 <strong style={{ color: 'var(--txt-2)' }}>Gate Timing vs Rg: </strong>
-                Miller plateau duration (Qgd / Ig) and resulting dV/dt as a function of external gate resistance.
-                Lower Rg means faster Vds transition but higher EMI (dV/dt). Find the sweet spot between switching loss and EMI.
-                <em style={{ display: 'block', marginTop: 4, color: 'var(--txt-4)' }}>
-                  dV/dt computed at V_peak = {systemSpecs.peak_voltage || systemSpecs.bus_voltage}V (worst case transient). "Miller Time" here is Miller plateau duration — full datasheet tr/tf includes pre- and post-threshold regions too.
+                Miller plateau duration (Qgd / Ig) and resulting dV/dt vs external gate resistance.
+                Lower Rg = faster switching but higher dV/dt and EMI. Balance switching loss against EMI risk.
+                <em style={{ display: 'block', marginTop: 6, padding: '6px 10px', background: 'color-mix(in srgb, var(--cyan) 10%, var(--bg-1))', borderLeft: '3px solid var(--cyan)', borderRadius: 4, color: 'var(--cyan)', fontStyle: 'normal', fontWeight: 600, fontSize: 11 }}>
+                  📐 dV/dt at V_peak = {systemSpecs.peak_voltage || systemSpecs.bus_voltage}V (worst-case transient).
+                  "Miller Time" = Miller plateau only — full datasheet tr/tf includes pre/post-threshold regions.
+                  Turn-off assumes 0V gate clamp; negative bias (e.g. −5V) would reduce Miller time further.
                 </em>
               </>
             )}
