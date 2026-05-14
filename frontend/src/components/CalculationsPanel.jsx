@@ -107,6 +107,14 @@ function uvloDataBadgeInfo(status) {
 const SECTION_LABELS = {}
 // Will be populated from SECTIONS after definition
 
+// Parse backend warning string → { color, icon, text }
+function parseWarning(w) {
+  const text = w.replace(/^⚠\s+/, '')  // strip leading ⚠ emoji (icon added by renderer)
+  if (/^(DANGER|CRITICAL|⚠)/.test(w)) return { color: 'var(--red)', text }
+  if (/^NOTE:/.test(w))               return { color: 'var(--txt-3)', text }
+  return { color: 'var(--amber)', text }  // WARNING / CAUTION / default
+}
+
 export default function CalculationsPanel() {
   const { state, dispatch } = useProject()
   const { project } = state
@@ -939,13 +947,16 @@ export default function CalculationsPanel() {
                     )
                   })}
                   {(d.warnings?.length > 0 || d.ripple_warning || d.driver_current_limited || d.trr_warning) && (
-                    <div className="note-box" style={{ marginTop: 6, background: 'rgba(255,68,68,.06)', border: '1px solid rgba(255,68,68,.2)' }}>
-                      {d.warnings?.map((w, i) => (
-                        <div key={i} style={{ fontSize: 10, color: 'var(--red)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
-                          <AlertTriangle size={10} style={{ flexShrink: 0, marginTop: 2 }} />
-                          <span>{w}</span>
-                        </div>
-                      ))}
+                    <div className="note-box" style={{ marginTop: 6, background: 'var(--bg-2)', border: '1px solid var(--border-2)' }}>
+                      {d.warnings?.map((w, i) => {
+                        const { color, text } = parseWarning(w)
+                        return (
+                          <div key={i} style={{ fontSize: 10, color, lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                            <AlertTriangle size={10} style={{ flexShrink: 0, marginTop: 2 }} />
+                            <span>{text}</span>
+                          </div>
+                        )
+                      })}
                       {d.ripple_warning && (
                         <div style={{ fontSize: 10, color: 'var(--amber)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
                           <AlertTriangle size={10} style={{ flexShrink: 0, marginTop: 2 }} />
@@ -1048,13 +1059,16 @@ export default function CalculationsPanel() {
                           )
                         })}
                         {(d.warnings?.length > 0 || d.ripple_warning || d.driver_current_limited || d.trr_warning) && (
-                          <div className="note-box" style={{ marginTop: 8, background: 'rgba(255,68,68,.06)', border: '1px solid rgba(255,68,68,.2)' }}>
-                            {d.warnings?.map((w, i) => (
-                              <div key={i} style={{ fontSize: 11, color: 'var(--red)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
-                                <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
-                                <span>{w}</span>
-                              </div>
-                            ))}
+                          <div className="note-box" style={{ marginTop: 8, background: 'var(--bg-2)', border: '1px solid var(--border-2)' }}>
+                            {d.warnings?.map((w, i) => {
+                              const { color, text } = parseWarning(w)
+                              return (
+                                <div key={i} style={{ fontSize: 11, color, lineHeight: 1.5, display: 'flex', gap: 5 }}>
+                                  <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+                                  <span>{text}</span>
+                                </div>
+                              )
+                            })}
                             {d.ripple_warning && (
                               <div style={{ fontSize: 11, color: 'var(--amber)', lineHeight: 1.5, display: 'flex', gap: 5 }}>
                                 <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />

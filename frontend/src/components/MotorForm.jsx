@@ -143,18 +143,17 @@ export default function MotorForm({ config }) {
           </div>
 
           {/* Derived + checks */}
-          <div style={{ width: 240, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+          <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
 
-            {/* Compatibility verdict banner — shown after calc run */}
+            {/* Verdict banner — shown after calc run */}
             {verdict && verdict !== 'no_data' && (
               <div style={{
                 padding: '8px 12px', borderRadius: 6,
-                background: verdict === 'pass' ? 'rgba(76,175,80,0.1)' :
-                            verdict === 'marginal' ? 'rgba(255,171,0,0.1)' :
-                            'rgba(244,67,54,0.1)',
+                background: verdict === 'pass' ? 'rgba(76,175,80,0.08)' :
+                            verdict === 'marginal' ? 'rgba(255,171,0,0.08)' :
+                            'rgba(244,67,54,0.08)',
                 border: `1px solid ${verdict === 'pass' ? 'var(--green)' :
-                                     verdict === 'marginal' ? 'var(--amber)' :
-                                     'var(--red)'}`,
+                                     verdict === 'marginal' ? 'var(--amber)' : 'var(--red)'}50`,
               }}>
                 <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--txt-1)' }}>
                   {verdict === 'pass' ? '✅' : verdict === 'marginal' ? '⚠' : '❌'}{' '}{verdictText}
@@ -173,18 +172,18 @@ export default function MotorForm({ config }) {
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
               <div style={{ ...sectionTitle, fontSize: 10 }}>📐 Derived Parameters</div>
               <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <DerivedRow label="Max Electrical Speed" value={we_max > 0 ? we_max.toFixed(0) : '—'} unit="rad/s" />
-                <DerivedRow label="Back-EMF @ Max RPM" value={vbemf_max > 0 ? vbemf_max.toFixed(1) : '—'} unit="V pk" />
+                <DerivedRow label="Max Elec. Speed"    value={we_max > 0 ? we_max.toFixed(0) : '—'}           unit="rad/s" />
+                <DerivedRow label="Back-EMF @ Max RPM" value={vbemf_max > 0 ? vbemf_max.toFixed(1) : '—'}     unit="V pk" />
                 <DerivedRow label="Copper Loss @ Imax" value={copper_loss_w > 0 ? copper_loss_w.toFixed(1) : '—'} unit="W" />
-                <DerivedRow label="Phase Time Const" value={time_const_ms ? time_const_ms.toFixed(2) : '—'} unit="ms" />
-                {iStall != null && <DerivedRow label="Stall Current" value={iStall.toFixed(0)} unit="A" warn={iStall > imax} />}
-                {modIndex != null && <DerivedRow label="Mod Index @ Max RPM" value={modIndex.toFixed(3)} unit="" warn={modIndex > 0.95} />}
-                {samplesPerCycle != null && <DerivedRow label="Samples/Elec Cycle" value={samplesPerCycle.toFixed(1)} unit="" warn={samplesPerCycle < 10} />}
-                {vRegen != null && <DerivedRow label="Regen Bus Estimate" value={vRegen.toFixed(0)} unit="V" warn={vRegen > state.project.system_specs.peak_voltage} />}
+                <DerivedRow label="Phase Time Const"   value={time_const_ms ? time_const_ms.toFixed(2) : '—'} unit="ms" />
+                {iStall        != null && <DerivedRow label="Stall Current"       value={iStall.toFixed(0)}          unit="A"   warn={iStall > imax} />}
+                {modIndex      != null && <DerivedRow label="Mod Index @ Max RPM" value={modIndex.toFixed(3)}         unit=""    warn={modIndex > 0.95} />}
+                {samplesPerCycle != null && <DerivedRow label="Samples/Elec Cycle" value={samplesPerCycle.toFixed(1)} unit=""    warn={samplesPerCycle < 10} />}
+                {vRegen        != null && <DerivedRow label="Regen Bus Est."      value={vRegen.toFixed(0)}          unit="V"   warn={vRegen > state.project.system_specs.peak_voltage} />}
               </div>
             </div>
 
-            {/* Design checks — frontend-only (live, no calc run needed) */}
+            {/* Design checks */}
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
               <div style={{ ...sectionTitle, fontSize: 10 }}>⚠️ Design Checks</div>
               <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -203,30 +202,6 @@ export default function MotorForm({ config }) {
                 <CheckRow ok={!!specs.kt_nm_per_a} warn={false} text="Torque constant Kt entered" />
               </div>
             </div>
-
-            {/* Backend warnings — shown after calc run */}
-            {backendWarnings.length > 0 && (
-              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                <div style={{ ...sectionTitle, fontSize: 10 }}>🔍 Compatibility Analysis</div>
-                <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {backendWarnings.map((w, i) => {
-                    const isDanger  = w.includes('DANGER') || w.includes('CRITICAL')
-                    const isWarning = w.includes('WARNING')
-                    const color = isDanger ? 'var(--red)' : isWarning ? 'var(--amber)' : 'var(--txt-3)'
-                    const icon  = isDanger ? '❌' : isWarning ? '⚠' : 'ℹ'
-                    return (
-                      <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 5 }}>
-                        <span style={{ color, flexShrink: 0, fontSize: 11 }}>{icon}</span>
-                        <span style={{ fontSize: 10, color, lineHeight: 1.4 }}>{w}</span>
-                      </div>
-                    )
-                  })}
-                  <div style={{ fontSize: 9, color: 'var(--txt-4)', marginTop: 4, fontStyle: 'italic' }}>
-                    These checks validate motor fit — they do not affect component sizing.
-                  </div>
-                </div>
-              </div>
-            )}
 
           </div>
         </div>
