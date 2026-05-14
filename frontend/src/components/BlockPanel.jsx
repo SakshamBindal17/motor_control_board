@@ -327,11 +327,20 @@ export default function BlockPanel({ blockKey, config }) {
         {/* Parameter groups — two top-level sections: Essential & Good to Have */}
         {status === 'done' && raw_data && (
           <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div className="sec-head">
-              <CheckCircle size={13} style={{ color: 'var(--green)' }} />
-              Extracted Parameters
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: activeConfig.color, marginLeft: 4 }}>
-                {raw_data.parameters?.length || 0}
+            <div className="sec-head" style={{ alignItems: 'flex-start', padding: '14px 16px', background: 'linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0)), var(--bg-3)' }}>
+              <CheckCircle size={14} style={{ color: 'var(--green)', marginTop: 1, flexShrink: 0 }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--txt-1)' }}>
+                  Extracted Parameters
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--txt-3)', textTransform: 'none', letterSpacing: 0 }}>
+                  Grouped by importance and category
+                </div>
+              </div>
+              <span className="section-meta-badge" style={{ marginLeft: 'auto', color: activeConfig.color, background: `${activeConfig.color}10`, borderColor: `${activeConfig.color}20` }}>
+                <span style={{ color: 'var(--txt-2)' }}>{raw_data.parameters?.length || 0}</span>
+                <span className="smb-sep">·</span>
+                <span style={{ color: 'var(--txt-3)' }}>total</span>
               </span>
             </div>
 
@@ -360,35 +369,26 @@ export default function BlockPanel({ blockKey, config }) {
                 const essOpen = collapsed['__top_ess__'] !== false  // default open
                 const gthOpen = collapsed['__top_gth__'] !== false  // default open
 
-                // Total attention count for a set of params
-                const essAttention = essParams.filter(p => (p.conditions?.length || 0) > 1).length
-
                 // Sub-category row component
                 function SubCatSection({ cat, params, isCrit = false }) {
                   const catKey = `__cat__${isCrit ? 'ess' : 'gth'}__${cat}`
                   const catOpen = collapsed[catKey] !== false
-                  const catAttn = params.filter(p => (p.conditions?.length || 0) > 1).length
                   return (
-                    <div key={cat} style={{ borderBottom: '1px solid var(--border-1)' }}>
+                    <div key={cat} className="subcat-shell">
                       <button
                         className={`collapsible-trigger ${catOpen ? 'open' : ''}`}
                         onClick={() => setCollapsed(p => ({ ...p, [catKey]: !catOpen }))}
-                        style={{ paddingLeft: 22, background: 'var(--bg-3)', fontSize: 11 }}
+                        style={{ paddingLeft: 16, paddingRight: 14, background: 'rgba(255,255,255,.02)', fontSize: 11, textTransform: 'none', letterSpacing: '.01em' }}
                       >
                         {catOpen ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                        <span style={{ color: 'var(--txt-2)' }}>{cat}</span>
-                        <span style={{ fontSize: 9, fontFamily: 'var(--font-mono)', padding: '1px 5px', background: 'var(--bg-4)', borderRadius: 3 }}>
-                          {params.length}
+                        <span className="subcat-title">
+                          <strong>{cat}</strong>
+                          <span>{params.length} params</span>
                         </span>
-                        {!catOpen && catAttn > 0 && (
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, background: 'rgba(255,171,0,.15)', color: 'var(--amber)', border: '1px solid rgba(255,171,0,.3)' }}>
-                            <AlertTriangle size={8} />{catAttn}
-                          </span>
-                        )}
                         <span className="chevron"><ChevronDown size={10} /></span>
                       </button>
                       {catOpen && (
-                        <div className="table-wrap">
+                        <div style={{ padding: '10px 12px 12px' }}>
                           <ParameterTable params={params} blockKey={activeBlockKey} color={activeConfig.color}
                             calcCritical={isCrit ? calcCritSet : null} />
                         </div>
@@ -400,32 +400,27 @@ export default function BlockPanel({ blockKey, config }) {
                 return (
                   <>
                     {/* ══ TOP SECTION: ESSENTIAL ═══════════════════════════ */}
-                    <div>
+                    <div className="section-shell">
                       <button
                         className={`collapsible-trigger ${essOpen ? 'open' : ''}`}
                         onClick={() => setCollapsed(p => ({ ...p, '__top_ess__': !essOpen }))}
-                        style={{ background: 'rgba(0,230,118,.06)', borderBottom: '1px solid rgba(0,230,118,.15)' }}
+                        style={{ background: 'linear-gradient(180deg, rgba(0,230,118,.10), rgba(0,230,118,.04))' }}
                       >
                         {essOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                        <span style={{ fontWeight: 700, color: 'var(--green)' }}>✦ Essential</span>
-                        <span style={{ fontSize: 9, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)' }}>
-                          {essParams.length} params — required for board design
+                        <span className="section-title">
+                          <strong style={{ color: 'var(--green)' }}>Essential</strong>
+                          <span>required for board design</span>
                         </span>
-                        {essAttention > 0 && (
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, padding: '1px 6px', borderRadius: 4, background: 'rgba(255,171,0,.15)', color: 'var(--amber)', border: '1px solid rgba(255,171,0,.3)' }}>
-                            <AlertTriangle size={8} /> {essAttention} need attention
-                          </span>
-                        )}
-                        <span
-                          title="★ calc-critical = this value is read directly by a formula in the calculation engine. Enter these first for accurate results."
-                          style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--cyan)', fontFamily: 'var(--font-mono)', fontWeight: 600, cursor: 'help' }}>
-                          ★ {essParams.filter(p => calcCritSet.has(p.id)).length} used in formulas
+                        <span className="section-meta">
+                          <span>{essParams.length} params</span>
+                          <span>•</span>
+                          <span title="Values read directly by a formula in the calculation engine">{essParams.filter(p => calcCritSet.has(p.id)).length} used in formulas</span>
                         </span>
                         <span className="chevron"><ChevronDown size={11} /></span>
                       </button>
 
                       {essOpen && (
-                        <div>
+                        <div style={{ padding: '8px 0 0' }}>
                           {Object.entries(essCats).map(([cat, params]) =>
                             <SubCatSection key={cat} cat={cat} params={params} isCrit={true} />
                           )}
@@ -440,22 +435,27 @@ export default function BlockPanel({ blockKey, config }) {
 
                     {/* ══ TOP SECTION: GOOD TO HAVE ════════════════════════ */}
                     {gthParams.length > 0 && (
-                      <div>
+                      <div className="section-shell" style={{ marginTop: 12 }}>
                         <button
                           className={`collapsible-trigger ${gthOpen ? 'open' : ''}`}
                           onClick={() => setCollapsed(p => ({ ...p, '__top_gth__': !gthOpen }))}
-                          style={{ background: 'rgba(30,144,255,.04)', borderBottom: '1px solid rgba(30,144,255,.12)' }}
+                          style={{ background: 'linear-gradient(180deg, rgba(30,144,255,.08), rgba(30,144,255,.03))' }}
                         >
                           {gthOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                          <span style={{ fontWeight: 700, color: 'var(--cyan)' }}>◈ Good to Have</span>
-                          <span style={{ fontSize: 9, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)' }}>
-                            {gthParams.length} extra params — reference only
+                          <span className="section-title">
+                            <strong style={{ color: 'var(--cyan)' }}>Good to Have</strong>
+                            <span>reference only</span>
+                          </span>
+                          <span className="section-meta">
+                            <span>{gthParams.length} params</span>
+                            <span>•</span>
+                            <span>no direct calculation impact</span>
                           </span>
                           <span className="chevron"><ChevronDown size={11} /></span>
                         </button>
 
                         {gthOpen && (
-                          <div style={{ opacity: 0.85 }}>
+                          <div style={{ padding: '8px 0 0', opacity: 0.92 }}>
                             {Object.entries(gthCats).map(([cat, params]) =>
                               <SubCatSection key={cat} cat={cat} params={params} isCrit={false} />
                             )}
@@ -686,27 +686,22 @@ function MissingParamsSection({ missingIds, blockKey, color, collapsed, setColla
       <button
         className={`collapsible-trigger ${isOpen ? 'open' : ''}`}
         onClick={() => setCollapsed(p => ({ ...p, '__missing__': !isOpen }))}
-        style={{ borderTop: '1px solid rgba(255,68,68,.2)' }}
+        style={{ borderTop: '1px solid rgba(255,68,68,.2)', background: 'linear-gradient(180deg, rgba(255,68,68,.06), rgba(255,68,68,.02))' }}
       >
         {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-        <span style={{ color: stillMissing.length > 0 ? 'var(--red)' : 'var(--green)' }}>
-          {stillMissing.length > 0 ? 'Missing / Not Extracted' : '✓ Manual Entries'}
+        <span className="section-title">
+          <strong style={{ color: stillMissing.length > 0 ? 'var(--red)' : 'var(--green)' }}>
+            {stillMissing.length > 0 ? 'Missing / Not Extracted' : 'Manual Entries'}
+          </strong>
+          <span>values you can add or correct by hand</span>
         </span>
-        {missingCrit.length > 0 && (
-          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', padding: '1px 6px', background: 'rgba(255,68,68,.12)', color: 'var(--red)', borderRadius: 4 }}>
-            {missingCrit.length} calc-critical
-          </span>
-        )}
-        {missingGth.length > 0 && (
-          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', padding: '1px 6px', background: 'rgba(30,144,255,.1)', color: 'var(--cyan)', borderRadius: 4 }}>
-            {missingGth.length} optional
-          </span>
-        )}
-        {manualParams.length > 0 && (
-          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', padding: '1px 6px', background: 'rgba(0,230,118,.1)', color: 'var(--green)', borderRadius: 4 }}>
-            {manualParams.length} set
-          </span>
-        )}
+        <span className="section-meta">
+          <span>{missingCrit.length} critical</span>
+          <span>•</span>
+          <span>{missingGth.length} optional</span>
+          <span>•</span>
+          <span>{manualParams.length} set</span>
+        </span>
         <span className="chevron"><ChevronDown size={11} /></span>
       </button>
 
@@ -761,11 +756,7 @@ function MissingParamsSection({ missingIds, blockKey, color, collapsed, setColla
                 <span style={{ fontSize: 9, color: 'var(--txt-3)', fontFamily: 'var(--font-mono)' }}>
                   — optional, no direct calculation impact
                 </span>
-                {manualGth.length > 0 && (
-                  <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>
-                    {manualGth.length} set
-                  </span>
-                )}
+                {manualGth.length > 0 && <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>{manualGth.length} set</span>}
               </button>
               {gthOpen && (
                 <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 5, opacity: .9 }}>

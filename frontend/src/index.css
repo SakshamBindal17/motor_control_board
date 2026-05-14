@@ -468,6 +468,32 @@ select.inp {
   font-size: 12px;
 }
 
+.ptable-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ptable-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: rgba(255, 171, 0, .08);
+  border: 1px solid rgba(255, 171, 0, .18);
+  color: var(--txt-2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ptable-frame {
+  overflow: hidden;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+
 .ptable th {
   padding: 8px 10px;
   text-align: left;
@@ -476,7 +502,7 @@ select.inp {
   letter-spacing: .07em;
   text-transform: uppercase;
   color: var(--txt-3);
-  background: var(--bg-3);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .02), rgba(255, 255, 255, 0)), var(--bg-3);
   border-bottom: 1px solid var(--border-1);
   white-space: nowrap;
 }
@@ -498,6 +524,91 @@ select.inp {
 
 .ptable tbody tr.row-selected td {
   background: rgba(30, 144, 255, .06);
+}
+
+.section-shell {
+  border: 1px solid var(--border-1);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-2);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .02) inset;
+}
+
+.section-shell + .section-shell {
+  margin-top: 12px;
+}
+
+.section-shell .collapsible-trigger {
+  background: rgba(255, 255, 255, .015);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.section-shell .collapsible-trigger:hover {
+  background: rgba(255, 255, 255, .03);
+}
+
+.section-shell .section-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--txt-3);
+  font-size: 10px;
+}
+
+.section-shell .section-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.section-shell .section-title strong {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .01em;
+  text-transform: none;
+}
+
+.section-shell .section-title span {
+  font-size: 10px;
+  color: var(--txt-3);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.subcat-shell {
+  margin: 10px 12px 0;
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-3);
+}
+
+.subcat-shell .collapsible-trigger {
+  background: rgba(255, 255, 255, .02);
+  border-bottom: 1px solid var(--border-1);
+  text-transform: none;
+  letter-spacing: .01em;
+}
+
+.subcat-shell .subcat-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.subcat-shell .subcat-title strong {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--txt-1);
+}
+
+.subcat-shell .subcat-title span {
+  font-size: 10px;
+  color: var(--txt-3);
+  font-family: var(--font-mono);
 }
 
 .ptable .cell-val {

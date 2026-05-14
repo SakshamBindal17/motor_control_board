@@ -155,7 +155,7 @@ export default function UnitPicker({ value, onChange, placeholder = 'unit', styl
           position: 'absolute', top: '100%', left: 0, zIndex: 9999,
           minWidth: 220, maxHeight: 260, overflowY: 'auto',
           background: 'var(--bg-1)', border: '1px solid var(--border-2)',
-          borderRadius: 7, boxShadow: '0 8px 24px rgba(0,0,0,.4)',
+          borderRadius: 7, boxShadow: '0 10px 30px rgba(0,0,0,.35)',
           marginTop: 2,
         }}>
           {filtered.length === 0 ? (
@@ -166,9 +166,10 @@ export default function UnitPicker({ value, onChange, placeholder = 'unit', styl
             Object.entries(grouped).map(([grp, units]) => (
               <div key={grp}>
                 <div style={{
-                  padding: '4px 10px 2px',
-                  fontSize: 9, fontWeight: 700, letterSpacing: '.06em',
+                  padding: '8px 10px 6px',
+                  fontSize: 9, fontWeight: 700, letterSpacing: '.08em',
                   color: 'var(--txt-4)', textTransform: 'uppercase',
+                  background: 'var(--bg-2)',
                   borderTop: '1px solid var(--border-1)',
                 }}>
                   {grp}
@@ -183,15 +184,16 @@ export default function UnitPicker({ value, onChange, placeholder = 'unit', styl
                       onMouseEnter={() => setHiIdx(globalIdx)}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '5px 12px', cursor: 'pointer',
-                        background: isHi ? 'var(--bg-3)' : 'transparent',
+                        padding: '8px 12px', cursor: 'pointer',
+                        background: isHi ? 'var(--bg-4)' : 'var(--bg-3)',
+                        borderBottom: '1px solid var(--border-2)',
                       }}
                     >
                       <span style={{
                         fontFamily: 'var(--font-mono)', fontWeight: 700, fontSize: 11,
                         minWidth: 36, color: 'var(--cyan)',
                       }}>{u.unit}</span>
-                      <span style={{ fontSize: 10, color: 'var(--txt-3)', flex: 1 }}>{u.label}</span>
+                      <span style={{ fontSize: 10, color: 'var(--txt-2)', flex: 1 }}>{u.label}</span>
                       <span style={{
                         fontSize: 9, color: 'var(--txt-4)', fontFamily: 'var(--font-mono)',
                         maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
