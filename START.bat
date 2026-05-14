@@ -34,7 +34,7 @@ if "!PY_CMD!"=="" if !errorlevel! equ 0 set "PY_CMD=py"
 if "!PY_CMD!"=="" (
     echo.
     echo  ERROR: Python not found on this PC.
-    echo  Download Python 3.10+ from: https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
+    echo  Download 'Python 3.10+'. For v3.12.10 download from here: https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
     echo  During install, check the box: "Add Python to PATH"
     echo.
     goto :fail
