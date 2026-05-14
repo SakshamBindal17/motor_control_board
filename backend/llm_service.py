@@ -29,7 +29,7 @@ _inflight: dict[str, asyncio.Event] = {}  # key → Event (set when done)
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 
 # Bump this string whenever prompts change — forces cache re-extraction automatically
-PROMPT_VERSION = "v14-gemini"
+PROMPT_VERSION = "v15-gemini"
 
 def _cache_path(block_type: str, pdf_hash: str) -> str:
     folder = os.path.join(CACHE_DIR, block_type)
@@ -231,7 +231,17 @@ id="crss"
 
 id="vgs_plateau"
   Name: Gate Plateau Voltage (Miller Plateau)
-  Aliases: VGS(pl) · Vplateau · Vpl · Gate Plateau · Miller Plateau Voltage · Vgs(plateau)"""
+  Aliases: VGS(pl) · Vplateau · Vpl · Gate Plateau · Miller Plateau Voltage · Vgs(plateau)
+
+id="coss_er"
+  Name: Energy-Related Output Capacitance (Coss,er)
+  Aliases: Coss(er) · Coss,er · Coss_er · C_oss(er) · Ceq · Energy-Equivalent Output Capacitance · Coss(energy-related) · Coss(E) · Coss,eq · Coss,eff · Effective Coss
+  Note: This is the energy-related effective Coss integrated over a 0→VDS swing, distinct from Coss at a fixed VDS test voltage. More accurate than fixed-voltage Coss for ringing and switching energy calculations. Extract only if explicitly tabulated or noted in the datasheet as energy-related or effective Coss.
+
+id="g_fs"
+  Name: Forward Transconductance
+  Aliases: gfs · gFS · gm · g_m · transconductance · Forward Transconductance · Gate Transconductance · Drain-Source Transconductance · gDS · ID/VGS slope · Transfer Admittance
+  Note: Typically expressed in S (siemens) or A/V. Extract at the test condition closest to rated drain current and VGS=10V. If multiple conditions are listed, extract all as separate condition entries."""
 
 
 DRIVER_PROMPT = """You are a power electronics engineer. Extract gate driver IC parameters from this datasheet for a 48V motor controller design.

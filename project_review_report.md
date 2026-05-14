@@ -8,7 +8,7 @@
 
 ## 2. Senior Software Dev
 * `main.py` FastAPI structure robust. 
-* `claude_service.py` correctly handles 503 exponential backoff, 429 quota exhaustion, and SHA-256 disk cache.
+* `llm_service.py` correctly handles 503 exponential backoff, 429 quota exhaustion, and SHA-256 disk cache.
 * Frontend `api.js` timeout (11m for extraction, 30s other) implemented properly.
 * Error message sanitization active — no raw exceptions leaked.
 

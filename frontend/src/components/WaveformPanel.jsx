@@ -125,6 +125,7 @@ function extractMosfetSIParams(blockState) {
     rg_int: extractSIParam(dict, 'rg_int', { 'Ω': 1, 'ohm': 1 }) || 1.0,
     id_cont: extractSIParam(dict, 'id_cont', { 'A': 1 }),        // for Vgs_pl scaling
     vds_max: extractSIParam(dict, 'vds_max', { 'V': 1 }),        // for overshoot cap + Qgd scaling
+    g_fs: extractSIParam(dict, 'g_fs', { 'S': 1, 'A/V': 1, 'mS': 1e-3 }),  // transconductance (datasheet)
   }
 }
 
@@ -513,7 +514,11 @@ function computeWaveformFrontend(
   const vds_on = Math.max(0.01, i_load * rdsHot)
   const tau_on = rg_on * ciss
   const tau_off = rg_off * ciss
-  const gfs = i_load / Math.max(vgs_pl - vgs_th, 0.1)
+  const gfs_datasheet = mosfetP.g_fs
+  const gfs_derived = i_load / Math.max(vgs_pl - vgs_th, 0.1)
+  const gfs_source = (gfs_datasheet != null && Number.isFinite(gfs_datasheet) && gfs_datasheet > 0)
+    ? 'datasheet' : 'derived'
+  const gfs = gfs_source === 'datasheet' ? gfs_datasheet : gfs_derived
 
   // ── FIX: Qgd scaled to actual bus voltage ────────────────────────────
   // Datasheets measure Qgd at Vds_test ≈ Vds_max × 0.5.
@@ -743,6 +748,8 @@ function computeWaveformFrontend(
       vgs_th_v: Math.round(vgs_th * 100) / 100,
       vgs_pl_spec_v: Math.round(vgs_pl_spec * 100) / 100,
       vgs_pl_actual_v: Math.round(vgs_pl * 100) / 100,
+      gfs_s: Math.round(gfs * 10) / 10,
+      gfs_source,
       temp_model_tj_c: Math.round(tjSw * 10) / 10,
       qgd_temp_factor: Math.round(qgdTempFactor * 1000) / 1000,
       qrr_temp_factor: Math.round(qrrTempFactor * 1000) / 1000,
@@ -1679,6 +1686,21 @@ export default function WaveformPanel() {
                   <span>Vdrv / Vbus:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.v_drv_v} V / {params.v_bus_v} V</span>
                   <span>Load Current:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.i_load_a} A</span>
                   <span>Frequency:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.fsw_khz} kHz</span>
+                  {params.gfs_s != null && (<>
+                    <span>g<sub>fs</sub>:</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'var(--font-mono)', color: 'var(--txt-2)' }}>
+                      {params.gfs_s} S
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3,
+                        background: params.gfs_source === 'datasheet' ? 'rgba(0,212,100,0.15)' : 'rgba(255,167,38,0.15)',
+                        color: params.gfs_source === 'datasheet' ? 'var(--green)' : 'var(--amber)',
+                        border: `1px solid ${params.gfs_source === 'datasheet' ? 'rgba(0,212,100,0.3)' : 'rgba(255,167,38,0.3)'}`,
+                        letterSpacing: '0.04em',
+                      }}>
+                        {params.gfs_source === 'datasheet' ? 'DATASHEET' : 'DERIVED'}
+                      </span>
+                    </span>
+                  </>)}
                   <span>Resolution:</span><span style={{ color: 'var(--txt-2)', fontFamily: 'var(--font-mono)' }}>{params.sample_points ?? '—'} pts @ {params.sample_dt_ns ?? '—'} ns</span>
                 </div>
               </div>
