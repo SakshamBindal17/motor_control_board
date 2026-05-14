@@ -51,11 +51,11 @@ class PassivesMixin:
         film_qty       = _int("film_qty",           2)
         film_size_uf   = _flt("film_size_uf",       4.7)
         film_v_rating  = _int("film_v_rating_v",   100)
-        film_z_mohm    = _flt("film_z_mohm",        5.0)
+        film_esr_mohm  = _flt("film_esr_mohm",      5.0)
 
         mlcc_qty       = _int("mlcc_qty",            6)
         mlcc_size_nf   = _flt("mlcc_size_nf",      100.0)
-        mlcc_z_mohm    = _flt("mlcc_z_mohm",         2.0)
+        mlcc_esr_mohm  = _flt("mlcc_esr_mohm",      2.0)
         mlcc_v_rating  = _int("mlcc_v_rating_v",    50)
 
         bypass_qty     = _int("bypass_qty",          2)
@@ -89,8 +89,8 @@ class PassivesMixin:
             xc      = 1.0 / (2 * math.pi * fsw * c_tot)
             return math.sqrt(esr_tot**2 + xc**2)
 
-        Zmag_film = _z_mag_true(film_z_mohm, film_size_uf * 1e-6, film_qty)
-        Zmag_mlcc = _z_mag_true(mlcc_z_mohm, mlcc_size_nf * 1e-9, mlcc_qty)
+        Zmag_film = _z_mag_true(film_esr_mohm, film_size_uf * 1e-6, film_qty)
+        Zmag_mlcc = _z_mag_true(mlcc_esr_mohm, mlcc_size_nf * 1e-9, mlcc_qty)
 
         # Start with enough bulk caps to satisfy the raw delta_V charge rules
         n_caps = max(min_bulk, math.ceil(c_req_uf / bulk_uf))
@@ -131,14 +131,15 @@ class PassivesMixin:
         # Only the ESR dissipates heat. Re-calculate pure parallel ESR paths.
         p_cap_total = (I_bulk**2) * ((esr_typ_mohm * 1e-3) / n_caps) if n_caps > 0 else 0
         p_per_cap   = 0 if n_caps == 0 else p_cap_total / n_caps
-        mlcc_power_loss_w = (I_mlcc**2) * ((mlcc_z_mohm * 1e-3) / mlcc_qty) if mlcc_qty > 0 else 0
+        mlcc_power_loss_w = (I_mlcc**2) * ((mlcc_esr_mohm * 1e-3) / mlcc_qty) if mlcc_qty > 0 else 0
+        film_power_loss_w = (I_film**2) * ((film_esr_mohm * 1e-3) / film_qty) if film_qty > 0 else 0
         
         # MLCC DC Bias Safety verification
         mlcc_safety_warning = "SAFE"
         if self.v_bus > (0.6 * mlcc_v_rating):
             mlcc_safety_warning = "DANGER: Severe DC-Bias Derating"
 
-        mlcc_parallel_z_mohm = round((mlcc_z_mohm / mlcc_qty) if mlcc_qty > 0 else mlcc_z_mohm, 3)
+        mlcc_parallel_z_mohm = round((mlcc_esr_mohm / mlcc_qty) if mlcc_qty > 0 else mlcc_esr_mohm, 3)
         i_rip_per_cap = 0 if n_caps == 0 else I_bulk / n_caps
 
         # ── Bypass Capacitor Power Loss ──
@@ -174,9 +175,10 @@ class PassivesMixin:
             "c_film_uf":                 film_size_uf,
             "c_film_v_rating":           film_v_rating,
             "c_film_qty":                film_qty,
-            "c_film_z_mohm":             film_z_mohm,
+            "c_film_z_mohm":             film_esr_mohm,
+            "c_film_power_loss_w":       round(film_power_loss_w,  4),
             "c_mlcc_nf":                 mlcc_size_nf,
-            "c_mlcc_z_per_cap_mohm":     mlcc_z_mohm,
+            "c_mlcc_z_per_cap_mohm":     mlcc_esr_mohm,
             "c_mlcc_parallel_z_mohm":    mlcc_parallel_z_mohm,
             "c_mlcc_power_loss_w":       round(mlcc_power_loss_w,  4),
             "c_mlcc_v_rating":           mlcc_v_rating,

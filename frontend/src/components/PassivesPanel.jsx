@@ -473,7 +473,7 @@ export default function PassivesPanel() {
   function cnt(keys) { return keys.filter(k => ovr[k] != null && ovr[k] !== '').length }
   const gateOvrCnt  = [specs.hs_rg_on_override, specs.hs_rg_off_override, specs.ls_rg_on_override, specs.ls_rg_off_override].filter(v => v != null && v !== '').length
               + cnt(['gate_rise_time_ns', 'gate_fall_time_ns', 'deadtime_override_ns'])
-  const capsOvrCnt  = cnt(['delta_v_ripple','bulk_v_rating_v','mlcc_qty','mlcc_size_nf','mlcc_esr_mohm','film_qty','film_size_uf','film_v_rating_v'])
+  const capsOvrCnt  = cnt(['delta_v_ripple','mlcc_qty','mlcc_size_nf','mlcc_esr_mohm','mlcc_v_rating_v','film_qty','film_size_uf','film_esr_mohm','film_v_rating_v'])
   const bootOvrCnt  = cnt(['bootstrap_droop_v','cboot_v_rating_v'])
   const shuntOvrCnt = cnt(['shunt_topology','csa_gain_override','shunt_single_mohm','shunt_three_mohm','stray_inductance_nh','snubber_rs_ohm','snubber_cs_pf','snubber_v_mult'])
   const protOvrCnt  = cnt(['prot_r1_kohm','prot_r2_kohm','ntc_r25_kohm','ntc_b_coeff','ntc_pullup_kohm'])
@@ -770,9 +770,9 @@ export default function PassivesPanel() {
             onChange={v => setOvr('mlcc_size_nf', v !== '' ? +(parseFloat(v) * 1000).toFixed(2) : '')} onReset={() => resetOvr('mlcc_size_nf')}
             note="Enter in µF (X7R recommended). e.g. 0.1 = 100nF. Stored internally in nF." />
           <OvrField label="MLCC ESR (Series Req)" unit="mΩ" min={0.1}
-            value={ovr.mlcc_z_mohm ?? ''} defaultVal={2}
-            onChange={v => setOvr('mlcc_z_mohm', v)} onReset={() => resetOvr('mlcc_z_mohm')}
-            note="Pure resistive Equivalent Series Resistance (ESR). The backend physics engine will analytically handle the huge capacitive reactance (Xc) for you!" />
+            value={ovr.mlcc_esr_mohm ?? ''} defaultVal={2}
+            onChange={v => setOvr('mlcc_esr_mohm', v)} onReset={() => resetOvr('mlcc_esr_mohm')}
+            note="ESR from datasheet (pure resistance). Backend calculates impedance for current splitting and power loss from ESR." />
           <OvrField label="MLCC V-Rating" unit="V"
             value={ovr.mlcc_v_rating_v ?? ''} defaultVal={50}
             onChange={v => setOvr('mlcc_v_rating_v', v)} onReset={() => resetOvr('mlcc_v_rating_v')}
@@ -790,9 +790,9 @@ export default function PassivesPanel() {
             value={ovr.film_size_uf ?? ''} defaultVal={4.7}
             onChange={v => setOvr('film_size_uf', v)} onReset={() => resetOvr('film_size_uf')} />
           <OvrField label="Film ESR" unit="mΩ" min={0.1}
-            value={ovr.film_z_mohm ?? ''} defaultVal={5.0}
-            onChange={v => setOvr('film_z_mohm', v)} onReset={() => resetOvr('film_z_mohm')}
-            note="Resistive ESR only. True Admittance (Y) splitting automatically accounts for capacitance." />
+            value={ovr.film_esr_mohm ?? ''} defaultVal={5.0}
+            onChange={v => setOvr('film_esr_mohm', v)} onReset={() => resetOvr('film_esr_mohm')}
+            note="ESR from datasheet. Backend calculates impedance for current splitting; power loss from ESR only." />
           <OvrField label="Film V-Rating" unit="V"
             value={ovr.film_v_rating_v ?? ''} defaultVal={100}
             onChange={v => setOvr('film_v_rating_v', v)} onReset={() => resetOvr('film_v_rating_v')} />
@@ -841,6 +841,8 @@ export default function PassivesPanel() {
               src={ovr.film_qty != null || ovr.film_size_uf != null ? 'ovr' : 'auto'} />
             <Row label="‖ Impedance" value={fmtNum(icap.c_film_z_mohm / (icap.c_film_qty || 1), 2)} unit="mΩ" src="auto"
               tip="|Z_parallel| = |Z_single| / N. Bulk AC current steering resistance." />
+            <Row label="Power loss" value={fmtNum(icap.c_film_power_loss_w, 4)} unit="W" src="auto" bold color={icap.c_film_power_loss_w > 0.1 ? '#ff4444' : '#ffab00'}
+              tip="P_loss = I_film² × ESR_film. Heat dissipated in film capacitor." />
             <Row label="Ripple Share" value={fmtNum(icap.i_film_rms_a, 2)} unit="A rms" src="auto" color="#00e676" />
             <Row label="V-rating" value={fv(icap.c_film_v_rating)} unit="V"
               src={ovr.film_v_rating_v != null ? 'ovr' : 'auto'} />
