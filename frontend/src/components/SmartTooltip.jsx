@@ -196,10 +196,12 @@ function RichTooltip({ data }) {
         </div>
       )}
 
-      {/* Footer */}
-      <div style={{ color: 'var(--txt-3)', fontSize: '11px', marginTop: '6px', fontStyle: 'italic' }}>
-        View the <strong>{sectionName}</strong> section in the Calculations tab for full mathematical breakdown.
-      </div>
+      {/* Footer — only shown when id maps to a known section */}
+      {sectionMap[data.id] && (
+        <div style={{ color: 'var(--txt-3)', fontSize: '11px', marginTop: '6px', fontStyle: 'italic' }}>
+          View the <strong>{sectionName}</strong> section in the Calculations tab for full mathematical breakdown.
+        </div>
+      )}
     </div>
   )
 }
