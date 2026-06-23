@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { Toaster } from 'react-hot-toast'
+import { SpeedInsights } from '@vercel/speed-insights/react'
 import { ProjectProvider } from './context/ProjectContext.jsx'
 import App from './App.jsx'
 import './index.css'
@@ -27,6 +28,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           error:   { iconTheme: { primary: '#ff4444', secondary: '#060b14' } },
         }}
       />
+      <SpeedInsights />
     </ProjectProvider>
   </React.StrictMode>
 )
